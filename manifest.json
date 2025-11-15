@@ -1,0 +1,10 @@
+{
+  "id": "next-tab-group",
+  "name": "Next Tab Group",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Spatially-aware cycling through tab groups and sidebars. Emacs-style other-window navigation with two commands: one for main workspace only, another including sidebars.",
+  "author": "",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
