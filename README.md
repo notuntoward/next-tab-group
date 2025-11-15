@@ -1,6 +1,6 @@
 # Next Tab Group
 
-This plugin provides one command, **Next Tab Group** (`next-tab-group`), which cycles your cursor between "tab groups": whole windows with individual tabs inside.
+This plugin provides one command, **Next Tab Group** (`next-tab-group`), which cycles your cursor between "tab groups": whole windows with individual tabs inside.  This is similar to the Emacs `other-window` command.
 
 ### Examples
 ```
