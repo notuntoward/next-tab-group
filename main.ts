@@ -1,4 +1,10 @@
-import { Plugin, WorkspaceLeaf, WorkspaceSplit, WorkspaceParent, WorkspaceTabs } from 'obsidian';
+import {
+    Plugin,
+    WorkspaceLeaf,
+    WorkspaceTabs,
+    ViewState
+} from 'obsidian';
+import type { WorkspaceParent } from 'obsidian';
 
 export default class NextTabGroupPlugin extends Plugin {
     private tabGroupActiveLeaves: Map<WorkspaceParent, WorkspaceLeaf> = new Map();
@@ -27,13 +33,30 @@ export default class NextTabGroupPlugin extends Plugin {
                 this.rotateTabGroups();
             }
         });
+
+        this.addCommand({
+            id: 'preview-rotate-tab-groups-layout',
+            name: 'Preview rotate tab groups (layout JSON, dry run)',
+            callback: () => {
+                this.previewRotateTabGroupsLayout();
+            }
+        });
+
+        this.addCommand({
+            id: 'log-layout-splits-layout',
+            name: 'Log layout splits (layout JSON, debug)',
+            callback: () => {
+                this.logLayoutSplitsLayout();
+            }
+        });
     }
+
+    // ------------------------------------------------------------------------
+    // Tab group discovery & navigation
+    // ------------------------------------------------------------------------
 
     private collectLeavesWithPosition(): LeafPosition[] {
         const positions: LeafPosition[] = [];
-        const getTabGroup = (leaf: WorkspaceLeaf): WorkspaceParent | null => {
-            return leaf.parent;
-        };
 
         const allLeaves: WorkspaceLeaf[] = [];
         this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
@@ -42,7 +65,7 @@ export default class NextTabGroupPlugin extends Plugin {
 
         const seenTabGroups = new Set<WorkspaceParent>();
         for (const leaf of allLeaves) {
-            const tabGroup = getTabGroup(leaf);
+            const tabGroup = leaf.parent;
             if (!tabGroup || seenTabGroups.has(tabGroup)) continue;
             seenTabGroups.add(tabGroup);
 
@@ -57,45 +80,42 @@ export default class NextTabGroupPlugin extends Plugin {
         return positions;
     }
 
-    private getRelativePosition(leaf: WorkspaceLeaf): { x: number, y: number } {
+    private getRelativePosition(leaf: WorkspaceLeaf): { x: number; y: number } {
+        // Prefer real DOM geometry when available
         try {
             const containerEl = (leaf as any).containerEl;
             if (containerEl && containerEl.getBoundingClientRect) {
                 const rect = containerEl.getBoundingClientRect();
                 return { x: rect.left, y: rect.top };
             }
-        } catch (e) {
-            // Fallback to parent tree position
+        } catch {
+            // fall through
         }
 
+        // Fallback: approximate via split hierarchy
         let x = 0;
         let y = 0;
-        let parent = leaf.parent;
+
+        let parent: any = leaf.parent;
+        let childRef: any = leaf;
+
         while (parent) {
-            if (parent instanceof WorkspaceSplit) {
-                const splitAny = parent as any;
-                const children = splitAny.children as any[];
-                if (children) {
-                    let childIndex = -1;
-                    if (leaf.parent === parent) {
-                        childIndex = children.indexOf(leaf);
-                    } else {
-                        childIndex = children.indexOf(leaf.parent);
-                    }
-
-                    if (childIndex === -1 && leaf.parent instanceof WorkspaceTabs) {
-                        childIndex = children.indexOf(leaf.parent);
-                    }
-
-                    if (childIndex >= 0) {
-                        if (splitAny.direction === 'horizontal') {
-                            x += childIndex * 1000;
-                        } else {
-                            y += childIndex * 1000;
-                        }
+            const children = (parent as any).children as any[] | undefined;
+            if (parent && Array.isArray(children)) {
+                const index = children.indexOf(childRef);
+                if (index >= 0) {
+                    const dir = (parent as any).direction;
+                    // In Obsidian’s layout JSON:
+                    //  - vertical  → children act like columns (side-by-side)
+                    //  - horizontal → children stacked
+                    if (dir === 'vertical') {
+                        x += index * 1000;
+                    } else if (dir === 'horizontal') {
+                        y += index * 1000;
                     }
                 }
             }
+            childRef = parent;
             parent = parent.parent;
         }
 
@@ -112,12 +132,7 @@ export default class NextTabGroupPlugin extends Plugin {
 
     private cycleTabGroups() {
         const positions = this.collectLeavesWithPosition();
-        if (positions.length === 0) {
-            console.log('plugin:next-tab-group No tab groups found');
-            return;
-        }
-
-        if (positions.length === 1) {
+        if (positions.length <= 1) {
             return;
         }
 
@@ -129,7 +144,7 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const activeTabGroup = activeLeaf.parent;
+        const activeTabGroup = activeLeaf.parent as WorkspaceParent | null;
         if (activeTabGroup) {
             this.tabGroupActiveLeaves.set(activeTabGroup, activeLeaf);
         }
@@ -144,13 +159,27 @@ export default class NextTabGroupPlugin extends Plugin {
         this.focusTabGroup(sorted[nextIndex]);
     }
 
-    private async collectTabs() {
-        const activeLeaf = this.app.workspace.activeLeaf;
-        if (!activeLeaf) {
+    private focusTabGroup(position: LeafPosition) {
+        const tabGroup = position.tabGroup;
+
+        const storedLeaf = this.tabGroupActiveLeaves.get(tabGroup);
+        if (storedLeaf && storedLeaf.parent === tabGroup) {
+            this.app.workspace.setActiveLeaf(storedLeaf, { focus: true });
             return;
         }
 
-        const activeTabGroup = activeLeaf.parent;
+        this.app.workspace.setActiveLeaf(position.leaf, { focus: true });
+    }
+
+    // ------------------------------------------------------------------------
+    // Collect tabs into the active tab group
+    // ------------------------------------------------------------------------
+
+    private async collectTabs() {
+        const activeLeaf = this.app.workspace.activeLeaf;
+        if (!activeLeaf) return;
+
+        const activeTabGroup: any = activeLeaf.parent;
         if (!(activeTabGroup instanceof WorkspaceTabs)) {
             return;
         }
@@ -162,216 +191,186 @@ export default class NextTabGroupPlugin extends Plugin {
             }
         });
 
-        // Copy all leaves into the active tab group
         for (const leaf of leavesToMove) {
             const viewState = leaf.getViewState();
             const ephemeralState = leaf.getEphemeralState();
 
+            const children = (activeTabGroup as any).children as WorkspaceLeaf[] | undefined;
+            const index = Array.isArray(children) ? children.length : -1;
+
             const newLeaf = this.app.workspace.createLeafInParent(
                 activeTabGroup,
-                (activeTabGroup as any).children?.length ?? true
+                index
             );
             await newLeaf.setViewState(viewState, ephemeralState);
         }
 
-        // Detach originals
         for (const leaf of leavesToMove) {
             leaf.detach();
         }
 
-        // Restore focus
         this.app.workspace.setActiveLeaf(activeLeaf, { focus: true });
     }
 
-    /**
-     * NEW VERSION: rotate using workspace.getLayout() / changeLayout()
-     * instead of mutating live WorkspaceSplit internals.
-     */
+    // ------------------------------------------------------------------------
+    // Rotate tab groups via layout JSON (toggle all split directions)
+    // ------------------------------------------------------------------------
+
     private async rotateTabGroups() {
-        const ws: any = this.app.workspace as any;
-
-        if (typeof ws.getLayout !== 'function' || typeof ws.changeLayout !== 'function') {
-            console.warn('plugin:next-tab-group rotateTabGroups: workspace.getLayout/changeLayout not available; aborting.');
+        const wsAny = this.app.workspace as any;
+        if (typeof wsAny.getLayout !== 'function' || typeof wsAny.changeLayout !== 'function') {
+            console.warn('[next-tab-group] rotateTabGroups: getLayout/changeLayout not available.');
             return;
         }
 
-        const layout = ws.getLayout();
+        const layout = wsAny.getLayout();
         if (!layout) {
-            console.warn('plugin:next-tab-group rotateTabGroups: getLayout() returned null/undefined; aborting.');
+            console.warn('[next-tab-group] rotateTabGroups: getLayout() returned null/undefined.');
             return;
         }
 
-        // Only touch the main editing area; leave sidebars alone.
-        const mainRoot = layout.main ?? layout;
+        const main = (layout as any).main ?? layout;
 
-        console.log('plugin:next-tab-group --- Preview: rotate tab groups (layout JSON) ---');
-        const previewMain = JSON.parse(JSON.stringify(mainRoot));
-        const previewChanged = this.rotateSplitsInLayout(previewMain, true);
-        if (!previewChanged) {
-            console.log('plugin:next-tab-group (preview) No eligible editor splits found to rotate.');
-        }
-        console.log('plugin:next-tab-group --- End of preview ---');
+        const stats: LayoutRotationStats = { splitsVisited: 0, splitsFlipped: 0 };
+        this.flipAllSplitsInLayout(main, false, 0, stats);
 
-        const changed = this.rotateSplitsInLayout(mainRoot, false);
-        if (!changed) {
-            console.log('plugin:next-tab-group rotateTabGroups: nothing to rotate; aborting.');
+        console.log(
+            `[next-tab-group] rotateTabGroups (layout): splitsVisited=${stats.splitsVisited}, splitsFlipped=${stats.splitsFlipped}`
+        );
+
+        if (stats.splitsFlipped === 0) {
+            console.log('[next-tab-group] rotateTabGroups: no splits flipped; layout will not change.');
             return;
         }
 
-        console.log('plugin:next-tab-group Applying rotated layout via workspace.changeLayout()');
-        await ws.changeLayout(layout);
+        await wsAny.changeLayout(layout);
     }
 
     /**
-     * Recursively rotates split nodes in a layout JSON tree.
-     * Returns true if any split was actually changed.
+     * Flip all split directions (horizontal <-> vertical) in the layout JSON tree.
+     * We only walk `children` – this matches the simple version you had working
+     * (side-by-side <-> stacked) without touching sidebars or other wrappers.
      */
+    private flipAllSplitsInLayout(
+        node: any,
+        dryRun: boolean,
+        depth: number,
+        stats: LayoutRotationStats
+    ): void {
+        if (!node || typeof node !== 'object') return;
 
-    private rotateSplitsInLayout(node: any, dryRun: boolean, depth: number = 0): boolean {
-      if (!node || typeof node !== 'object') return false;
+        const indent = '  '.repeat(depth);
+        const children = (node as any).children as any[] | undefined;
 
-      let changed = false;
-      const indent = '  '.repeat(depth);
+        if (node.type === 'split') {
+            stats.splitsVisited++;
 
-      if (node.type === 'split' && Array.isArray(node.children)) {
-        if (this.splitSubtreeHasEditorTabsInLayout(node)) {
-          const before: string | undefined = node.direction;
-          let after = before;
-          if (before === 'vertical') after = 'horizontal';
-          else if (before === 'horizontal') after = 'vertical';
+            const before: string | undefined = node.direction;
+            let after = before;
+            if (before === 'horizontal') after = 'vertical';
+            else if (before === 'vertical') after = 'horizontal';
 
-          if (after && before && after !== before) {
-            if (dryRun) {
-              console.log(
-                `plugin:next-tab-group ${indent}Would toggle split direction (layout): ${before} -> ${after}, children=${node.children.length}`
-              );
+            if (after && before && after !== before) {
+                if (dryRun) {
+                    console.log(
+                        `[next-tab-group] ${indent}Would flip split (layout): ${before} -> ${after}, children=${children?.length ?? 0}`
+                    );
+                } else {
+                    console.log(
+                        `[next-tab-group] ${indent}Flipping split (layout): ${before} -> ${after}, children=${children?.length ?? 0}`
+                    );
+                    (node as any).direction = after;
+                }
+                stats.splitsFlipped++;
             } else {
-              console.log(
-                `plugin:next-tab-group ${indent}Toggling split direction (layout): ${before} -> ${after}, children=${node.children.length}`
-              );
-              node.direction = after;
-              // NOTE: we NO LONGER reverse node.children here.
-              // This avoids swapping the positions of the tab groups.
-            }
-            changed = true;
-          }
-        }
-      }
-
-      const children: any[] = Array.isArray((node as any).children) ? (node as any).children : [];
-      for (const child of children) {
-        if (this.rotateSplitsInLayout(child, dryRun, depth + 1)) {
-          changed = true;
-        }
-      }
-
-      return changed;
-    }
-
-    /**
-     * Heuristic: only rotate splits that actually contain editor-ish tabs.
-     * This avoids messing with pure sidebar trees.
-     */
-    private splitSubtreeHasEditorTabsInLayout(node: any): boolean {
-        if (!node || typeof node !== 'object') return false;
-
-        if (node.type === 'tabs' && Array.isArray(node.children)) {
-            for (const leaf of node.children) {
-                const viewType = leaf?.state?.type;
-                if (
-                    viewType === 'markdown' ||
-                    viewType === 'canvas' ||
-                    viewType === 'image' ||
-                    viewType === 'empty' ||
-                    viewType === 'search' ||
-                    viewType === 'outline'
-                ) {
-                    return true;
-                }
+                console.log(
+                    `[next-tab-group] ${indent}Split (layout) not flippable (direction=${before}); children=${children?.length ?? 0}`
+                );
             }
         }
 
-        if (Array.isArray(node.children)) {
-            return node.children.some((child: any) => this.splitSubtreeHasEditorTabsInLayout(child));
-        }
-
-        return false;
-    }
-
-    // Old helper is still here but now unused; it just mutates live splits.
-    // Left around in case you want to experiment, but rotateTabGroups()
-    // no longer calls it.
-    private rotateSplitRecursive(split: WorkspaceSplit | WorkspaceParent) {
-        if (!(split instanceof WorkspaceSplit)) {
-            return;
-        }
-
-        const splitAny = split as any;
-        const currentDirection = splitAny.direction;
-
-        if (currentDirection === 'horizontal') {
-            splitAny.direction = 'vertical';
-        } else if (currentDirection === 'vertical') {
-            splitAny.direction = 'horizontal';
-        }
-
-        if (currentDirection === 'vertical') {
-            const children = splitAny.children;
-            if (children && Array.isArray(children)) {
-                children.reverse();
-            }
-        }
-
-        const children = splitAny.children;
-        if (children && Array.isArray(children)) {
+        if (Array.isArray(children)) {
             for (const child of children) {
-                if (child instanceof WorkspaceSplit) {
-                    this.rotateSplitRecursive(child);
-                }
+                this.flipAllSplitsInLayout(child, dryRun, depth + 1, stats);
             }
         }
     }
 
-    private focusTabGroup(position: LeafPosition) {
-        const tabGroup = position.tabGroup;
+    // ------------------------------------------------------------------------
+    // Debug: preview & split logging on layout JSON
+    // ------------------------------------------------------------------------
 
-        const storedLeaf = this.tabGroupActiveLeaves.get(tabGroup);
-        if (storedLeaf && storedLeaf.parent === tabGroup) {
-            this.app.workspace.setActiveLeaf(storedLeaf, { focus: true });
+    private previewRotateTabGroupsLayout() {
+        const wsAny = this.app.workspace as any;
+        const layout = wsAny.getLayout?.();
+        if (!layout) {
+            console.log('[next-tab-group] previewRotateTabGroupsLayout: no layout.');
             return;
         }
 
-        const targetLeaf = position.leaf;
-        this.app.workspace.setActiveLeaf(targetLeaf, { focus: true });
+        const main = (layout as any).main ?? layout;
+
+        console.log('--- Preview: rotate tab groups (layout JSON, dry run) ---');
+        const copy = JSON.parse(JSON.stringify(main));
+        const stats: LayoutRotationStats = { splitsVisited: 0, splitsFlipped: 0 };
+        this.flipAllSplitsInLayout(copy, true, 0, stats);
+        console.log(
+            `[next-tab-group] Preview (layout): splitsVisited=${stats.splitsVisited}, splitsFlipped=${stats.splitsFlipped}`
+        );
+        console.log('--- End of preview ---');
+    }
+
+    private logLayoutSplitsLayout() {
+        const wsAny = this.app.workspace as any;
+        const layout = wsAny.getLayout?.();
+        if (!layout) {
+            console.log('[next-tab-group] logLayoutSplitsLayout: no layout.');
+            return;
+        }
+
+        const main = (layout as any).main ?? layout;
+
+        console.log('--- Layout splits (layout JSON) ---');
+        this.logSplitsInLayout(main, 0);
+        console.log('--- End of layout splits ---');
+    }
+
+    private logSplitsInLayout(node: any, depth: number) {
+        if (!node || typeof node !== 'object') return;
+        const indent = '  '.repeat(depth);
+        const children = (node as any).children as any[] | undefined;
+
+        if (node.type === 'split') {
+            console.log(
+                `${indent}split: direction=${node.direction ?? 'undefined'}, children=${children?.length ?? 0}`
+            );
+        }
+
+        if (Array.isArray(children)) {
+            for (const child of children) {
+                this.logSplitsInLayout(child, depth + 1);
+            }
+        }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface LeafPosition {
     leaf: WorkspaceLeaf;
     tabGroup: WorkspaceParent;
-    position: { x: number, y: number };
-}
-
-interface TabGroupData {
-    tabGroup: WorkspaceParent;
-    position: { x: number, y: number };
-    leaves: WorkspaceLeaf[];
-    isActive: boolean;
-}
-
-interface LeafState {
-    viewState: any;
-    ephemeralState: any;
-    isActive: boolean;
-}
-
-interface GroupState {
-    leafStates: LeafState[];
     position: { x: number; y: number };
 }
 
-interface RotatedGroup {
-    x: number;
-    y: number;
-    leafStates: LeafState[];
+interface LayoutRotationStats {
+    splitsVisited: number;
+    splitsFlipped: number;
+}
+
+interface LeafState {
+    viewState: ViewState;
+    ephemeralState: any;
+    isActive: boolean;
 }
