@@ -1,4 +1,4 @@
-import { Plugin, WorkspaceLeaf, WorkspaceSplit, WorkspaceParent } from 'obsidian';
+import { Plugin, WorkspaceLeaf, WorkspaceSplit, WorkspaceParent, WorkspaceTabs } from 'obsidian';
 
 export default class NextTabGroupPlugin extends Plugin {
     private tabGroupActiveLeaves: Map<WorkspaceParent, WorkspaceLeaf> = new Map();
@@ -9,6 +9,14 @@ export default class NextTabGroupPlugin extends Plugin {
             name: 'Next tab group',
             callback: () => {
                 this.cycleTabGroups();
+            }
+        });
+
+        this.addCommand({
+            id: 'collect-tabs',
+            name: 'Collect tabs',
+            callback: () => {
+                this.collectTabs();
             }
         });
     }
@@ -117,9 +125,54 @@ export default class NextTabGroupPlugin extends Plugin {
         this.focusTabGroup(sorted[nextIndex]);
     }
 
+    private async collectTabs() {
+        const activeLeaf = this.app.workspace.activeLeaf;
+        if (!activeLeaf) {
+            return;
+        }
+
+        const activeTabGroup = activeLeaf.parent;
+        if (!(activeTabGroup instanceof WorkspaceTabs)) {
+            return;
+        }
+
+        // Collect all leaves that need to be moved (not in active group)
+        const leavesToMove: WorkspaceLeaf[] = [];
+        this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
+            if (leaf.parent !== activeTabGroup) {
+                leavesToMove.push(leaf);
+            }
+        });
+
+        // First, copy all leaves to the active tab group
+        for (const leaf of leavesToMove) {
+            // Capture the view state
+            const viewState = leaf.getViewState();
+            const ephemeralState = leaf.getEphemeralState();
+
+            // Create a new leaf in the active tab group
+            const newLeaf = this.app.workspace.createLeafInParent(
+                activeTabGroup, 
+                (activeTabGroup as any).children.length
+            );
+
+            // Set the view state on the new leaf
+            await newLeaf.setViewState(viewState, ephemeralState);
+        }
+
+        // Then, detach all the old leaves from their original groups
+        // This will automatically remove the empty tab groups
+        for (const leaf of leavesToMove) {
+            leaf.detach();
+        }
+
+        // Restore focus to the originally active leaf
+        this.app.workspace.setActiveLeaf(activeLeaf, { focus: true });
+    }
+
     private focusTabGroup(position: LeafPosition) {
         const tabGroup = position.tabGroup;
-        
+
         // Check if we have a previously stored active leaf for this group
         const storedLeaf = this.tabGroupActiveLeaves.get(tabGroup);
         if (storedLeaf && storedLeaf.parent === tabGroup) {
