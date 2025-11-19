@@ -209,283 +209,242 @@ export default class NextTabGroupPlugin extends Plugin {
         this.app.workspace.setActiveLeaf(activeLeaf, { focus: true });
     }
 
-    // ------------------------------------------------------------------------
-    // Rotate tab groups - COMPLETE FIX
-    // ------------------------------------------------------------------------
+	// ------------------------------------------------------------------------
+	// Rotate tab groups - Smart Wrapper Strategy
+	// ------------------------------------------------------------------------
 
-    private async rotateTabGroups() {
-        console.log('[next-tab-group] ===== ROTATION START =====');
+	/**
+	 * Rotate workspace layout 90° clockwise using smart wrapper strategy.
+	 * Works around root split's immutable direction by wrapping content.
+	 */
+	private async rotateTabGroups() {
+		console.log('[next-tab-group] ===== ROTATION START =====');
 
-        // SAVE: Active tab info for restoration
-        const activeLeaf = this.app.workspace.activeLeaf;
-        let activeFileInfo: {file: string | null, type: string} | null = null;
-        if (activeLeaf) {
-            const vs = activeLeaf.getViewState();
-            activeFileInfo = {
-                file: (vs.state as any)?.file || null,
-                type: vs.type
-            };
-            console.log(`[next-tab-group] Active tab: ${activeFileInfo.file || activeFileInfo.type}`);
-        }
+		// SAVE: Active tab for restoration
+		const activeLeaf = this.app.workspace.activeLeaf;
+		let activeFileInfo: {file: string | null, type: string} | null = null;
+		if (activeLeaf) {
+			const vs = activeLeaf.getViewState();
+			activeFileInfo = {
+				file: (vs.state as any)?.file || null,
+				type: vs.type
+			};
+			console.log(`[next-tab-group] Active tab: ${activeFileInfo.file || activeFileInfo.type}`);
+		}
 
-        // Build spatial grid using DOM boundaries
-        const grid = this.buildSpatialGrid();
+		// Get current layout
+		const wsAny = this.app.workspace as any;
+		const layout = wsAny.getLayout?.();
+		if (!layout || !layout.main) {
+			console.error('[next-tab-group] Failed to get layout');
+			return;
+		}
 
-        if (!grid || grid.length === 0) {
-            console.error('[next-tab-group] Failed to build spatial grid');
-            return;
-        }
+		const root = layout.main;
+		console.log('[next-tab-group] Root direction:', root.direction);
 
-        const rows = grid.length;
-        const cols = grid[0].length;
-        console.log(`[next-tab-group] Current: ${rows} rows × ${cols} cols`);
+		// Detect if root is already wrapped
+		const isWrapped = this.isAlreadyWrapped(root);
+		console.log('[next-tab-group] Root is wrapped:', isWrapped);
 
-        // Rotate grid 90° clockwise
-        const rotatedGrid = this.rotateGrid90Clockwise(grid);
-        const newRows = rotatedGrid.length;
-        const newCols = rotatedGrid[0].length;
-        console.log(`[next-tab-group] Target: ${newRows} rows × ${newCols} cols`);
+		let rotatedLayout: any;
 
-        // Rebuild using two-pass approach to avoid overwriting
-        await this.rebuildFromGrid(rotatedGrid);
+		if (isWrapped) {
+			// Already wrapped - rotate the wrapper content directly
+			console.log('[next-tab-group] Rotating existing wrapper');
+			rotatedLayout = JSON.parse(JSON.stringify(layout));
+			const wrapper = rotatedLayout.main.children[0];
+			this.transformNodeForClockwiseRotation(wrapper);
+			this.stripSplitIds(wrapper);
+		} else {
+			// Not wrapped - need to wrap the rotated content
+			console.log('[next-tab-group] Creating new wrapper');
 
-        // RESTORE: Active tab focus
-        if (activeFileInfo) {
-            this.restoreActiveTab(activeFileInfo);
-        }
+			// Transform root's children
+			const transformedRoot = JSON.parse(JSON.stringify(root));
+			this.transformNodeForClockwiseRotation(transformedRoot);
+			this.stripSplitIds(transformedRoot);
 
-        console.log('[next-tab-group] ===== ROTATION COMPLETE =====');
-    }
+			// Wrap in a new split container
+			rotatedLayout = {
+				...layout,
+				main: {
+					type: 'split',
+					direction: root.direction, // Keep root direction
+					children: [transformedRoot] // Wrapper contains transformed content
+				}
+			};
+		}
 
-    /**
-     * Build spatial grid using DOM boundaries
-     */
-    private buildSpatialGrid(): LeafState[][][] | null {
-        const groupsWithPos: Array<{
-            group: LeafState[], 
-            pos: {x: number, y: number},
-            bounds: {left: number, top: number, right: number, bottom: number}
-        }> = [];
-        const seenTabGroups = new Set<WorkspaceParent>();
+		console.log('[next-tab-group] Applying rotated layout');
 
-        this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
-            const tabGroup = leaf.parent;
-            if (!tabGroup || seenTabGroups.has(tabGroup)) return;
-            seenTabGroups.add(tabGroup);
+		// Apply the layout
+		try {
+			await wsAny.setLayout(rotatedLayout);
+			console.log('[next-tab-group] ✓ Layout applied');
+		} catch (error) {
+			console.error('[next-tab-group] Failed to apply layout:', error);
+			return;
+		}
 
-            // Get DOM boundaries
-            const containerEl = (tabGroup as any).containerEl;
-            let bounds = {left: 0, top: 0, right: 0, bottom: 0};
-            let position = {x: 0, y: 0};
+		// Wait for layout to settle
+		await new Promise(resolve => setTimeout(resolve, 100));
 
-            if (containerEl && containerEl.getBoundingClientRect) {
-                const rect = containerEl.getBoundingClientRect();
-                bounds = {
-                    left: rect.left,
-                    top: rect.top,
-                    right: rect.right,
-                    bottom: rect.bottom
-                };
-                position = {x: rect.left, y: rect.top};
-            } else {
-                position = this.getRelativePosition(leaf);
-            }
+		// RESTORE: Active tab focus
+		if (activeFileInfo) {
+			this.restoreActiveTab(activeFileInfo);
+		}
 
-            // Collect all tabs in this group
-            const groupLeaves: LeafState[] = [];
-            const children = (tabGroup as any).children as WorkspaceLeaf[] | undefined;
+		console.log('[next-tab-group] ===== ROTATION COMPLETE =====');
+	}
 
-            if (Array.isArray(children)) {
-                for (const childLeaf of children) {
-                    const vs = childLeaf.getViewState();
-                    if (!vs || !vs.type || vs.type === 'empty') continue;
-                    groupLeaves.push({
-                        viewState: vs,
-                        ephemeralState: childLeaf.getEphemeralState(),
-                        isActive: childLeaf === this.app.workspace.activeLeaf
-                    });
-                }
-            }
+	/**
+	 * Check if root is already wrapped (has single split child).
+	 */
+	private isAlreadyWrapped(root: any): boolean {
+		if (!root || root.type !== 'split' || !Array.isArray(root.children)) {
+			return false;
+		}
 
-            if (groupLeaves.length > 0) {
-                groupsWithPos.push({ group: groupLeaves, pos: position, bounds });
-            }
-        });
+		// Wrapped if root has exactly one child that is also a split
+		if (root.children.length === 1) {
+			const child = root.children[0];
+			return child && child.type === 'split';
+		}
 
-        if (groupsWithPos.length === 0) return null;
+		return false;
+	}
 
-        // Sort by Y then X
-        groupsWithPos.sort((a, b) => {
-            const yDiff = a.pos.y - b.pos.y;
-            if (Math.abs(yDiff) > 10) return yDiff;
-            return a.pos.x - b.pos.x;
-        });
+	/**
+	 * Strip IDs from split nodes to force Obsidian to recreate them.
+	 * Keep IDs on leaf/tabs nodes to preserve tab contents.
+	 */
+	private stripSplitIds(node: any): void {
+		if (!node || typeof node !== 'object') return;
 
-        // Build rows based on Y coordinates
-        const grid: LeafState[][][] = [];
-        let currentRow: LeafState[][] = [];
-        let lastY = groupsWithPos[0].pos.y;
+		// Remove ID from split nodes only
+		if (node.type === 'split') {
+			delete node.id;
+		}
 
-        for (const item of groupsWithPos) {
-            if (Math.abs(item.pos.y - lastY) > 10) {
-                if (currentRow.length > 0) grid.push(currentRow);
-                currentRow = [];
-                lastY = item.pos.y;
-            }
-            currentRow.push(item.group);
-        }
-        if (currentRow.length > 0) grid.push(currentRow);
+		// Recursively process children
+		if (Array.isArray(node.children)) {
+			for (const child of node.children) {
+				this.stripSplitIds(child);
+			}
+		}
+	}
 
-        return grid;
-    }
+	/**
+	 * Transform a node for 90° clockwise rotation.
+	 * Rules: horizontal→vertical (reverse children), vertical→horizontal (keep order)
+	 */
+	private transformNodeForClockwiseRotation(node: any): void {
+		if (!node || typeof node !== 'object') return;
 
-    /**
-     * Rotate grid 90° clockwise: grid[row][col] → rotated[col][rows-1-row]
-     */
-    private rotateGrid90Clockwise(grid: LeafState[][][]): LeafState[][][] {
-        const rows = grid.length;
-        const cols = grid[0].length;
+		if (node.type === 'split' && Array.isArray(node.children)) {
+			let direction = node.direction;
 
-        const rotated: LeafState[][][] = Array.from({length: cols}, () => []);
+			// Detect direction from workspace if missing
+			if (!direction) {
+				const splitEl = this.findSplitElement(node.id);
+				if (splitEl) {
+					direction = this.inferSplitDirection(splitEl);
+				}
+				if (!direction) {
+					console.warn('[next-tab-group] Could not detect split direction, assuming vertical');
+					direction = 'vertical';
+				}
+			}
 
-        for (let row = 0; row < rows; row++) {
-            for (let col = 0; col < cols; col++) {
-                const newRow = col;
-                const newCol = rows - 1 - row;
-                rotated[newRow][newCol] = grid[row][col];
-            }
-        }
+			const originalDirection = direction;
+			console.log(`[next-tab-group] Transforming split: ${originalDirection} → ${originalDirection === 'horizontal' ? 'vertical' : 'horizontal'}`);
 
-        return rotated;
-    }
+			// Apply rotation transformation
+			if (originalDirection === 'horizontal') {
+				node.direction = 'vertical';
+				node.children.reverse();
+				console.log('[next-tab-group]   Reversed children');
+			} else if (originalDirection === 'vertical') {
+				node.direction = 'horizontal';
+				console.log('[next-tab-group]   Kept children order');
+			}
 
-    /**
-     * Rebuild workspace from grid using TWO-PASS approach
-     */
-    private async rebuildFromGrid(grid: LeafState[][][]) {
-        // Detach all but base leaf
-        const allLeaves: WorkspaceLeaf[] = [];
-        this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
-            allLeaves.push(leaf);
-        });
+			// Recursively transform children
+			for (const child of node.children) {
+				this.transformNodeForClockwiseRotation(child);
+			}
+		}
+	}
 
-        const baseLeaf = allLeaves[0];
-        for (let i = 1; i < allLeaves.length; i++) {
-            allLeaves[i].detach();
-        }
+	/**
+	 * Find the workspace split element by ID.
+	 */
+	private findSplitElement(splitId: string): any | null {
+		if (!splitId) return null;
+		const wsAny = this.app.workspace as any;
+		if (wsAny.rootSplit) {
+			return this.findSplitById(wsAny.rootSplit, splitId);
+		}
+		return null;
+	}
 
-        await baseLeaf.setViewState({ type: 'empty' });
-        await new Promise(resolve => setTimeout(resolve, 50));
+	/**
+	 * Recursively search for a split by ID.
+	 */
+	private findSplitById(split: any, targetId: string): any {
+		if (!split) return null;
+		if (split.id === targetId) return split;
+		if (split.children) {
+			for (const child of split.children) {
+				const found = this.findSplitById(child, targetId);
+				if (found) return found;
+			}
+		}
+		return null;
+	}
 
-        const rows = grid.length;
-        const cols = grid[0].length;
+	/**
+	 * Infer split direction from the workspace split object.
+	 */
+	private inferSplitDirection(split: any): string | null {
+		if (split.direction) return split.direction;
+		const containerEl = split.containerEl;
+		if (containerEl) {
+			if (containerEl.classList.contains('mod-vertical')) return 'vertical';
+			if (containerEl.classList.contains('mod-horizontal')) return 'horizontal';
+		}
+		return null;
+	}
 
-        console.log(`[next-tab-group] Rebuilding ${rows}×${cols} grid`);
+	/**
+	 * Restore focus to the originally active tab.
+	 */
+	private restoreActiveTab(activeFileInfo: {file: string | null, type: string}) {
+		let restored = false;
+		this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
+			if (restored) return;
+			const vs = leaf.getViewState();
+			if (vs.type !== activeFileInfo.type) return;
 
-        // PASS 1: Build split structure with empty leaves
-        const leafMap = new Map<WorkspaceLeaf, LeafState[]>();
-        await this.buildGridStructure(baseLeaf, rows, cols, 0, 0, rows, cols, grid, leafMap);
+			const leafFile = (vs.state as any)?.file;
+			if (activeFileInfo.file && leafFile === activeFileInfo.file) {
+				this.app.workspace.setActiveLeaf(leaf, { focus: true });
+				console.log(`[next-tab-group] ✓ Focus restored to: ${activeFileInfo.file}`);
+				restored = true;
+			} else if (!activeFileInfo.file && vs.type === activeFileInfo.type) {
+				this.app.workspace.setActiveLeaf(leaf, { focus: true });
+				console.log(`[next-tab-group] ✓ Focus restored to: ${activeFileInfo.type}`);
+				restored = true;
+			}
+		});
 
-        console.log(`[next-tab-group] Pass 1: Created ${leafMap.size} empty leaves`);
+		if (!restored) {
+			console.warn(`[next-tab-group] Could not restore focus to: ${activeFileInfo.file || activeFileInfo.type}`);
+		}
+	}
 
-        // PASS 2: Populate all leaves with content
-        for (const [leaf, group] of leafMap.entries()) {
-            if (group.length === 0) continue;
 
-            await leaf.setViewState(group[0].viewState, group[0].ephemeralState);
-            const tabGroup = leaf.parent;
-
-            for (let i = 1; i < group.length; i++) {
-                const newLeaf = this.app.workspace.createLeafInParent(tabGroup, i);
-                await newLeaf.setViewState(group[i].viewState, group[i].ephemeralState);
-            }
-        }
-
-        console.log(`[next-tab-group] Pass 2: Populated ${leafMap.size} leaves`);
-    }
-
-    /**
-     * Recursively build grid structure
-     */
-    private async buildGridStructure(
-        currentLeaf: WorkspaceLeaf,
-        totalRows: number,
-        totalCols: number,
-        startRow: number,
-        startCol: number,
-        numRows: number,
-        numCols: number,
-        grid: LeafState[][][],
-        leafMap: Map<WorkspaceLeaf, LeafState[]>
-    ): Promise<void> {
-        // Base case: single cell
-        if (numRows === 1 && numCols === 1) {
-            leafMap.set(currentLeaf, grid[startRow][startCol]);
-            return;
-        }
-
-        // Recursive case: split the region
-        if (numRows > 1) {
-            // Split horizontally (top/bottom)
-            const splitRow = Math.floor(numRows / 2);
-
-            await this.buildGridStructure(currentLeaf, totalRows, totalCols, startRow, startCol, splitRow, numCols, grid, leafMap);
-
-            this.app.workspace.setActiveLeaf(currentLeaf, { focus: false });
-            (this.app as any).commands.executeCommandById('workspace:split-horizontal');
-            await new Promise(resolve => setTimeout(resolve, 50));
-
-            const newLeaf = this.app.workspace.activeLeaf;
-            if (newLeaf) {
-                await this.buildGridStructure(newLeaf, totalRows, totalCols, startRow + splitRow, startCol, numRows - splitRow, numCols, grid, leafMap);
-            }
-        } else {
-            // Split vertically (left/right)
-            const splitCol = Math.floor(numCols / 2);
-
-            await this.buildGridStructure(currentLeaf, totalRows, totalCols, startRow, startCol, numRows, splitCol, grid, leafMap);
-
-            this.app.workspace.setActiveLeaf(currentLeaf, { focus: false });
-            (this.app as any).commands.executeCommandById('workspace:split-vertical');
-            await new Promise(resolve => setTimeout(resolve, 50));
-
-            const newLeaf = this.app.workspace.activeLeaf;
-            if (newLeaf) {
-                await this.buildGridStructure(newLeaf, totalRows, totalCols, startRow, startCol + splitCol, numRows, numCols - splitCol, grid, leafMap);
-            }
-        }
-    }
-
-    /**
-     * Restore focus to the originally active tab
-     */
-    private restoreActiveTab(activeFileInfo: {file: string | null, type: string}) {
-        let restored = false;
-
-        this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
-            if (restored) return;
-
-            const vs = leaf.getViewState();
-            if (vs.type !== activeFileInfo.type) return;
-
-            const leafFile = (vs.state as any)?.file;
-            if (activeFileInfo.file && leafFile === activeFileInfo.file) {
-                this.app.workspace.setActiveLeaf(leaf, { focus: true });
-                console.log(`[next-tab-group] ✓ Focus restored to: ${activeFileInfo.file}`);
-                restored = true;
-            } else if (!activeFileInfo.file && vs.type === activeFileInfo.type) {
-                this.app.workspace.setActiveLeaf(leaf, { focus: true });
-                console.log(`[next-tab-group] ✓ Focus restored to: ${activeFileInfo.type}`);
-                restored = true;
-            }
-        });
-
-        if (!restored) {
-            console.warn(`[next-tab-group] Could not restore focus to: ${activeFileInfo.file || activeFileInfo.type}`);
-        }
-    }
-
-    // ------------------------------------------------------------------------
     // Debug commands
     // ------------------------------------------------------------------------
 
