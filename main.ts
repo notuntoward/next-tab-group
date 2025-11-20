@@ -173,43 +173,72 @@ export default class NextTabGroupPlugin extends Plugin {
     // ------------------------------------------------------------------------
 
     private async collectTabs() {
-        const activeLeaf = this.app.workspace.activeLeaf;
-        if (!activeLeaf) return;
+        const ws = this.app.workspace as any;
+        const activeLeaf = ws.activeLeaf;
+        
+        // 1. Get the FULL current layout (includes left, right, floating, and main)
+        const layout = ws.getLayout();
+        
+        // 2. Extract leaves ONLY from the MAIN area
+        // We specifically target 'layout.main' so we don't accidentally 
+        // collect tabs from the sidebars (like the File Explorer or Outline).
+        const mainRoot = layout.main;
+        const allLeaves: any[] = [];
+        this.extractLeaves(mainRoot, allLeaves);
 
-        const activeTabGroup: any = activeLeaf.parent;
-        if (!(activeTabGroup instanceof WorkspaceTabs)) {
+        if (allLeaves.length <= 1) {
+            console.log("No tabs to collect.");
             return;
         }
 
-        const leavesToMove: WorkspaceLeaf[] = [];
-        this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
-            if (leaf.parent !== activeTabGroup) {
-                leavesToMove.push(leaf);
-            }
-        });
+        // 3. Prepare the new Main Layout structure
+        const activeLeafId = activeLeaf ? activeLeaf.id : null;
 
-        for (const leaf of leavesToMove) {
-            const viewState = leaf.getViewState();
-            const ephemeralState = leaf.getEphemeralState();
+        const newMain = {
+            id: 'root-split', // Arbitrary ID for the new container
+            type: 'split',
+            direction: 'vertical',
+            children: [
+                {
+                    type: 'tabs',
+                    children: allLeaves, // We move all existing leaves here
+                    currentTab: activeLeafId ? allLeaves.findIndex(l => l.id === activeLeafId) : 0
+                }
+            ]
+        };
 
-            const children = (activeTabGroup as any).children as WorkspaceLeaf[] | undefined;
-            const index = Array.isArray(children) ? children.length : -1;
+        // 4. Update the layout object IN PLACE
+        // CRITICAL: This keeps layout.left and layout.right untouched,
+        // preventing sidebars from resetting or popping open.
+        layout.main = newMain;
 
-            const newLeaf = this.app.workspace.createLeafInParent(
-                activeTabGroup,
-                index
-            );
-            await newLeaf.setViewState(viewState, ephemeralState);
+        // 5. Apply
+        console.log('Collecting tabs via Layout API...');
+        await ws.setLayout(layout);
+        
+        // 6. Restore Focus
+        if (activeLeaf) {
+            ws.setActiveLeaf(activeLeaf, { focus: true });
         }
-
-        for (const leaf of leavesToMove) {
-            leaf.detach();
-        }
-
-        this.app.workspace.setActiveLeaf(activeLeaf, { focus: true });
     }
 
-	// ------------------------------------------------------------------------
+    // Helper to extract all leaves from a node tree
+    private extractLeaves(node: any, collection: any[]) {
+        if (!node || typeof node !== 'object') return;
+
+        if (node.type === 'leaf') {
+            collection.push(node);
+            return;
+        }
+
+        if (node.children && Array.isArray(node.children)) {
+            for (const child of node.children) {
+                this.extractLeaves(child, collection);
+            }
+        }
+    }
+
+  	// ------------------------------------------------------------------------
 	// Rotate tab groups - Smart Wrapper Strategy
 	// ------------------------------------------------------------------------
 
