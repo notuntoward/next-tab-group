@@ -1,6 +1,6 @@
 # Next Tab Group
 
-This plugin provides commands for efficient tab group navigation and workspace manipulation in Obsidian — inspired by Emacs window commands.  Note the [Quick Explorer Plugin Side Effect](#quick-explorer-plugin-side-effect)
+This plugin provides commands for efficient tab group navigation and workspace manipulation in Obsidian — inspired by Emacs window commands.  Note the [Quick Explorer Plugin Side Effect](#quick-explorer-plugin-side-effect).
 
 # Commands
 
