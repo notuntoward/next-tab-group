@@ -1,6 +1,6 @@
 # Next Tab Group
 
-This plugin provides commands for efficient tab group navigation and workspace manipulation in Obsidian — inspired by Emacs window commands.
+This plugin provides commands for efficient tab group navigation and workspace manipulation in Obsidian — inspired by Emacs window commands.  Note the [Quick Explorer Plugin Side Effect](#quick-explorer-plugin-side-effect)
 
 # Commands
 
@@ -96,6 +96,9 @@ Performs a recursive **90° Clockwise Rotation** of the entire workspace layout.
 │                           │
 └───────────────────────────┘
 ```
+# Quick Explorer Plugin Side Effect
+
+Rotating tab groups forces a workspace rebuild, which may cause Quick Explorer to duplicate its status bar breadcrumbs. This is because Quick Explorer reacts to the rapid recreation of tabs. A quick fix is to reload the Quick Explorer plugin or restart Obsidian if the status bar becomes cluttered.
 
 # Setting Hotkeys
 
