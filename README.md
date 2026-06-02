@@ -103,7 +103,18 @@ Performs a recursive **90° Clockwise Rotation** of the entire workspace layout.
 ```
 # Quick Explorer Plugin Side Effect
 
-Rotating tab groups forces a workspace rebuild, which may cause Quick Explorer to duplicate its status bar breadcrumbs. This is because Quick Explorer reacts to the rapid recreation of tabs. A quick fix is to reload the Quick Explorer plugin or restart Obsidian if the status bar becomes cluttered.
+Rotating tab groups forces a workspace rebuild, which may cause Quick Explorer to duplicate its status bar breadcrumbs along the bottom of the screen. This is because Quick Explorer reacts to the rapid recreation of tabs.
+
+Recommended workaround: hide Quick Explorer's status bar breadcrumbs. Quick Explorer can show breadcrumbs in Obsidian's tab title bars on recent Obsidian versions, so disabling the status bar breadcrumbs avoids the duplicated bottom-bar elements without changing this plugin's behavior.
+
+To apply the workaround:
+
+1. Install or enable the Style Settings community plugin.
+2. Open **Settings → Style Settings → Quick Explorer**.
+3. Disable Quick Explorer's default/status bar breadcrumbs.
+4. Keep Quick Explorer's tab title bar breadcrumbs enabled if you still want breadcrumb navigation.
+
+If the status bar is already cluttered, reload the Quick Explorer plugin or restart Obsidian once after changing the setting.
 
 # Setting Hotkeys
 
