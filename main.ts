@@ -1,7 +1,6 @@
 import {
     Plugin,
     WorkspaceLeaf,
-    WorkspaceTabs,
     ViewState
 } from 'obsidian';
 import type { WorkspaceParent } from 'obsidian';
@@ -34,21 +33,7 @@ export default class NextTabGroupPlugin extends Plugin {
             }
         });
 
-        this.addCommand({
-            id: 'preview-rotate-tab-groups-layout',
-            name: 'Preview rotate tab groups (layout JSON, dry run)',
-            callback: () => {
-                this.previewRotateTabGroupsLayout();
-            }
-        });
 
-        this.addCommand({
-            id: 'log-layout-splits-layout',
-            name: 'Log layout splits (layout JSON, debug)',
-            callback: () => {
-                this.logLayoutSplitsLayout();
-            }
-        });
     }
 
     // ------------------------------------------------------------------------
@@ -474,67 +459,6 @@ export default class NextTabGroupPlugin extends Plugin {
 	}
 
 
-    // Debug commands
-    // ------------------------------------------------------------------------
-
-    private previewRotateTabGroupsLayout() {
-        const wsAny = this.app.workspace as any;
-        const layout = wsAny.getLayout?.();
-        if (!layout) return;
-
-        const main = (layout as any).main ?? layout;
-        console.log('--- Preview ---');
-        const stats: LayoutRotationStats = { splitsVisited: 0, splitsFlipped: 0 };
-        this.flipAllSplitsInLayout(main, true, 0, stats);
-        console.log('--- End ---');
-    }
-
-    private flipAllSplitsInLayout(node: any, dryRun: boolean, depth: number, stats: LayoutRotationStats): void {
-        if (!node || typeof node !== 'object') return;
-
-        if (node.type === 'split') {
-            stats.splitsVisited++;
-            const before = node.direction;
-            const after = before === 'horizontal' ? 'vertical' : 'horizontal';
-            if (dryRun) {
-                console.log(`${'  '.repeat(depth)}Would flip: ${before} -> ${after}`);
-            }
-            stats.splitsFlipped++;
-        }
-
-        const children = (node as any).children;
-        if (Array.isArray(children)) {
-            for (const child of children) {
-                this.flipAllSplitsInLayout(child, dryRun, depth + 1, stats);
-            }
-        }
-    }
-
-    private logLayoutSplitsLayout() {
-        const wsAny = this.app.workspace as any;
-        const layout = wsAny.getLayout?.();
-        if (!layout) return;
-
-        const main = (layout as any).main ?? layout;
-        console.log('--- Layout ---');
-        this.logSplitsInLayout(main, 0);
-        console.log('--- End ---');
-    }
-
-    private logSplitsInLayout(node: any, depth: number) {
-        if (!node || typeof node !== 'object') return;
-
-        if (node.type === 'split') {
-            console.log(`${'  '.repeat(depth)}split: ${node.direction}`);
-        }
-
-        const children = (node as any).children;
-        if (Array.isArray(children)) {
-            for (const child of children) {
-                this.logSplitsInLayout(child, depth + 1);
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -545,11 +469,6 @@ interface LeafPosition {
     leaf: WorkspaceLeaf;
     tabGroup: WorkspaceParent;
     position: { x: number; y: number };
-}
-
-interface LayoutRotationStats {
-    splitsVisited: number;
-    splitsFlipped: number;
 }
 
 interface LeafState {
