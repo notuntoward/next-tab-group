@@ -11,8 +11,8 @@ export default class NextTabGroupPlugin extends Plugin {
 
     async onload() {
         this.addCommand({
-            id: 'next-tab-group',
-            name: 'Next tab group',
+            id: 'next',
+            name: 'Next',
             callback: () => {
                 this.cycleTabGroups();
             }
@@ -317,7 +317,7 @@ export default class NextTabGroupPlugin extends Plugin {
 		}
 
 		// Wait for layout to settle
-		await new Promise(resolve => setTimeout(resolve, 100));
+		await new Promise(resolve => window.setTimeout(resolve, 100));
 
 		// RESTORE: Active tab focus
 		if (activeFileInfo) {

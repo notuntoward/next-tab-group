@@ -1,5 +1,10 @@
 # Next Tab Group
 
+[![Build](https://github.com/notuntoward/next-tab-group/actions/workflows/build.yml/badge.svg)](https://github.com/notuntoward/next-tab-group/actions/workflows/build.yml)
+[![CodeQL](https://github.com/notuntoward/next-tab-group/actions/workflows/codeql.yml/badge.svg)](https://github.com/notuntoward/next-tab-group/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://github.com/notuntoward/next-tab-group/actions/workflows/scorecard.yml/badge.svg)](https://github.com/notuntoward/next-tab-group/actions/workflows/scorecard.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/notuntoward/next-tab-group/badge)](https://securityscorecards.dev/viewer/?uri=github.com/notuntoward/next-tab-group)
+
 This plugin provides commands for efficient tab group navigation and workspace manipulation in Obsidian — inspired by Emacs window commands.  Note the [Quick Explorer Plugin Side Effect](#quick-explorer-plugin-side-effect).
 
 # Commands
