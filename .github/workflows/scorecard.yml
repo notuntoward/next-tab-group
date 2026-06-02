@@ -4,7 +4,7 @@ on:
   branch_protection_rule:
   push:
     branches: [master, main]
-    tags: ['v*']
+    tags: ['*']
   release:
     types: [published]
   schedule:

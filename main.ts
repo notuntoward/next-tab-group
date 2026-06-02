@@ -1,7 +1,6 @@
 import {
     Plugin,
-    WorkspaceLeaf,
-    ViewState
+    WorkspaceLeaf
 } from 'obsidian';
 import type { WorkspaceParent } from 'obsidian';
 
@@ -32,8 +31,6 @@ export default class NextTabGroupPlugin extends Plugin {
                 this.rotateTabGroups();
             }
         });
-
-
     }
 
     // ------------------------------------------------------------------------
@@ -172,7 +169,6 @@ export default class NextTabGroupPlugin extends Plugin {
         this.extractLeaves(mainRoot, allLeaves);
 
         if (allLeaves.length <= 1) {
-            console.log("No tabs to collect.");
             return;
         }
 
@@ -198,7 +194,6 @@ export default class NextTabGroupPlugin extends Plugin {
         layout.main = newMain;
 
         // 5. Apply
-        console.log('Collecting tabs via Layout API...');
         await ws.setLayout(layout);
         
         // 6. Restore Focus
@@ -232,8 +227,6 @@ export default class NextTabGroupPlugin extends Plugin {
 	 * Works around root split's immutable direction by wrapping content.
 	 */
 	private async rotateTabGroups() {
-		console.log('[next-tab-group] ===== ROTATION START =====');
-
 		// SAVE: Active tab for restoration
 		const activeLeaf = this.app.workspace.activeLeaf;
 		let activeFileInfo: {file: string | null, type: string} | null = null;
@@ -243,7 +236,6 @@ export default class NextTabGroupPlugin extends Plugin {
 				file: (vs.state as any)?.file || null,
 				type: vs.type
 			};
-			console.log(`[next-tab-group] Active tab: ${activeFileInfo.file || activeFileInfo.type}`);
 		}
 
 		// Get current layout
@@ -255,25 +247,20 @@ export default class NextTabGroupPlugin extends Plugin {
 		}
 
 		const root = layout.main;
-		console.log('[next-tab-group] Root direction:', root.direction);
 
 		// Detect if root is already wrapped
 		const isWrapped = this.isAlreadyWrapped(root);
-		console.log('[next-tab-group] Root is wrapped:', isWrapped);
 
 		let rotatedLayout: any;
 
 		if (isWrapped) {
 			// Already wrapped - rotate the wrapper content directly
-			console.log('[next-tab-group] Rotating existing wrapper');
 			rotatedLayout = JSON.parse(JSON.stringify(layout));
 			const wrapper = rotatedLayout.main.children[0];
 			this.transformNodeForClockwiseRotation(wrapper);
 			this.stripSplitIds(wrapper);
 		} else {
 			// Not wrapped - need to wrap the rotated content
-			console.log('[next-tab-group] Creating new wrapper');
-
 			// Transform root's children
 			const transformedRoot = JSON.parse(JSON.stringify(root));
 			this.transformNodeForClockwiseRotation(transformedRoot);
@@ -290,12 +277,9 @@ export default class NextTabGroupPlugin extends Plugin {
 			};
 		}
 
-		console.log('[next-tab-group] Applying rotated layout');
-
 		// Apply the layout
 		try {
 			await wsAny.setLayout(rotatedLayout);
-			console.log('[next-tab-group] ✓ Layout applied');
 		} catch (error) {
 			console.error('[next-tab-group] Failed to apply layout:', error);
 			return;
@@ -308,8 +292,6 @@ export default class NextTabGroupPlugin extends Plugin {
 		if (activeFileInfo) {
 			this.restoreActiveTab(activeFileInfo);
 		}
-
-		console.log('[next-tab-group] ===== ROTATION COMPLETE =====');
 	}
 
 	/**
@@ -372,16 +354,13 @@ export default class NextTabGroupPlugin extends Plugin {
 			}
 
 			const originalDirection = direction;
-			console.log(`[next-tab-group] Transforming split: ${originalDirection} → ${originalDirection === 'horizontal' ? 'vertical' : 'horizontal'}`);
 
 			// Apply rotation transformation
 			if (originalDirection === 'horizontal') {
 				node.direction = 'vertical';
 				node.children.reverse();
-				console.log('[next-tab-group]   Reversed children');
 			} else if (originalDirection === 'vertical') {
 				node.direction = 'horizontal';
-				console.log('[next-tab-group]   Kept children order');
 			}
 
 			// Recursively transform children
@@ -444,11 +423,9 @@ export default class NextTabGroupPlugin extends Plugin {
 			const leafFile = (vs.state as any)?.file;
 			if (activeFileInfo.file && leafFile === activeFileInfo.file) {
 				this.app.workspace.setActiveLeaf(leaf, { focus: true });
-				console.log(`[next-tab-group] ✓ Focus restored to: ${activeFileInfo.file}`);
 				restored = true;
 			} else if (!activeFileInfo.file && vs.type === activeFileInfo.type) {
 				this.app.workspace.setActiveLeaf(leaf, { focus: true });
-				console.log(`[next-tab-group] ✓ Focus restored to: ${activeFileInfo.type}`);
 				restored = true;
 			}
 		});
@@ -469,10 +446,4 @@ interface LeafPosition {
     leaf: WorkspaceLeaf;
     tabGroup: WorkspaceParent;
     position: { x: number; y: number };
-}
-
-interface LeafState {
-    viewState: ViewState;
-    ephemeralState: any;
-    isActive: boolean;
 }

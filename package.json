@@ -1,7 +1,7 @@
 {
   "name": "next-tab-group",
   "version": "1.0.0",
-  "description": "Spatially-aware cycling through tab groups and sidebars in Obsidian",
+  "description": "Cycle between tab groups, collect tabs into one group, and rotate the workspace layout.",
   "main": "main.js",
   "scripts": {
     "lint": "eslint . --max-warnings=0",
@@ -15,7 +15,7 @@
     "navigation",
     "cycling"
   ],
-  "author": "",
+  "author": "notuntoward",
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^9.39.4",

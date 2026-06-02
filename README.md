@@ -5,13 +5,13 @@
 [![OpenSSF Scorecard](https://github.com/notuntoward/next-tab-group/actions/workflows/scorecard.yml/badge.svg)](https://github.com/notuntoward/next-tab-group/actions/workflows/scorecard.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/notuntoward/next-tab-group/badge)](https://securityscorecards.dev/viewer/?uri=github.com/notuntoward/next-tab-group)
 
-This plugin provides commands for efficient tab group navigation and workspace manipulation in Obsidian — inspired by Emacs window commands.  Note the [Quick Explorer Plugin Side Effect](#quick-explorer-plugin-side-effect).
+This plugin provides commands for efficient tab group navigation and workspace manipulation in Obsidian, inspired by Emacs window commands. Note the [Quick Explorer Plugin Side Effect](#quick-explorer-plugin-side-effect).
 
 # Commands
 
-## Next Tab Group
+## Next
 
-**Command ID:** `next-tab-group`
+**Command ID:** `next`
 
 Cycles your cursor between “tab groups”: whole windows with individual tabs inside. The cycling is similar to the Emacs `other-window` command:
 
@@ -25,7 +25,7 @@ Cycles your cursor between “tab groups”: whole windows with individual tabs 
 └───────────┴───────────┘
 ```
 
-Pressing “Next Tab Group”: Group 1 → Group 2 → Group 1 → …
+Pressing the Next command: Group 1 -> Group 2 -> Group 1 -> ...
 
 **Four tab groups in a 2×2 grid**:
 ```
@@ -36,7 +36,7 @@ Pressing “Next Tab Group”: Group 1 → Group 2 → Group 1 → …
 └──────────┴──────────┘
 ```
 
-Order: Top L → Top R → Bot L → Bot R → Top L → …
+Order: Top L -> Top R -> Bot L -> Bot R -> Top L -> ...
 
 The command remembers which tab was active in each group, so switching between groups restores your previous position.
 
@@ -44,7 +44,7 @@ The command remembers which tab was active in each group, so switching between g
 
 **Command ID:** `collect-tabs`
 
-Gathers **all tabs from all other tab groups** into the currently active tab group, then closes all the now-empty tab groups. This is similar to the Emacs `delete-other-windows`
+Gathers **all tabs from all other tab groups** into the currently active tab group, then closes all the now-empty tab groups. This is similar to the Emacs `delete-other-windows` command.
 
 **Before**:
 ```
@@ -61,7 +61,7 @@ Gathers **all tabs from all other tab groups** into the currently active tab gro
 └─────────────────────────────────────┘
 ```
 
-All files remain open; the layout is simplified into a single focused group.  Your cursor stays on the tab you started with
+All files remain open; the layout is simplified into a single focused group. Your cursor stays on the tab you started with.
 
 ## Rotate Tab Groups
 
@@ -118,9 +118,9 @@ If the status bar is already cluttered, reload the Quick Explorer plugin or rest
 
 # Setting Hotkeys
 
-1. Go to **Settings → Hotkeys** in Obsidian.  
+1. Go to **Settings -> Hotkeys** in Obsidian.
 2. Search for:
-   - `Next tab group`
+   - `Next`
    - `Collect tabs`
    - `Rotate tab groups`
 3. Assign your preferred shortcuts (e.g., `Cmd+K` sequences or Function keys).

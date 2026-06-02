@@ -3,7 +3,7 @@ name: CodeQL
 on:
   push:
     branches: [master, main]
-    tags: ['v*']
+    tags: ['*']
   pull_request:
     branches: [master, main]
   release:
