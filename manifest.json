@@ -2,7 +2,7 @@
   "id": "next-tab-group",
   "name": "Next Tab Group",
   "version": "1.0.0",
-  "minAppVersion": "0.16.3",
+    "minAppVersion": "1.6.0",
   "description": "Cycle between tab groups, collect tabs into one group, and rotate the workspace layout.",
   "author": "notuntoward",
   "authorUrl": "https://github.com/notuntoward",

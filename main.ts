@@ -62,44 +62,44 @@ export default class NextTabGroupPlugin extends Plugin {
         return positions;
     }
 
-    private getRelativePosition(leaf: WorkspaceLeaf): { x: number; y: number } {
-        // Use real DOM boundaries
-        try {
-            const tabGroup = leaf.parent;
-            const containerEl = (tabGroup as any).containerEl;
-            if (containerEl && containerEl.getBoundingClientRect) {
-                const rect = containerEl.getBoundingClientRect();
-                return { x: rect.left, y: rect.top };
-            }
-        } catch {
-            // fall through to fallback
-        }
+     private getRelativePosition(leaf: WorkspaceLeaf): { x: number; y: number } {
+         // Use real DOM boundaries
+         try {
+             const tabGroup = leaf.parent;
+             const containerEl = (tabGroup as any).containerEl;
+             if (containerEl && containerEl.getBoundingClientRect) {
+                 const rect = containerEl.getBoundingClientRect();
+                 return { x: rect.left, y: rect.top };
+             }
+         } catch {
+             // fall through to fallback
+         }
 
-        // Fallback: approximate via split hierarchy
-        let x = 0;
-        let y = 0;
-        let parent: any = leaf.parent;
-        let childRef: any = leaf;
+         // Fallback: approximate via split hierarchy
+         let x = 0;
+         let y = 0;
+         let parent: any = leaf.parent;
+         let childRef: WorkspaceLeaf = leaf;
 
-        while (parent) {
-            const children = (parent as any).children as any[] | undefined;
-            if (parent && Array.isArray(children)) {
-                const index = children.indexOf(childRef);
-                if (index >= 0) {
-                    const dir = (parent as any).direction;
-                    if (dir === 'vertical') {
-                        x += index * 1000;
-                    } else if (dir === 'horizontal') {
-                        y += index * 1000;
-                    }
-                }
-            }
-            childRef = parent;
-            parent = parent.parent;
-        }
+         while (parent) {
+             const children = (parent as any).children as any[] | undefined;
+             if (parent && Array.isArray(children)) {
+                 const index = children.indexOf(childRef);
+                 if (index >= 0) {
+                     const dir = (parent as any).direction;
+                     if (dir === 'vertical') {
+                         x += index * 1000;
+                     } else if (dir === 'horizontal') {
+                         y += index * 1000;
+                     }
+                 }
+             }
+             childRef = parent;
+             parent = parent.parent;
+         }
 
-        return { x, y };
-    }
+         return { x, y };
+     }
 
     private sortLeavesSpatially(positions: LeafPosition[]): LeafPosition[] {
         return positions.sort((a, b) => {
@@ -238,9 +238,9 @@ export default class NextTabGroupPlugin extends Plugin {
 			};
 		}
 
-		// Get current layout
-		const wsAny = this.app.workspace as any;
-		const layout = wsAny.getLayout?.();
+        // Get current layout
+        const wsAny = this.app.workspace as any;
+        const layout = wsAny.getLayout?.();
 		if (!layout || !layout.main) {
 			console.error('[next-tab-group] Failed to get layout');
 			return;
@@ -277,13 +277,13 @@ export default class NextTabGroupPlugin extends Plugin {
 			};
 		}
 
-		// Apply the layout
-		try {
-			await wsAny.setLayout(rotatedLayout);
-		} catch (error) {
-			console.error('[next-tab-group] Failed to apply layout:', error);
-			return;
-		}
+        // Apply the layout
+        try {
+          await wsAny.setLayout(rotatedLayout);
+        } catch (error) {
+          console.error('[next-tab-group] Failed to apply layout:', error);
+          return;
+        }
 
 		// Wait for layout to settle
 		await new Promise(resolve => window.setTimeout(resolve, 100));
