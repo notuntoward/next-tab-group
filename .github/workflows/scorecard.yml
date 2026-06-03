@@ -12,14 +12,17 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  id-token: write
+  contents: read          # top-level: read-only
   security-events: write
 
 jobs:
   scorecard:
     name: OpenSSF Scorecard
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # ← moved here, to job level
+      security-events: write
 
     steps:
       - name: Checkout
