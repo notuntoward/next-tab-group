@@ -79,6 +79,16 @@ Performs a recursive **90° Clockwise Rotation** of the entire workspace layout.
 └─────────────┴─────────────┘      └─────────────┘
 ```
 
+<div style="display: flex; justify-content: center; gap: 1rem;">
+  <figure style="margin: 0; text-align: center;">
+    <img src="images/Greenlandic_Ocean.png" width="100%" />
+    <figcaption>Greenlandic Ocean</figcaption>
+  </figure>
+</div>
+
+<br>
+
+
 
 **More complex screen before:**
 ```text
