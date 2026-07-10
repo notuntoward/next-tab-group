@@ -111,6 +111,53 @@ Performs a recursive **90° Clockwise Rotation** of the entire workspace layout.
 │                           │
 └───────────────────────────┘
 ```
+
+## Deduplicate Tabs in Group
+
+**Command ID:** `dedupe-tabs-in-group`
+
+Removes duplicate tabs in the **current tab group** that point to the same file. For each duplicated file, the tab that survives is chosen in this order:
+
+1. The currently active tab (if it points to that file).
+2. The most recently visited tab in the current tab group (if recency is available).
+3. A stable fallback by leaf id.
+
+This command runs without confirmation by default. Enable confirmation in **Settings → Next Tab Group → Confirm before deduplicating in group** to show a dialog listing the tabs to be closed before running it.
+
+## Deduplicate Tabs in All Groups
+
+**Command ID:** `dedupe-tabs-in-all-groups`
+
+Scans **every tab group in the current window** and removes duplicate tabs that point to the same file, leaving at most one tab per note across the window. For each duplicated file, the surviving tab is chosen in this order:
+
+1. The currently active tab.
+2. The most recently visited tab in the current tab group.
+3. The most recently visited tab in any other group in the current window.
+4. A stable fallback by leaf id.
+
+This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all groups**.
+
+## Deduplicate Tabs in All Windows
+
+**Command ID:** `dedupe-tabs-in-all-windows`
+
+Scans **every tab in every window** (the main window and any pop-out windows) and removes duplicate tabs that point to the same file, leaving at most one tab per note across the entire workspace. The surviving tab is chosen in this order:
+
+1. The currently active tab.
+2. The most recently visited tab in the active tab group.
+3. The most recently visited tab in any other group in the active window.
+4. The most recently visited tab in any other window.
+5. A stable fallback by leaf id.
+
+This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all windows**.
+
+### What counts as a "duplicate"?
+
+Two tabs count as duplicates when they point to the same file in your vault. Tabs that aren't backed by a file (e.g. the graph view, settings, the daily note calendar) are ignored and never considered duplicates.
+
+### What if a tab's recency is unknown?
+
+The plugin tracks recency by listening for `active-leaf-change` events. After a vault restart, plugin reload, or the first time you run a dedupe command, recency may be unavailable for some tabs. In that case, a stable tie-break by leaf id is used so the result is deterministic.
 # Quick Explorer Plugin Side Effect
 
 Rotating tab groups forces a workspace rebuild, which may cause Quick Explorer to duplicate its status bar breadcrumbs along the bottom of the screen. This is because Quick Explorer reacts to the rapid recreation of tabs.
@@ -133,4 +180,7 @@ If the status bar is already cluttered, reload the Quick Explorer plugin or rest
    - `Next`
    - `Collect tabs`
    - `Rotate tab groups`
+   - `Deduplicate tabs in group`
+   - `Deduplicate tabs in all groups`
+   - `Deduplicate tabs in all windows`
 3. Assign your preferred shortcuts (e.g., `Cmd+K` sequences or Function keys).

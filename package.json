@@ -1,7 +1,7 @@
 {
   "name": "next-tab-group",
   "version": "1.0.0",
-  "description": "Cycle between tab groups, collect tabs into one group, and rotate the workspace layout.",
+  "description": "Cycle between tab groups, collect tabs into one group, rotate the workspace layout, and deduplicate tabs.",
   "main": "main.js",
   "scripts": {
     "lint": "eslint . --max-warnings=0",
