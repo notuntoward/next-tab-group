@@ -1,5 +1,6 @@
 import {
     Modal,
+    Notice,
     Plugin,
     PluginSettingTab,
     Setting,
@@ -53,6 +54,7 @@ interface WorkspaceLayout {
     main: WorkspaceLayoutNode;
     left?: WorkspaceLayoutNode;
     right?: WorkspaceLayoutNode;
+    floating?: Record<string, WorkspaceLayoutNode>;
 }
 
 interface WorkspaceLayoutNode {
@@ -172,13 +174,12 @@ export default class NextTabGroupPlugin extends Plugin {
     // ------------------------------------------------------------------------
 
     /**
-     * Get the workspace that owns a leaf. Each window has its own workspace,
-     * so this lets commands target the window containing the leaf instead of
-     * always using the main window's workspace.
+     * Get the workspace for a leaf. Note: Obsidian has only one Workspace
+     * instance (app.workspace) shared across all windows. This method exists
+     * for API consistency but always returns app.workspace.
      */
-    private getWorkspaceForLeaf(leaf: WorkspaceLeaf): Workspace {
-        const internal = leaf as unknown as WorkspaceItemInternal;
-        return internal.workspace ?? this.app.workspace;
+    private getWorkspaceForLeaf(_leaf: WorkspaceLeaf): Workspace {
+        return this.app.workspace;
     }
 
     /**
@@ -208,12 +209,7 @@ export default class NextTabGroupPlugin extends Plugin {
             }
         });
 
-        if (leafInFocusedWindow) {
-            const ws = this.getWorkspaceForLeaf(leafInFocusedWindow);
-            return ws.activeLeaf;
-        }
-
-        return globalActive;
+        return leafInFocusedWindow ?? globalActive;
     }
 
     // ------------------------------------------------------------------------
@@ -405,110 +401,65 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     // ------------------------------------------------------------------------
-    // Rotate tab groups - Smart Wrapper Strategy
+    // ------------------------------------------------------------------------
+    // Rotate tab groups — getLayout/setLayout, with pop-out safety guards
+    //
+    // Two guards before we touch the workspace layout:
+    //  1. Active leaf must be in the MAIN window. Pop-out windows are simply
+    //     skipped with a notice (per user direction: don't fight pop-outs).
+    //  2. There must be no pop-out windows in the layout at all. setLayout()
+    //     rebuilds the entire workspace from the layout object, and any
+    //     floating entries cause it to create new pop-out windows, duplicating
+    //     the ones already open. With zero pop-outs, setLayout() only rebuilds
+    //     the main editor area.
     // ------------------------------------------------------------------------
 
-    /**
-     * Rotate workspace layout 90° clockwise using smart wrapper strategy.
-     * Works around root split's immutable direction by wrapping content.
-     */
     private async rotateTabGroups() {
-        // SAVE: Active tab for restoration
         const activeLeaf = this.getActiveLeafInFocusedWindow();
-        const workspace = activeLeaf ? this.getWorkspaceForLeaf(activeLeaf) : this.app.workspace;
-        let activeFileInfo: { file: string | null, type: string } | null = null;
-        if (activeLeaf) {
-            const vs = activeLeaf.getViewState();
-            activeFileInfo = {
-                file: (vs.state as Record<string, unknown>)?.['file'] as string | null ?? null,
-                type: vs.type
-            };
-        }
+        if (!activeLeaf) return;
 
-        // Get current layout
-        const wsInternal = workspace as unknown as ObsidianWorkspaceInternal;
-        const layout = wsInternal.getLayout?.();
-        if (!layout || !layout.main) {
-            console.error('[next-tab-group] Failed to get layout');
+        if (!this.isMainWindow(activeLeaf)) {
+            new Notice('Rotate tab groups only works in the main Obsidian window.');
             return;
         }
 
-        const root = layout.main;
+        const ws = this.app.workspace as unknown as ObsidianWorkspaceInternal;
+        const layout = ws.getLayout();
+        if (!layout.main) return;
 
-        // Detect if root is already wrapped
-        const isWrapped = this.isAlreadyWrapped(root);
+        if (layout.floating && Object.keys(layout.floating).length > 0) {
+            new Notice('Close pop-out windows before rotating tab groups.');
+            return;
+        }
 
-        let rotatedLayout: WorkspaceLayout;
+        const rotatedMain = JSON.parse(JSON.stringify(layout.main)) as WorkspaceLayoutNode;
+        this.rotateLayoutNode(rotatedMain);
+        this.stripSplitIds(rotatedMain);
 
-        if (isWrapped) {
-            // Already wrapped - rotate the wrapper content directly
-            rotatedLayout = JSON.parse(JSON.stringify(layout)) as WorkspaceLayout;
-            const wrapper = rotatedLayout.main.children?.[0];
-            if (wrapper) {
-                this.transformNodeForClockwiseRotation(wrapper, workspace);
-                this.stripSplitIds(wrapper);
+        layout.main = rotatedMain;
+        await ws.setLayout(layout);
+    }
+
+    private rotateLayoutNode(node: WorkspaceLayoutNode): void {
+        if (!node || typeof node !== 'object') return;
+        if (node.type === 'split' && Array.isArray(node.children)) {
+            if (node.direction === 'horizontal') {
+                node.direction = 'vertical';
+                node.children.reverse();
+            } else if (node.direction === 'vertical') {
+                node.direction = 'horizontal';
             }
-        } else {
-            // Not wrapped - need to wrap the rotated content
-            const transformedRoot = JSON.parse(JSON.stringify(root)) as WorkspaceLayoutNode;
-            this.transformNodeForClockwiseRotation(transformedRoot, workspace);
-            this.stripSplitIds(transformedRoot);
-
-            // Wrap in a new split container
-            rotatedLayout = {
-                ...layout,
-                main: {
-                    type: 'split',
-                    direction: root.direction,
-                    children: [transformedRoot]
-                }
-            };
-        }
-
-        // Apply the layout
-        try {
-            await wsInternal.setLayout(rotatedLayout);
-        } catch (error) {
-            console.error('[next-tab-group] Failed to apply layout:', error);
-            return;
-        }
-
-        // Wait for layout to settle
-        await new Promise(resolve => window.setTimeout(resolve, 100));
-
-        // RESTORE: Active tab focus
-        if (activeFileInfo) {
-            this.restoreActiveTab(activeFileInfo, workspace);
+            for (const child of node.children) {
+                this.rotateLayoutNode(child);
+            }
         }
     }
 
-    /**
-     * Check if root is already wrapped (has single split child).
-     */
-    private isAlreadyWrapped(root: WorkspaceLayoutNode): boolean {
-        if (!root || root.type !== 'split' || !Array.isArray(root.children)) {
-            return false;
-        }
-
-        if (root.children.length === 1) {
-            const child = root.children[0];
-            return child !== undefined && child.type === 'split';
-        }
-
-        return false;
-    }
-
-    /**
-     * Strip IDs from split nodes to force Obsidian to recreate them.
-     * Keep IDs on leaf/tabs nodes to preserve tab contents.
-     */
     private stripSplitIds(node: WorkspaceLayoutNode): void {
         if (!node || typeof node !== 'object') return;
-
         if (node.type === 'split') {
             delete node.id;
         }
-
         if (Array.isArray(node.children)) {
             for (const child of node.children) {
                 this.stripSplitIds(child);
@@ -516,105 +467,9 @@ export default class NextTabGroupPlugin extends Plugin {
         }
     }
 
-    /**
-     * Transform a node for 90° clockwise rotation.
-     * Rules: horizontal→vertical (reverse children), vertical→horizontal (keep order)
-     */
-    private transformNodeForClockwiseRotation(node: WorkspaceLayoutNode, workspace: Workspace): void {
-        if (!node || typeof node !== 'object') return;
-
-        if (node.type === 'split' && Array.isArray(node.children)) {
-            let direction = node.direction;
-
-            if (!direction) {
-                const splitEl = this.findSplitElement(node.id ?? '', workspace);
-                if (splitEl) {
-                    direction = this.inferSplitDirection(splitEl) ?? undefined;
-                }
-                if (!direction) {
-                    console.warn('[next-tab-group] Could not detect split direction, assuming vertical');
-                    direction = 'vertical';
-                }
-            }
-
-            const originalDirection = direction;
-
-            if (originalDirection === 'horizontal') {
-                node.direction = 'vertical';
-                node.children.reverse();
-            } else if (originalDirection === 'vertical') {
-                node.direction = 'horizontal';
-            }
-
-            for (const child of node.children) {
-                this.transformNodeForClockwiseRotation(child, workspace);
-            }
-        }
-    }
-
-    /**
-     * Find the workspace split element by ID.
-     */
-    private findSplitElement(splitId: string, workspace: Workspace): WorkspaceContainerEl | null {
-        if (!splitId) return null;
-        const wsInternal = workspace as unknown as ObsidianWorkspaceInternal;
-        if (wsInternal.rootSplit) {
-            return this.findSplitById(wsInternal.rootSplit, splitId);
-        }
-        return null;
-    }
-
-    /**
-     * Recursively search for a split by ID.
-     */
-    private findSplitById(split: WorkspaceContainerEl, targetId: string): WorkspaceContainerEl | null {
-        if (!split) return null;
-        if ((split as WorkspaceContainerEl & { id?: string }).id === targetId) return split;
-        if (split.children) {
-            for (const child of split.children) {
-                const found = this.findSplitById(child, targetId);
-                if (found) return found;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Infer split direction from the workspace split object.
-     */
-    private inferSplitDirection(split: WorkspaceContainerEl): string | null {
-        if (split.direction) return split.direction;
-        const containerEl = split.containerEl;
-        if (containerEl && containerEl.instanceOf(HTMLElement)) {
-            if (containerEl.classList.contains('mod-vertical')) return 'vertical';
-            if (containerEl.classList.contains('mod-horizontal')) return 'horizontal';
-        }
-        return null;
-    }
-
-    /**
-     * Restore focus to the originally active tab.
-     */
-    private restoreActiveTab(activeFileInfo: { file: string | null, type: string }, workspace: Workspace) {
-        let restored = false;
-        workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
-            if (restored) return;
-            const vs = leaf.getViewState();
-            if (vs.type !== activeFileInfo.type) return;
-
-            const leafFile = (vs.state as Record<string, unknown>)?.['file'] as string | undefined;
-            if (activeFileInfo.file && leafFile === activeFileInfo.file) {
-                workspace.setActiveLeaf(leaf, { focus: true });
-                restored = true;
-            } else if (!activeFileInfo.file && vs.type === activeFileInfo.type) {
-                workspace.setActiveLeaf(leaf, { focus: true });
-                restored = true;
-            }
-        });
-
-        if (!restored) {
-            console.warn(`[next-tab-group] Could not restore focus to: ${activeFileInfo.file || activeFileInfo.type}`);
-        }
+    private isMainWindow(leaf: WorkspaceLeaf): boolean {
+        const container = leaf.getContainer();
+        return (container as unknown as { win?: Window }).win === window;
     }
 
     // ------------------------------------------------------------------------
