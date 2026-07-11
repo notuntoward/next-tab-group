@@ -184,3 +184,12 @@ If the status bar is already cluttered, reload the Quick Explorer plugin or rest
    - `Deduplicate tabs in all groups`
    - `Deduplicate tabs in all windows`
 3. Assign your preferred shortcuts (e.g., `Cmd+K` sequences or Function keys).
+
+# Running Tests
+
+```bash
+npm test
+npm run test:typecheck
+```
+
+Tests live in `tests/` and use Vitest with jsdom. They cover single-group, multi-group, and multi-window deduplication scenarios, survivor selection, confirmation modal behavior, and non-file tab handling.

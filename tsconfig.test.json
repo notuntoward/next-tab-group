@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "types": ["vitest/globals", "jsdom"]
+  },
+  "include": ["tests/**/*.ts", "vitest.config.ts", "main.ts"]
+}

@@ -1,10 +1,11 @@
 import {
+    Modal,
     Plugin,
     PluginSettingTab,
     Setting,
     WorkspaceLeaf,
 } from 'obsidian';
-import type { App, WorkspaceParent } from 'obsidian';
+import type { App, Workspace, WorkspaceParent } from 'obsidian';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -34,6 +35,10 @@ interface WorkspaceContainerEl extends WorkspaceParent {
     containerEl: HTMLElement;
     direction?: string;
     children?: WorkspaceContainerEl[];
+}
+
+interface WorkspaceItemInternal {
+    workspace?: Workspace;
 }
 
 interface ObsidianWorkspaceInternal {
@@ -121,6 +126,8 @@ export default class NextTabGroupPlugin extends Plugin {
 
         this.addSettingTab(new NextTabGroupSettingTab(this.app, this));
 
+        this.loadStyleSheet();
+
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', (leaf) => {
                 if (leaf) {
@@ -137,15 +144,87 @@ export default class NextTabGroupPlugin extends Plugin {
         await this.saveData(this.settings);
     }
 
+    private async loadStyleSheet() {
+        const adapter = this.app.vault.adapter;
+        let cssPath: string | null = null;
+        for (const candidate of [`${this.manifest.dir}/styles.css`, 'styles.css']) {
+            if (await adapter.exists(candidate)) {
+                cssPath = candidate;
+                break;
+            }
+        }
+        if (!cssPath) return;
+
+        try {
+            const css = await adapter.read(cssPath);
+            const styleEl = document.createElement('style');
+            styleEl.setAttribute('data-ntg-styles', '');
+            styleEl.textContent = css;
+            document.head.appendChild(styleEl);
+            this.register(() => styleEl.remove());
+        } catch (error) {
+            console.error('[next-tab-group] Failed to load styles.css:', error);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // Window-aware helpers
+    // ------------------------------------------------------------------------
+
+    /**
+     * Get the workspace that owns a leaf. Each window has its own workspace,
+     * so this lets commands target the window containing the leaf instead of
+     * always using the main window's workspace.
+     */
+    private getWorkspaceForLeaf(leaf: WorkspaceLeaf): Workspace {
+        const internal = leaf as unknown as WorkspaceItemInternal;
+        return internal.workspace ?? this.app.workspace;
+    }
+
+    /**
+     * Get the active leaf in the currently focused window. Falls back to
+     * app.workspace.activeLeaf when the focused window cannot be determined.
+     */
+    private getActiveLeafInFocusedWindow(): WorkspaceLeaf | null {
+        const globalActive = this.app.workspace.activeLeaf;
+
+        if (typeof activeWindow === 'undefined') {
+            return globalActive;
+        }
+
+        if (globalActive) {
+            const container = globalActive.getContainer();
+            if (container && container.win === activeWindow) {
+                return globalActive;
+            }
+        }
+
+        let leafInFocusedWindow: WorkspaceLeaf | null = null;
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            if (leafInFocusedWindow) return;
+            const container = leaf.getContainer();
+            if (container && container.win === activeWindow) {
+                leafInFocusedWindow = leaf;
+            }
+        });
+
+        if (leafInFocusedWindow) {
+            const ws = this.getWorkspaceForLeaf(leafInFocusedWindow);
+            return ws.activeLeaf;
+        }
+
+        return globalActive;
+    }
+
     // ------------------------------------------------------------------------
     // Tab group discovery & navigation
     // ------------------------------------------------------------------------
 
-    private collectLeavesWithPosition(): LeafPosition[] {
+    private collectLeavesWithPosition(workspace: Workspace): LeafPosition[] {
         const positions: LeafPosition[] = [];
         const allLeaves: WorkspaceLeaf[] = [];
 
-        this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
+        workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
             allLeaves.push(leaf);
         });
 
@@ -214,16 +293,18 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     private cycleTabGroups() {
-        const positions = this.collectLeavesWithPosition();
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const workspace = activeLeaf ? this.getWorkspaceForLeaf(activeLeaf) : this.app.workspace;
+
+        const positions = this.collectLeavesWithPosition(workspace);
         if (positions.length <= 1) {
             return;
         }
 
         const sorted = this.sortLeavesSpatially(positions);
-        const activeLeaf = this.app.workspace.activeLeaf;
 
         if (!activeLeaf) {
-            this.focusTabGroup(sorted[0]);
+            this.focusTabGroup(sorted[0], workspace);
             return;
         }
 
@@ -234,24 +315,24 @@ export default class NextTabGroupPlugin extends Plugin {
 
         const currentIndex = sorted.findIndex(pos => pos.tabGroup === activeTabGroup);
         if (currentIndex === -1) {
-            this.focusTabGroup(sorted[0]);
+            this.focusTabGroup(sorted[0], workspace);
             return;
         }
 
         const nextIndex = (currentIndex + 1) % sorted.length;
-        this.focusTabGroup(sorted[nextIndex]);
+        this.focusTabGroup(sorted[nextIndex], workspace);
     }
 
-    private focusTabGroup(position: LeafPosition) {
+    private focusTabGroup(position: LeafPosition, workspace: Workspace) {
         const tabGroup = position.tabGroup;
         const storedLeaf = this.tabGroupActiveLeaves.get(tabGroup);
 
         if (storedLeaf && storedLeaf.parent === tabGroup) {
-            this.app.workspace.setActiveLeaf(storedLeaf, { focus: true });
+            workspace.setActiveLeaf(storedLeaf, { focus: true });
             return;
         }
 
-        this.app.workspace.setActiveLeaf(position.leaf, { focus: true });
+        workspace.setActiveLeaf(position.leaf, { focus: true });
     }
 
     // ------------------------------------------------------------------------
@@ -259,8 +340,9 @@ export default class NextTabGroupPlugin extends Plugin {
     // ------------------------------------------------------------------------
 
     private async collectTabs() {
-        const ws = this.app.workspace as unknown as ObsidianWorkspaceInternal;
-        const activeLeaf = ws.activeLeaf;
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const workspace = activeLeaf ? this.getWorkspaceForLeaf(activeLeaf) : this.app.workspace;
+        const ws = workspace as unknown as ObsidianWorkspaceInternal;
 
         // 1. Get the FULL current layout (includes left, right, floating, and main)
         const layout = ws.getLayout();
@@ -277,7 +359,7 @@ export default class NextTabGroupPlugin extends Plugin {
         }
 
         // 3. Prepare the new Main Layout structure
-        const activeLeafId = activeLeaf ? activeLeaf.id : null;
+        const activeLeafId = activeLeaf ? (activeLeaf as WorkspaceLeafInternal).id : null;
 
         const newMain: WorkspaceLayoutNode = {
             id: 'root-split',
@@ -332,7 +414,8 @@ export default class NextTabGroupPlugin extends Plugin {
      */
     private async rotateTabGroups() {
         // SAVE: Active tab for restoration
-        const activeLeaf = this.app.workspace.activeLeaf;
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const workspace = activeLeaf ? this.getWorkspaceForLeaf(activeLeaf) : this.app.workspace;
         let activeFileInfo: { file: string | null, type: string } | null = null;
         if (activeLeaf) {
             const vs = activeLeaf.getViewState();
@@ -343,7 +426,7 @@ export default class NextTabGroupPlugin extends Plugin {
         }
 
         // Get current layout
-        const wsInternal = this.app.workspace as unknown as ObsidianWorkspaceInternal;
+        const wsInternal = workspace as unknown as ObsidianWorkspaceInternal;
         const layout = wsInternal.getLayout?.();
         if (!layout || !layout.main) {
             console.error('[next-tab-group] Failed to get layout');
@@ -362,13 +445,13 @@ export default class NextTabGroupPlugin extends Plugin {
             rotatedLayout = JSON.parse(JSON.stringify(layout)) as WorkspaceLayout;
             const wrapper = rotatedLayout.main.children?.[0];
             if (wrapper) {
-                this.transformNodeForClockwiseRotation(wrapper);
+                this.transformNodeForClockwiseRotation(wrapper, workspace);
                 this.stripSplitIds(wrapper);
             }
         } else {
             // Not wrapped - need to wrap the rotated content
             const transformedRoot = JSON.parse(JSON.stringify(root)) as WorkspaceLayoutNode;
-            this.transformNodeForClockwiseRotation(transformedRoot);
+            this.transformNodeForClockwiseRotation(transformedRoot, workspace);
             this.stripSplitIds(transformedRoot);
 
             // Wrap in a new split container
@@ -395,7 +478,7 @@ export default class NextTabGroupPlugin extends Plugin {
 
         // RESTORE: Active tab focus
         if (activeFileInfo) {
-            this.restoreActiveTab(activeFileInfo);
+            this.restoreActiveTab(activeFileInfo, workspace);
         }
     }
 
@@ -437,14 +520,14 @@ export default class NextTabGroupPlugin extends Plugin {
      * Transform a node for 90° clockwise rotation.
      * Rules: horizontal→vertical (reverse children), vertical→horizontal (keep order)
      */
-    private transformNodeForClockwiseRotation(node: WorkspaceLayoutNode): void {
+    private transformNodeForClockwiseRotation(node: WorkspaceLayoutNode, workspace: Workspace): void {
         if (!node || typeof node !== 'object') return;
 
         if (node.type === 'split' && Array.isArray(node.children)) {
             let direction = node.direction;
 
             if (!direction) {
-                const splitEl = this.findSplitElement(node.id ?? '');
+                const splitEl = this.findSplitElement(node.id ?? '', workspace);
                 if (splitEl) {
                     direction = this.inferSplitDirection(splitEl) ?? undefined;
                 }
@@ -464,7 +547,7 @@ export default class NextTabGroupPlugin extends Plugin {
             }
 
             for (const child of node.children) {
-                this.transformNodeForClockwiseRotation(child);
+                this.transformNodeForClockwiseRotation(child, workspace);
             }
         }
     }
@@ -472,9 +555,9 @@ export default class NextTabGroupPlugin extends Plugin {
     /**
      * Find the workspace split element by ID.
      */
-    private findSplitElement(splitId: string): WorkspaceContainerEl | null {
+    private findSplitElement(splitId: string, workspace: Workspace): WorkspaceContainerEl | null {
         if (!splitId) return null;
-        const wsInternal = this.app.workspace as unknown as ObsidianWorkspaceInternal;
+        const wsInternal = workspace as unknown as ObsidianWorkspaceInternal;
         if (wsInternal.rootSplit) {
             return this.findSplitById(wsInternal.rootSplit, splitId);
         }
@@ -512,19 +595,19 @@ export default class NextTabGroupPlugin extends Plugin {
     /**
      * Restore focus to the originally active tab.
      */
-    private restoreActiveTab(activeFileInfo: { file: string | null, type: string }) {
+    private restoreActiveTab(activeFileInfo: { file: string | null, type: string }, workspace: Workspace) {
         let restored = false;
-        this.app.workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
+        workspace.iterateRootLeaves((leaf: WorkspaceLeaf) => {
             if (restored) return;
             const vs = leaf.getViewState();
             if (vs.type !== activeFileInfo.type) return;
 
             const leafFile = (vs.state as Record<string, unknown>)?.['file'] as string | undefined;
             if (activeFileInfo.file && leafFile === activeFileInfo.file) {
-                this.app.workspace.setActiveLeaf(leaf, { focus: true });
+                workspace.setActiveLeaf(leaf, { focus: true });
                 restored = true;
             } else if (!activeFileInfo.file && vs.type === activeFileInfo.type) {
-                this.app.workspace.setActiveLeaf(leaf, { focus: true });
+                workspace.setActiveLeaf(leaf, { focus: true });
                 restored = true;
             }
         });
@@ -582,11 +665,16 @@ export default class NextTabGroupPlugin extends Plugin {
         return this.getLeafId(a).localeCompare(this.getLeafId(b));
     }
 
+    private pickMostRecent(leaves: WorkspaceLeaf[]): WorkspaceLeaf {
+        const sorted = [...leaves].sort((a, b) => this.compareRecency(a, b));
+        return sorted[sorted.length - 1];
+    }
+
     /**
      * Pick the leaf to keep for one set of duplicates. Resolution order:
      *  1. The active leaf, if present in the set.
-     *  2. The leaf in the same tab group as the active leaf.
-     *  3. The leaf in the same window as the active leaf.
+     *  2. The most recently visited leaf in the active tab group.
+     *  3. The most recently visited leaf in the active window.
      *  4. The most recently visited leaf globally (tracked by recency map).
      *  5. Stable tie-break by leaf id.
      */
@@ -600,17 +688,20 @@ export default class NextTabGroupPlugin extends Plugin {
         }
 
         if (activeTabGroup) {
-            const found = leaves.find((l) => l.parent === activeTabGroup);
-            if (found) return found;
+            const inGroup = leaves.filter((l) => l.parent === activeTabGroup);
+            if (inGroup.length > 0) {
+                return this.pickMostRecent(inGroup);
+            }
         }
 
         if (activeContainer) {
-            const found = leaves.find((l) => l.getContainer() === activeContainer);
-            if (found) return found;
+            const inWindow = leaves.filter((l) => l.getContainer() === activeContainer);
+            if (inWindow.length > 0) {
+                return this.pickMostRecent(inWindow);
+            }
         }
 
-        const sorted = [...leaves].sort((a, b) => this.compareRecency(a, b));
-        return sorted[sorted.length - 1];
+        return this.pickMostRecent(leaves);
     }
 
     /**
@@ -658,21 +749,27 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     /**
-     * Build a confirmation message describing which tabs will be removed.
-     * Groups duplicates by file and shows counts per tab group.
+     * Render the confirmation contents into the given element. Lists each
+     * note that has duplicate tabs, the count of tabs being removed, and
+     * where those tabs live (current window vs other windows).
      */
-    private buildConfirmation(
+    private renderConfirmation(
         scope: WorkspaceLeaf[],
         activeLeaf: WorkspaceLeaf | null,
         removed: WorkspaceLeaf[]
-    ): string {
-        const removedIds = new Set(removed.map((l) => this.getLeafId(l)));
+    ): HTMLElement {
+        const root = document.createElement('div');
+        root.classList.add('ntg-dedupe-confirm');
 
+        const removedIds = new Set(removed.map((l) => this.getLeafId(l)));
         const fileGroups = this.groupLeavesByFile(scope);
         const activeTabGroup = activeLeaf?.parent as WorkspaceParent | null;
         const activeContainer = activeLeaf ? activeLeaf.getContainer() : null;
+        const activeGroupRect = activeTabGroup
+            ? this.getTabGroupRect(activeTabGroup as WorkspaceContainerEl)
+            : null;
 
-        const lines: string[] = [];
+        const entries: Array<{ file: string; count: number; parts: string[] }> = [];
         let totalRemoved = 0;
         const sortedEntries = [...fileGroups.entries()].sort(([a], [b]) => a.localeCompare(b));
         for (const [file, leaves] of sortedEntries) {
@@ -681,7 +778,6 @@ export default class NextTabGroupPlugin extends Plugin {
             if (fileRemoved.length === 0) continue;
             totalRemoved += fileRemoved.length;
 
-            // Separate tabs by whether they're in the current window or another window.
             const currentWindowTabs: WorkspaceLeaf[] = [];
             const otherWindowTabs: WorkspaceLeaf[] = [];
             for (const leaf of fileRemoved) {
@@ -693,57 +789,94 @@ export default class NextTabGroupPlugin extends Plugin {
             }
 
             const parts: string[] = [];
-
-            // Current window: describe by tab group position.
             if (currentWindowTabs.length > 0) {
                 const locationCounts = new Map<string, number>();
                 for (const leaf of currentWindowTabs) {
-                    const label = (activeTabGroup && leaf.parent === activeTabGroup)
-                        ? 'current group'
-                        : this.describeTabGroup(leaf);
+                    let label: string;
+                    if (activeTabGroup && leaf.parent === activeTabGroup) {
+                        label = 'current group (current window)';
+                    } else {
+                        const leafRect = this.getTabGroupRect(leaf.parent as WorkspaceContainerEl);
+                        const rel = this.relativePosition(leafRect, activeGroupRect);
+                        label = `${rel} (current window)`;
+                    }
                     locationCounts.set(label, (locationCounts.get(label) ?? 0) + 1);
                 }
                 for (const [label, n] of locationCounts) {
                     parts.push(`${n} in ${label}`);
                 }
             }
-
-            // Other windows: aggregate by distinct window count.
             if (otherWindowTabs.length > 0) {
                 const distinctWindows = new Set(otherWindowTabs.map((l) => l.getContainer()));
                 const windowCount = distinctWindows.size;
                 parts.push(`${otherWindowTabs.length} in ${windowCount} other window${windowCount === 1 ? '' : 's'}`);
             }
 
-            lines.push(`- ${this.basename(file)} (${fileRemoved.length} tab${fileRemoved.length === 1 ? '' : 's'} removed: ${parts.join(', ')})`);
+            entries.push({ file, count: fileRemoved.length, parts });
         }
 
-        if (lines.length === 0) {
-            return 'No duplicate tabs to remove.';
+        const summary = document.createElement('p');
+        summary.classList.add('ntg-dedupe-summary');
+        summary.textContent = `Will close ${totalRemoved} duplicate tab${totalRemoved === 1 ? '' : 's'} of ${entries.length} note${entries.length === 1 ? '' : 's'}.`;
+        root.appendChild(summary);
+
+        if (entries.length > 0) {
+            const list = document.createElement('ul');
+            list.classList.add('ntg-dedupe-list');
+            root.appendChild(list);
+            for (const entry of entries) {
+                const li = document.createElement('li');
+                li.classList.add('ntg-dedupe-item');
+                list.appendChild(li);
+
+                const name = document.createElement('span');
+                name.classList.add('ntg-dedupe-name');
+                name.textContent = this.basename(entry.file);
+                li.appendChild(name);
+
+                const tail = document.createElement('span');
+                tail.classList.add('ntg-dedupe-locations');
+                const tabWord = entry.count === 1 ? 'tab' : 'tabs';
+                tail.textContent = ` (${entry.count} ${tabWord} removed: ${entry.parts.join(', ')})`;
+                li.appendChild(tail);
+            }
         }
 
-        const header = `Will close ${totalRemoved} duplicate tab${totalRemoved === 1 ? '' : 's'} of ${lines.length} note${lines.length === 1 ? '' : 's'}.`;
-        return `${header}\n\n${lines.join('\n')}`;
+        return root;
     }
 
-    private describeTabGroup(leaf: WorkspaceLeaf): string {
+    private getTabGroupRect(tabGroup: WorkspaceContainerEl | null): { x: number; y: number; w: number; h: number } | null {
+        if (!tabGroup) return null;
         try {
-            const tabGroup = leaf.parent as WorkspaceContainerEl | null;
-            const el = tabGroup?.containerEl;
+            const el = tabGroup.containerEl;
             if (el && el.instanceOf(HTMLElement)) {
                 const rect = el.getBoundingClientRect();
-                const vw = window.innerWidth || 1;
-                const vh = window.innerHeight || 1;
-                if (rect.left > vw * 0.66) return 'right group';
-                if (rect.right < vw * 0.33) return 'left group';
-                if (rect.top > vh * 0.66) return 'bottom group';
-                if (rect.bottom < vh * 0.33) return 'top group';
-                return 'center group';
+                if (rect.width > 0 && rect.height > 0) {
+                    return { x: rect.left, y: rect.top, w: rect.width, h: rect.height };
+                }
             }
         } catch {
             // fall through
         }
-        return 'another group';
+        return null;
+    }
+
+    private relativePosition(
+        target: { x: number; y: number; w: number; h: number } | null,
+        ref: { x: number; y: number; w: number; h: number } | null
+    ): string {
+        if (!target) return 'another group';
+        if (!ref) return 'another group';
+        const targetCx = target.x + target.w / 2;
+        const targetCy = target.y + target.h / 2;
+        const refCx = ref.x + ref.w / 2;
+        const refCy = ref.y + ref.h / 2;
+        const dx = targetCx - refCx;
+        const dy = targetCy - refCy;
+        if (Math.abs(dx) > Math.abs(dy)) {
+            return dx > 0 ? 'right group' : 'left group';
+        }
+        return dy > 0 ? 'group below' : 'group above';
     }
 
     private basename(path: string): string {
@@ -751,92 +884,105 @@ export default class NextTabGroupPlugin extends Plugin {
         return idx >= 0 ? path.slice(idx + 1) : path;
     }
 
-    private async askConfirmation(message: string): Promise<boolean> {
-        // Obsidian provides no first-party confirm() in the renderer; use
-        // window.confirm. Plugin settings can suppress the prompt for the
-        // all-groups and all-windows commands.
-        return window.confirm(message);
+    private askConfirmation(title: string, body: HTMLElement): Promise<boolean> {
+        return new Promise((resolve) => {
+            const modal = new DedupeConfirmModal(this.app, title, body, resolve);
+            modal.open();
+        });
     }
 
     private async dedupeInGroup() {
-        const activeLeaf = this.app.workspace.activeLeaf as WorkspaceLeafInternal | null;
-        if (!activeLeaf || !activeLeaf.id) return;
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        if (!activeLeaf || !activeLeaf.parent) return;
 
-        // Find the active leaf's tab group by walking the workspace layout
-        // and locating the tabs node that contains the active leaf id.
-        const wsInternal = this.app.workspace as unknown as ObsidianWorkspaceInternal;
-        const layout = wsInternal.getLayout?.();
-        if (!layout) return;
-
-        const leaves = this.findLeavesInSameTabGroup(layout, activeLeaf.id);
-        await this.runDedupe(leaves, this.settings.confirmDedupeGroup);
-    }
-
-    /**
-     * Walk a workspace layout and collect every WorkspaceLeaf whose
-     * containing `tabs` node also contains the given leaf id. Returns the
-     * resolved WorkspaceLeaf instances via getLeafById.
-     */
-    private findLeavesInSameTabGroup(layout: WorkspaceLayout, activeLeafId: string): WorkspaceLeaf[] {
-        const result: WorkspaceLeaf[] = [];
-        const collect = (node: WorkspaceLayoutNode) => {
-            if (!node || typeof node !== 'object') return false;
-            if (node.type === 'tabs' && Array.isArray(node.children)) {
-                const ids: string[] = [];
-                for (const child of node.children) {
-                    if (child.type === 'leaf' && typeof child.id === 'string') {
-                        ids.push(child.id);
-                    }
-                }
-                if (ids.includes(activeLeafId)) {
-                    for (const id of ids) {
-                        const leaf = this.app.workspace.getLeafById(id);
-                        if (leaf) result.push(leaf);
-                    }
-                    return true;
-                }
-            }
-            if (Array.isArray(node.children)) {
-                for (const child of node.children) {
-                    if (collect(child)) return true;
-                }
-            }
-            return false;
-        };
-        collect(layout.main);
-        return result;
+        // Read the tab group's children directly. Each child of a
+        // WorkspaceTabs parent is a WorkspaceLeaf.
+        const tabGroup = activeLeaf.parent as WorkspaceContainerEl;
+        const leaves = (tabGroup.children ?? []) as unknown as WorkspaceLeaf[];
+        await this.runDedupe(leaves, activeLeaf, this.settings.confirmDedupeGroup, 'Deduplicate tabs in group');
     }
 
     private async dedupeInAllGroups() {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const workspace = activeLeaf ? this.getWorkspaceForLeaf(activeLeaf) : this.app.workspace;
+
         const leaves: WorkspaceLeaf[] = [];
-        this.app.workspace.iterateRootLeaves((leaf) => {
+        workspace.iterateRootLeaves((leaf) => {
             leaves.push(leaf);
         });
-        await this.runDedupe(leaves, this.settings.confirmDedupeAllGroups);
+        await this.runDedupe(leaves, activeLeaf, this.settings.confirmDedupeAllGroups, 'Deduplicate tabs in all groups');
     }
 
     private async dedupeInAllWindows() {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+
         const leaves: WorkspaceLeaf[] = [];
         this.app.workspace.iterateAllLeaves((leaf) => {
             leaves.push(leaf);
         });
-        await this.runDedupe(leaves, this.settings.confirmDedupeAllWindows);
+        await this.runDedupe(leaves, activeLeaf, this.settings.confirmDedupeAllWindows, 'Deduplicate tabs in all windows');
     }
 
-    private async runDedupe(leaves: WorkspaceLeaf[], confirm: boolean) {
-        const activeLeaf = this.app.workspace.activeLeaf as WorkspaceLeaf | null;
+    private async runDedupe(leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null, confirm: boolean, title: string) {
         const plan = this.planDedupe(leaves, activeLeaf);
         if (!plan) return;
 
         if (confirm) {
-            const message = this.buildConfirmation(leaves, activeLeaf, plan.toRemove);
-            const ok = await this.askConfirmation(`${message}\n\nProceed?`);
+            const ok = await this.askConfirmation(title, this.renderConfirmation(leaves, activeLeaf, plan.toRemove));
             if (!ok) return;
         }
 
         for (const leaf of plan.toRemove) {
             leaf.detach();
         }
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// Confirmation modal
+// ---------------------------------------------------------------------------
+
+class DedupeConfirmModal extends Modal {
+    private readonly title: string;
+    private readonly body: HTMLElement;
+    private readonly resolve: (ok: boolean) => void;
+
+    constructor(app: App, title: string, body: HTMLElement, resolve: (ok: boolean) => void) {
+        super(app);
+        this.title = title;
+        this.body = body;
+        this.resolve = resolve;
+    }
+
+    onOpen() {
+        this.titleEl.setText(this.title);
+        this.contentEl.empty();
+        this.contentEl.classList.add('ntg-dedupe-modal');
+        this.contentEl.appendChild(this.body);
+
+        const buttonRow = document.createElement('div');
+        buttonRow.classList.add('ntg-dedupe-buttons');
+        this.contentEl.appendChild(buttonRow);
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        buttonRow.appendChild(cancelBtn);
+
+        const okBtn = document.createElement('button');
+        okBtn.textContent = 'Close tabs';
+        okBtn.classList.add('mod-warning');
+        buttonRow.appendChild(okBtn);
+
+        const finish = (ok: boolean) => {
+            this.resolve(ok);
+            this.close();
+        };
+        cancelBtn.addEventListener('click', () => finish(false));
+        okBtn.addEventListener('click', () => finish(true));
+
+        this.scope.register([], 'Escape', () => { finish(false); return false; });
+        this.scope.register([], 'Enter', () => { finish(true); return false; });
     }
 }
 

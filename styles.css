@@ -1,0 +1,35 @@
+.ntg-dedupe-modal .ntg-dedupe-confirm {
+    font-size: var(--font-ui-small);
+}
+
+.ntg-dedupe-modal .ntg-dedupe-summary {
+    margin: 0 0 1em 0;
+    color: var(--text-normal);
+}
+
+.ntg-dedupe-modal .ntg-dedupe-list {
+    margin: 0;
+    padding-left: 1.25em;
+    list-style: disc;
+}
+
+.ntg-dedupe-modal .ntg-dedupe-item {
+    margin: 0.25em 0;
+    line-height: 1.5;
+}
+
+.ntg-dedupe-modal .ntg-dedupe-name {
+    font-weight: 600;
+    color: var(--text-accent);
+}
+
+.ntg-dedupe-modal .ntg-dedupe-locations {
+    color: var(--text-muted);
+}
+
+.ntg-dedupe-modal .ntg-dedupe-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5em;
+    margin-top: 1.5em;
+}
