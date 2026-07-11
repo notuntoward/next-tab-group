@@ -761,10 +761,26 @@ export default class NextTabGroupPlugin extends Plugin {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         const workspace = activeLeaf ? this.getWorkspaceForLeaf(activeLeaf) : this.app.workspace;
 
+        // Pop-out windows live in the workspace's `floating` section, not under
+        // the root split, so `iterateRootLeaves()` skips them entirely. To make
+        // "all groups" actually mean "all groups in the focused window", scan
+        // every leaf and keep only those that belong to the same window as the
+        // active leaf. With no active leaf, fall back to the main window's
+        // root split so we don't silently expand scope to all windows.
+        const activeWin = activeLeaf ? activeLeaf.getContainer()?.win : undefined;
         const leaves: WorkspaceLeaf[] = [];
-        workspace.iterateRootLeaves((leaf) => {
-            leaves.push(leaf);
-        });
+        if (activeWin) {
+            workspace.iterateAllLeaves((leaf) => {
+                const container = leaf.getContainer();
+                if (!container) return;
+                if (container.win !== activeWin) return;
+                leaves.push(leaf);
+            });
+        } else {
+            workspace.iterateRootLeaves((leaf) => {
+                leaves.push(leaf);
+            });
+        }
         await this.runDedupe(leaves, activeLeaf, this.settings.confirmDedupeAllGroups, 'Deduplicate tabs in all groups');
     }
 

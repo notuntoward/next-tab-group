@@ -45,10 +45,12 @@ export class MockContainerEl {
 
 export class MockWorkspaceContainer {
     id = 'container';
-    win = globalThis.window;
+    win: Window;
     doc = globalThis.document;
 
-    constructor(public name: 'root' | 'window' = 'root') {}
+    constructor(public name: 'root' | 'window' = 'root', win?: Window) {
+        this.win = win ?? globalThis.window;
+    }
 }
 
 export class MockWorkspaceParent {

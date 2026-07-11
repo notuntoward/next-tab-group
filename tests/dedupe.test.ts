@@ -17,6 +17,8 @@ type TestPlugin = NextTabGroupPlugin & {
     dedupeInGroup: () => Promise<void>;
     dedupeInAllGroups: () => Promise<void>;
     dedupeInAllWindows: () => Promise<void>;
+    getActiveLeafInFocusedWindow: () => WorkspaceLeaf | null;
+    planDedupe: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => { toRemove: WorkspaceLeaf[]; notesAffected: number } | null;
     getLeafFileKey: (leaf: WorkspaceLeaf) => string | null;
     pickSurvivor: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => WorkspaceLeaf;
     relativePosition: (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) => string;
@@ -49,8 +51,10 @@ describe('deduplication commands', () => {
 
     beforeEach(async () => {
         app = new MockApp();
-        rootContainer = new MockWorkspaceContainer('root');
-        windowContainer = new MockWorkspaceContainer('window');
+        // Distinct Window objects so the focused-window filter can tell the
+        // main and pop-out windows apart.
+        rootContainer = new MockWorkspaceContainer('root', {} as Window);
+        windowContainer = new MockWorkspaceContainer('window', {} as Window);
         plugin = createPlugin(app);
         await plugin.onload();
     });
@@ -97,6 +101,81 @@ describe('deduplication commands', () => {
             expect(dup1.detached).toBe(true);
             expect(dup2.detached).toBe(true);
             expect(other.detached).toBe(false);
+        });
+
+        it('removes duplicates across groups within the focused pop-out window, not just the main window', async () => {
+            const groupMain = new MockWorkspaceParent(rootContainer);
+            const groupWin = new MockWorkspaceParent(windowContainer);
+
+            const mainDup = leaf('a', 'Note-A.md', groupMain, rootContainer);
+            const winActive = leaf('b', 'Note-A.md', groupWin, windowContainer);
+            const winDup = leaf('c', 'Note-A.md', groupWin, windowContainer);
+            const other = leaf('d', 'Note-B.md', groupWin, windowContainer);
+
+            // Simulate the focused window being a pop-out: its leaves live in
+            // the floating section, so iterateRootLeaves would skip them.
+            app.workspace.rootLeaves = [mainDup];
+            app.workspace.allLeaves = [mainDup, winActive, winDup, other];
+            app.workspace.setActiveLeaf(winActive);
+            plugin.settings.confirmDedupeAllGroups = false;
+
+            await plugin.dedupeInAllGroups();
+
+            expect(winActive.detached).toBe(false);
+            expect(winDup.detached).toBe(true);
+            expect(other.detached).toBe(false);
+            // The main-window duplicate must NOT be touched: it is in a
+            // different window than the focused one.
+            expect(mainDup.detached).toBe(false);
+        });
+
+        it('only dedupes within the main window when the active leaf is there, even with duplicates in a pop-out', async () => {
+            const groupMain = new MockWorkspaceParent(rootContainer);
+            const groupWin = new MockWorkspaceParent(windowContainer);
+
+            const mainActive = leaf('a', 'Note-A.md', groupMain, rootContainer);
+            const mainDup = leaf('b', 'Note-A.md', groupMain, rootContainer);
+            const popoutDup = leaf('c', 'Note-A.md', groupWin, windowContainer);
+
+            app.workspace.rootLeaves = [mainActive, mainDup];
+            app.workspace.allLeaves = [mainActive, mainDup, popoutDup];
+            app.workspace.setActiveLeaf(mainActive);
+            plugin.settings.confirmDedupeAllGroups = false;
+
+            await plugin.dedupeInAllGroups();
+
+            expect(mainActive.detached).toBe(false);
+            expect(mainDup.detached).toBe(true);
+            // Pop-out duplicate must NOT be touched: different window.
+            expect(popoutDup.detached).toBe(false);
+        });
+
+        it('falls back to the main window only when there is no active leaf', async () => {
+            const groupMain = new MockWorkspaceParent(rootContainer);
+            const groupWin = new MockWorkspaceParent(windowContainer);
+
+            const mainKeep = leaf('a', 'Note-A.md', groupMain, rootContainer);
+            const mainDup = leaf('b', 'Note-A.md', groupMain, rootContainer);
+            const popoutKeep = leaf('c', 'Note-A.md', groupWin, windowContainer);
+            const popoutDup = leaf('d', 'Note-A.md', groupWin, windowContainer);
+
+            app.workspace.rootLeaves = [mainKeep, mainDup];
+            app.workspace.allLeaves = [mainKeep, mainDup, popoutKeep, popoutDup];
+            // No active leaf AND no leaf in the focused jsdom window, so
+            // getActiveLeafInFocusedWindow falls back to activeLeaf === null
+            // and dedupeInAllGroups uses the iterateRootLeaves fallback.
+            app.workspace.activeLeaf = null;
+            plugin.settings.confirmDedupeAllGroups = false;
+
+            await plugin.dedupeInAllGroups();
+
+            // Main window: one duplicate removed (stable tie-break by id).
+            expect(mainKeep.detached).toBe(true);
+            expect(mainDup.detached).toBe(false);
+            // Pop-out duplicates must NOT be touched when there's no active
+            // leaf to indicate the user wants them deduped.
+            expect(popoutDup.detached).toBe(false);
+            expect(popoutKeep.detached).toBe(false);
         });
 
         it('keeps a leaf in the active tab group over one in a different group when neither is active', async () => {
