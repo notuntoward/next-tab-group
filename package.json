@@ -6,7 +6,7 @@
   "scripts": {
     "lint": "eslint . --max-warnings=0",
     "dev": "node esbuild.config.mjs",
-    "build": "npm run lint && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "build": "npm run lint && npm test && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "vitest run",
     "test:ui": "vitest --ui",
     "test:typecheck": "tsc -noEmit -p tsconfig.test.json"
