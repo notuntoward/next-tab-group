@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Pre-push hook: verify dependencies resolve strictly and tests pass.
+# Mirrors the GitHub Actions Build workflow (npm ci + npm test) so issues
+# are caught before push instead of in CI.
+
+set -e
+
+if [ ! -f package.json ]; then
+  exit 0
+fi
+
+# Only run if a test script is defined in package.json.
+if ! grep -Eq '"test"\s*:' package.json; then
+  echo "pre-push: no test script defined, skipping"
+  exit 0
+fi
+
+echo "pre-push: running npm ci (strict install like CI)..."
+npm ci
+
+echo "pre-push: running npm test..."
+npm test
