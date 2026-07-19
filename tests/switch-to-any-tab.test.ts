@@ -175,7 +175,7 @@ describe('switchToAnyTab', () => {
         expect(items[1].leaf).toBe(asLeaf(older));
     });
 
-    it('moves the currently active (most recent) tab to the end of the list', () => {
+    it('keeps the active tab at its recency position (not pushed to the bottom)', () => {
         const group = new MockWorkspaceParent(rootContainer);
         const older = leaf('older', 'Old.md', group, rootContainer);
         const middle = leaf('middle', 'Mid.md', group, rootContainer);
@@ -199,10 +199,13 @@ describe('switchToAnyTab', () => {
 
         MockFuzzySuggestModal.prototype.open = originalOpen;
 
+        // Pure recency order: the active (most recent) tab stays at the top of
+        // the list; the default selection (most recent non-active) is handled
+        // by the modal's initial index, not by reordering.
         const items = captured!.getItems();
-        expect((items[0].leaf as unknown as MockWorkspaceLeaf).id).toBe('middle');
-        expect((items[1].leaf as unknown as MockWorkspaceLeaf).id).toBe('older');
-        expect((items[2].leaf as unknown as MockWorkspaceLeaf).id).toBe('active');
+        expect((items[0].leaf as unknown as MockWorkspaceLeaf).id).toBe('active');
+        expect((items[1].leaf as unknown as MockWorkspaceLeaf).id).toBe('middle');
+        expect((items[2].leaf as unknown as MockWorkspaceLeaf).id).toBe('older');
     });
 
     it('each TabInfo references its correct TabGroupInfo', () => {

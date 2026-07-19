@@ -275,6 +275,7 @@ export class MockSuggestModal<T> {
         this.placeholder = placeholder;
     }
 
+    setSelectedItem(_index?: number): void { /* no-op for mock */ }
     open(): void { /* no-op */ }
     close(): void { /* no-op */ }
     getItems(): T[] { return []; }

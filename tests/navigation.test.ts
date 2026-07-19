@@ -12,7 +12,8 @@ type TestPlugin = NextTabGroupPlugin & {
     getLeafLastActive: (leaf: WorkspaceLeaf) => number;
     compareRecency: (a: WorkspaceLeaf, b: WorkspaceLeaf) => number;
     pickMostRecent: (leaves: WorkspaceLeaf[]) => WorkspaceLeaf;
-    sortExcludingActive: <T>(items: T[], getRecency: (item: T) => number, isActive: (item: T) => boolean) => T[];
+    sortByRecency: <T>(items: T[], getRecency: (item: T) => number, tiebreak?: (a: T, b: T) => number) => T[];
+    firstNonActiveIndex: <T>(items: T[], isActive: (item: T) => boolean) => number;
     leafLastActive: Map<string, number>;
 };
 
@@ -97,8 +98,8 @@ describe('recency helpers', () => {
         });
     });
 
-    describe('sortExcludingActive', () => {
-        it('orders by recency with the active item demoted to the end', () => {
+    describe('recency sorting and selection', () => {
+        it('sortByRecency keeps the active item in its recency position (not at the bottom)', () => {
             const older = leaf('older', group, container);
             const newer = leaf('newer', group, container);
             const active = leaf('active', group, container);
@@ -106,31 +107,47 @@ describe('recency helpers', () => {
             plugin.leafLastActive.set('newer', 200);
             plugin.leafLastActive.set('active', 300);
 
-            const result = plugin.sortExcludingActive(
+            const result = plugin.sortByRecency(
                 [asLeaf(older), asLeaf(newer), asLeaf(active)],
                 (l) => plugin.getLeafLastActive(l),
-                (l) => l === asLeaf(active),
             );
 
             expect(result.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual([
+                'active',
                 'newer',
                 'older',
-                'active',
             ]);
         });
 
-        it('keeps the active item in the list rather than deleting it', () => {
+        it('firstNonActiveIndex points at the most recent non-active item', () => {
+            const older = leaf('older', group, container);
+            const newer = leaf('newer', group, container);
+            const active = leaf('active', group, container);
+            plugin.leafLastActive.set('older', 100);
+            plugin.leafLastActive.set('newer', 200);
+            plugin.leafLastActive.set('active', 300);
+
+            const sorted = plugin.sortByRecency(
+                [asLeaf(older), asLeaf(newer), asLeaf(active)],
+                (l) => plugin.getLeafLastActive(l),
+            );
+            const idx = plugin.firstNonActiveIndex(sorted, (l) => l === asLeaf(active));
+
+            expect(sorted[idx]).toBe(asLeaf(newer));
+        });
+
+        it('firstNonActiveIndex falls back to 0 when the only item is active', () => {
             const onlyActive = leaf('only', group, container);
             plugin.leafLastActive.set('only', 300);
 
-            const result = plugin.sortExcludingActive(
+            const sorted = plugin.sortByRecency(
                 [asLeaf(onlyActive)],
                 (l) => plugin.getLeafLastActive(l),
-                (l) => l === asLeaf(onlyActive),
             );
+            const idx = plugin.firstNonActiveIndex(sorted, (l) => l === asLeaf(onlyActive));
 
-            expect(result.length).toBe(1);
-            expect((result[0] as unknown as MockWorkspaceLeaf).id).toBe('only');
+            expect(idx).toBe(0);
+            expect(sorted).toHaveLength(1);
         });
 
         it('leaves ordering unchanged when nothing is active', () => {
@@ -139,10 +156,9 @@ describe('recency helpers', () => {
             plugin.leafLastActive.set('older', 100);
             plugin.leafLastActive.set('newer', 200);
 
-            const result = plugin.sortExcludingActive(
+            const result = plugin.sortByRecency(
                 [asLeaf(older), asLeaf(newer)],
                 (l) => plugin.getLeafLastActive(l),
-                () => false,
             );
 
             expect(result.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual([

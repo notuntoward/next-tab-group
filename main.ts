@@ -589,30 +589,33 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     /**
-     * Sort items recency-first (newest first) but push the currently-active
-     * item to the end of the list. The active item is never something the user
-     * wants at the top of a "switch to" list, yet it must stay reachable (via
-     * scroll or fuzzy search) so it is not deleted. `getRecency` extracts the
-     * timestamp used for ordering; `isActive` identifies the current item.
+     * Sort items recency-first (newest first), preserving the active item's
+     * natural position rather than pushing it to the bottom. `getRecency`
+     * extracts the timestamp used for ordering; `tiebreak` breaks ties.
      */
-    private sortExcludingActive<T>(
+    private sortByRecency<T>(
         items: T[],
         getRecency: (item: T) => number,
-        isActive: (item: T) => boolean,
+        tiebreak?: (a: T, b: T) => number,
     ): T[] {
-        const recencyCompare = (a: T, b: T) => {
-            const diff = getRecency(b) - getRecency(a);
-            return diff;
-        };
-
         return [...items].sort((a, b) => {
-            const aActive = isActive(a);
-            const bActive = isActive(b);
-            if (aActive !== bActive) {
-                return aActive ? 1 : -1;
-            }
-            return recencyCompare(a, b);
+            const diff = getRecency(b) - getRecency(a);
+            if (diff !== 0) return diff;
+            return tiebreak ? tiebreak(a, b) : 0;
         });
+    }
+
+    /**
+     * Index of the most-recent item that is not the active one, used to set the
+     * modal's initial selection so ENTER switches to it immediately. Falls back
+     * to 0 when every item is active (degenerate) or the list is empty.
+     */
+    private firstNonActiveIndex<T>(
+        items: T[],
+        isActive: (item: T) => boolean,
+    ): number {
+        const idx = items.findIndex((item) => !isActive(item));
+        return idx >= 0 ? idx : 0;
     }
 
     private getTabSearchText(tab: TabInfo): string {
@@ -1275,10 +1278,10 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const leaves = this.sortExcludingActive(
+        const leaves = this.sortByRecency(
             activeGroup.leaves,
             (leaf) => this.getLeafLastActive(leaf),
-            (leaf) => leaf === activeLeaf,
+            (a, b) => this.getLeafId(a).localeCompare(this.getLeafId(b)),
         );
 
         new NavigationSuggestModal(
@@ -1288,6 +1291,7 @@ export default class NextTabGroupPlugin extends Plugin {
             (leaf) => leaf.getDisplayText(),
             (leaf) => this.app.workspace.setActiveLeaf(leaf, { focus: true }),
             (leaf, el) => this.renderInGroupTabSuggestion(leaf, el),
+            this.firstNonActiveIndex(leaves, (leaf) => leaf === activeLeaf),
         ).open();
     }
 
@@ -1301,19 +1305,19 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        // Start with the most recent tab in the current window (other than the
-        // active tab), then the remaining tabs from any window. This keeps the
-        // global picker's top item in the window the user is actually in.
-        const currentWindowTabs = this.sortExcludingActive(
+        // List the current window's tabs first, then tabs from any other
+        // window, each kept in recency order. The most-recent non-active tab is
+        // selected by default so ENTER switches to it immediately.
+        const currentWindowTabs = this.sortByRecency(
             this.getTabsInWindow(model, activeWindow),
             (tab) => tab.lastActive,
-            (tab) => tab.leaf === activeLeaf,
+            (a, b) => a.group.label.localeCompare(b.group.label),
         );
 
-        const otherWindowTabs = this.sortExcludingActive(
+        const otherWindowTabs = this.sortByRecency(
             model.tabs.filter((tab) => tab.group.window !== activeWindow),
             (tab) => tab.lastActive,
-            (tab) => tab.leaf === activeLeaf,
+            (a, b) => a.group.label.localeCompare(b.group.label),
         );
 
         const tabs = [...currentWindowTabs, ...otherWindowTabs];
@@ -1328,6 +1332,7 @@ export default class NextTabGroupPlugin extends Plugin {
             (tab) => this.getTabSearchText(tab),
             (tab) => this.app.workspace.setActiveLeaf(tab.leaf, { focus: true }),
             (tab, el) => this.renderTabSuggestion(tab, el, multipleWindows),
+            this.firstNonActiveIndex(tabs, (tab) => tab.leaf === activeLeaf),
         ).open();
     }
 
@@ -1357,12 +1362,10 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const orderedGroups = this.sortExcludingActive(
+        const orderedGroups = this.sortByRecency(
             groups,
             (group) => group.lastActive,
-            (group) =>
-                group.window === activeWindow &&
-                group.group === activeLeaf?.parent,
+            (a, b) => a.label.localeCompare(b.label),
         );
 
         new NavigationSuggestModal(
@@ -1372,6 +1375,12 @@ export default class NextTabGroupPlugin extends Plugin {
             (group) => `${group.label} ${group.representative.getDisplayText()}`,
             (group) => this.activateTabGroup(group.group, group.representative),
             (group, el) => this.renderTabGroupSuggestion(group, el),
+            this.firstNonActiveIndex(
+                orderedGroups,
+                (group) =>
+                    group.window === activeWindow &&
+                    group.group === activeLeaf?.parent,
+            ),
         ).open();
     }
 
@@ -1445,10 +1454,10 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const windows = this.sortExcludingActive(
+        const windows = this.sortByRecency(
             model.windows,
             (item) => item.lastActive,
-            (item) => item.window === activeWindow,
+            (a, b) => a.label.localeCompare(b.label),
         );
 
         if (windows.length === 0) {
@@ -1466,6 +1475,10 @@ export default class NextTabGroupPlugin extends Plugin {
                     focus: true,
                 }),
             (item, el) => this.renderWindowSuggestion(item, el),
+            this.firstNonActiveIndex(
+                windows,
+                (item) => item.window === activeWindow,
+            ),
         ).open();
     }
 
@@ -1537,9 +1550,30 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         private readonly getSearchText: (item: T) => string,
         private readonly onChoose: (item: T) => void,
         private readonly renderItem?: SuggestionRenderer<T>,
+        private readonly initialIndex = 0,
     ) {
         super(app);
         this.setPlaceholder(placeholder);
+    }
+
+    onOpen() {
+        super.onOpen();
+        
+        // Keep the list in recency order (the active item stays in its slot)
+        // but select the most-recent item that is not the active one so ENTER
+        // immediately switches to it.
+        if (this.initialIndex > 0 && this.initialIndex < this.items.length) {
+            // Defer execution until after the modal renders its initial suggestions
+            setTimeout(() => {
+                // Access Obsidian's internal chooser object
+                const chooser = (this as any).chooser;
+                if (chooser && typeof chooser.setSelectedItem === 'function') {
+                    // Select the target index. The second argument (true) ensures
+                    // the list scrolls down to the item if it happens to be off-screen.
+                    chooser.setSelectedItem(this.initialIndex, true);
+                }
+            }, 0);
+        }
     }
 
     getItems(): T[] {

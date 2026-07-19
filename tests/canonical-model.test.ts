@@ -415,19 +415,32 @@ describe('canonical model', () => {
             expect((dup as unknown as MockWorkspaceLeaf).detached).toBe(true);
         });
 
-        it('switch to any tab starts with the most recent current-window tab and demotes the active tab within the current window', () => {
+        it('switch to any tab keeps the active tab in its recency slot and selects the most recent non-active tab', () => {
             const ar = arrange(app);
+            // Give the active tab and its siblings distinct recencies so the
+            // ordering is deterministic: main-a2 is the most recent non-active.
+            plugin.leafLastActive.set('main-a1', 100);
+            plugin.leafLastActive.set('main-a2', 300);
+            plugin.leafLastActive.set('main-b1', 200);
+            plugin.leafLastActive.set('popup-c1', 400);
+            plugin.leafLastActive.set('popup-c2', 500);
             app.workspace.setActiveLeaf(ar.mainA1);
+
             const cap = captureItems<TabInfo>(MockFuzzySuggestModal);
             plugin.switchToAnyTab();
             const items = cap.captured!.getItems();
-            // Active tab main-a1 is demoted to the end of the current-window
-            // block, so it is the last main-window entry and precedes any
-            // pop-out entries.
-            const lastCurrentWindow = [...items]
-                .reverse()
-                .find((t) => t.group.window === ar.mainWin)!;
-            expect(idOf(lastCurrentWindow.leaf)).toBe('main-a1');
+
+            // Pure recency order within the current-window-first layout: the
+            // active tab stays where recency puts it (top of the main block),
+            // not at the bottom.
+            const mainBlock = items.filter((t) => t.group.window === ar.mainWin);
+            expect(idOf(mainBlock[0].leaf)).toBe('main-a2');
+            expect(idOf(mainBlock[1].leaf)).toBe('main-b1');
+            expect(idOf(mainBlock[2].leaf)).toBe('main-a1');
+
+            // The modal's initial selection is the most recent non-active tab.
+            const initialIndex = (cap.captured as unknown as { initialIndex: number }).initialIndex;
+            expect(idOf(items[initialIndex].leaf)).toBe('main-a2');
             cap.restore();
         });
     });

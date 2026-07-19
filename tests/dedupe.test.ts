@@ -440,9 +440,9 @@ describe('switchToTabInGroup', () => {
 
         expect(captured).toBeDefined();
         const items = captured!.getItems();
-        // Recency-sorted with no timestamps falls back to ID ascending, so
-        // newest-first yields ['b', 'a'].
-        expect(items.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['b', 'a']);
+        // Pure recency order; with no timestamps it falls back to ID ascending,
+        // so the active leaf 'a' stays first and 'b' follows.
+        expect(items.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['a', 'b']);
 
         const leafB = items.find((l) => (l as unknown as MockWorkspaceLeaf).id === 'b');
         captured!.onChooseItem(leafB!);
