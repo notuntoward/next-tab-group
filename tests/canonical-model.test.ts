@@ -675,6 +675,44 @@ describe('canonical model', () => {
             expect(groups[initialIndex].window).toBe(ar.popupWin);
             cap.restore();
         });
+
+        it('switch to any tab lists tabs in pure recency order when grouping is off', () => {
+            const ar = arrange(app);
+            plugin.leafLastActive.set('main-a1', 100);
+            plugin.leafLastActive.set('main-a2', 300);
+            plugin.leafLastActive.set('main-b1', 200);
+            plugin.leafLastActive.set('popup-c1', 400);
+            plugin.leafLastActive.set('popup-c2', 500);
+            app.workspace.setActiveLeaf(ar.mainA1);
+
+            // Disable grouping: the result is a single recency-ordered list
+            // regardless of window or tab group.
+            plugin.settings.groupSwitchByContext = false;
+
+            const cap = captureItems<TabInfo>(MockFuzzySuggestModal);
+            plugin.switchToAnyTab();
+            const ids = cap.captured!.getItems().map((t) => idOf(t.leaf));
+            expect(ids).toEqual(['popup-c2', 'popup-c1', 'main-a2', 'main-b1', 'main-a1']);
+            cap.restore();
+        });
+
+        it('switch to tab group lists groups in pure recency order when grouping is off', () => {
+            const ar = arrange(app);
+            plugin.leafLastActive.set('main-a1', 100);
+            plugin.leafLastActive.set('main-a2', 300);
+            plugin.leafLastActive.set('main-b1', 200);
+            plugin.leafLastActive.set('popup-c1', 400);
+            plugin.leafLastActive.set('popup-c2', 500);
+            app.workspace.setActiveLeaf(ar.mainA1);
+
+            plugin.settings.groupSwitchByContext = false;
+
+            const cap = captureItems<TabGroupInfo>(MockFuzzySuggestModal);
+            plugin.switchToTabGroup();
+            const representatives = cap.captured!.getItems().map((g) => idOf(g.representative));
+            expect(representatives).toEqual(['popup-c2', 'main-a2', 'main-b1']);
+            cap.restore();
+        });
     });
 
     describe('window-local spatial hints', () => {

@@ -17,12 +17,17 @@ interface NextTabGroupSettings {
     confirmDedupeGroup: boolean;
     confirmDedupeAllGroups: boolean;
     confirmDedupeAllWindows: boolean;
+    groupSwitchByContext: boolean;
 }
 
 const DEFAULT_SETTINGS: NextTabGroupSettings = {
     confirmDedupeGroup: false,
     confirmDedupeAllGroups: true,
     confirmDedupeAllWindows: true,
+    // When true, "switch to any tab" / "switch to tab group" cluster results by
+    // window then tab group (current behavior). When false, everything is
+    // sorted by pure recency instead.
+    groupSwitchByContext: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -659,6 +664,32 @@ export default class NextTabGroupPlugin extends Plugin {
         }
 
         return ordered;
+    }
+
+    /**
+     * Tabs sorted by pure recency across every window/group, used when the
+     * "group by tab group and window" setting is off. The tiebreak keeps the
+     * order deterministic. The default selection (most recent non-active tab)
+     * is computed independently of display order, so it stays correct here.
+     */
+    private orderTabsByRecency(model: WorkspaceNavigationModel): TabInfo[] {
+        return this.sortByRecency(
+            model.tabs,
+            (tab) => tab.lastActive,
+            (a, b) => a.group.label.localeCompare(b.group.label),
+        );
+    }
+
+    /**
+     * Tab groups sorted by pure recency across every window, used when the
+     * "group by tab group and window" setting is off.
+     */
+    private orderGroupsByRecency(model: WorkspaceNavigationModel): TabGroupInfo[] {
+        return this.sortByRecency(
+            model.groups,
+            (group) => group.lastActive,
+            (a, b) => a.label.localeCompare(b.label),
+        );
     }
 
     /**
@@ -1424,11 +1455,14 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        // Tabs are grouped by tab group within each window, and the windows
-        // (and their groups) are ordered by recency so the freshest contexts
-        // sit at the top. The most-recent non-active tab is selected by default
-        // so ENTER switches to it immediately.
-        const tabs = this.orderTabsForDisplay(model, activeWindow);
+        // When the setting is on, tabs are grouped by tab group within each
+        // window and windows (and their groups) are ordered by recency so the
+        // freshest contexts sit at the top. When off, everything is a single
+        // pure-recency list. The most-recent non-active tab is selected by
+        // default either way, so ENTER switches to it immediately.
+        const tabs = this.settings.groupSwitchByContext
+            ? this.orderTabsForDisplay(model, activeWindow)
+            : this.orderTabsByRecency(model);
 
         const multipleWindows =
             new Set(model.groups.map((group) => group.window)).size > 1;
@@ -1469,11 +1503,14 @@ export default class NextTabGroupPlugin extends Plugin {
         const model = this.buildNavigationModel(activeLeaf);
         const activeWindow = this.getWindowForLeaf(activeLeaf);
 
-        // Include tab groups from every window, ordered the same way as
-        // "switch to any tab": the active window first, then other windows by
-        // recency, with each window's groups ordered by recency of their most
-        // recent tab.
-        const orderedGroups = this.orderGroupsForDisplay(model, activeWindow);
+        // When the setting is on, groups are ordered the same way as "switch
+        // to any tab": the active window first, then other windows by recency,
+        // with each window's groups ordered by recency of their most recent
+        // tab. When off, every group is in a single pure-recency list across
+        // all windows.
+        const orderedGroups = this.settings.groupSwitchByContext
+            ? this.orderGroupsForDisplay(model, activeWindow)
+            : this.orderGroupsByRecency(model);
 
         if (orderedGroups.length === 0) {
             new Notice("No tab groups to switch to.");
@@ -1798,6 +1835,20 @@ class NextTabGroupSettingTab extends PluginSettingTab {
                     .setValue(this.plugin.settings.confirmDedupeAllWindows)
                     .onChange(async (value) => {
                         this.plugin.settings.confirmDedupeAllWindows = value;
+                        await this.plugin.saveSettings();
+                    })
+            );
+
+        containerEl.createEl('h2', { text: 'Switch tabs' });
+
+        new Setting(containerEl)
+            .setName('Group results by tab group and window')
+            .setDesc('When on, "Switch to any tab" and "Switch to tab group" cluster results by window and tab group (freshest first). When off, every result is listed in a single pure recency order, newest at the top.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.groupSwitchByContext)
+                    .onChange(async (value) => {
+                        this.plugin.settings.groupSwitchByContext = value;
                         await this.plugin.saveSettings();
                     })
             );
