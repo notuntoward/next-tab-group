@@ -27,12 +27,8 @@
     color: var(--text-muted);
 }
 
-.ntg-dedupe-modal .ntg-dedupe-buttons {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5em;
-    margin-top: 1.5em;
-}
+/* The confirmation buttons are rendered by Obsidian's Setting abstraction,
+ * which owns its own layout and spacing. No manual button-row styling needed. */
 
 /* Shared two-column layout for navigation completion rows. */
 .suggestion-item .ntg-nav-row {
@@ -48,6 +44,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* Highlight protection: matched fragments must not break the grid layout or
+ * the single-line truncation of the primary column. */
+.suggestion-item .ntg-nav-primary .suggestion-highlight {
+    display: inline;
 }
 
 .suggestion-item .ntg-nav-secondary {

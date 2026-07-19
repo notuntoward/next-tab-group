@@ -123,6 +123,43 @@ interface WorkspaceNavigationModel {
 // Plugin
 // ---------------------------------------------------------------------------
 
+export interface FuzzyMatch<T> {
+    item: T;
+    match: {
+        score: number;
+        matches: number[][];
+    };
+}
+
+/**
+ * Helper utility to break a string down by matching index pairs
+ * and render bolded/highlighted HTML elements natively.
+ */
+export function renderHighlightedText(parentEl: HTMLElement, text: string, matches: number[][]): void {
+    if (!matches || matches.length === 0) {
+        parentEl.setText(text);
+        return;
+    }
+
+    let lastIndex = 0;
+    for (const [start, end] of matches) {
+        // Append unmatched prefix string segment
+        if (start > lastIndex) {
+            parentEl.createSpan().setText(text.slice(lastIndex, start));
+        }
+        // Append highlighted match segment
+        const highlightSpan = parentEl.createSpan({ cls: 'suggestion-highlight' });
+        highlightSpan.setText(text.slice(start, end));
+
+        lastIndex = end;
+    }
+
+    // Append trailing leftover text segment
+    if (lastIndex < text.length) {
+        parentEl.createSpan().setText(text.slice(lastIndex));
+    }
+}
+
 export default class NextTabGroupPlugin extends Plugin {
     private tabGroupActiveLeaves: Map<WorkspaceParent, WorkspaceLeaf> = new Map();
     private leafLastActive: Map<string, number> = new Map();
@@ -213,8 +250,6 @@ export default class NextTabGroupPlugin extends Plugin {
 
         this.addSettingTab(new NextTabGroupSettingTab(this.app, this));
 
-        this.loadStyleSheet();
-
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', (leaf) => {
                 if (!leaf) return;
@@ -233,29 +268,6 @@ export default class NextTabGroupPlugin extends Plugin {
 
     async saveSettings(): Promise<void> {
         await this.saveData(this.settings);
-    }
-
-    private async loadStyleSheet() {
-        const adapter = this.app.vault.adapter;
-        let cssPath: string | null = null;
-        for (const candidate of [`${this.manifest.dir}/styles.css`, 'styles.css']) {
-            if (await adapter.exists(candidate)) {
-                cssPath = candidate;
-                break;
-            }
-        }
-        if (!cssPath) return;
-
-        try {
-            const css = await adapter.read(cssPath);
-            const styleEl = document.createElement('style');
-            styleEl.setAttribute('data-ntg-styles', '');
-            styleEl.textContent = css;
-            document.head.appendChild(styleEl);
-            this.register(() => styleEl.remove());
-        } catch (error) {
-            console.error('[next-tab-group] Failed to load styles.css:', error);
-        }
     }
 
     // ------------------------------------------------------------------------
@@ -763,39 +775,32 @@ export default class NextTabGroupPlugin extends Plugin {
         return `${location} · ${count}`;
     }
 
-    private renderNavigationRow(
-        el: HTMLElement,
-        primaryText: string,
-        secondaryText: string,
-    ): void {
-        el.empty();
-        el.addClass("ntg-nav-row");
-
-        const primary = el.createDiv({ cls: "ntg-nav-primary" });
-        primary.setText(primaryText || "Untitled");
-
-        const secondary = el.createDiv({ cls: "ntg-nav-secondary" });
-        secondary.setText(secondaryText);
-    }
-
     private renderTabSuggestion(
         tab: TabInfo,
         el: HTMLElement,
         labels: Map<Window | undefined, string>,
         showGroup: boolean,
         showWindow: boolean,
+        match?: FuzzyMatch<TabInfo>,
     ): void {
+        el.empty();
+        el.addClass("ntg-nav-row");
+
+        // 1. Left Primary Column (Supports native fuzzy highlights)
+        const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
+        const rawDisplayText = tab.leaf.getDisplayText();
+
+        renderHighlightedText(primaryContainer, rawDisplayText, match?.match.matches ?? []);
+
+        // 2. Right Secondary Column (Metadata block)
         const parts: string[] = [];
         // The tab group is only named when there is more than one group to
         // disambiguate; the window only when there is more than one window.
         if (showGroup) parts.push(this.getTabGroupMeta(tab));
         if (showWindow) parts.push(this.getWindowLabel(tab.group.window, labels));
 
-        this.renderNavigationRow(
-            el,
-            tab.leaf.getDisplayText(),
-            parts.join(" · "),
-        );
+        const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
+        secondaryContainer.setText(parts.join(" · "));
     }
 
     private getWindowLabel(
@@ -811,8 +816,15 @@ export default class NextTabGroupPlugin extends Plugin {
         labels: Map<Window | undefined, string>,
         showGroup: boolean,
         showWindow: boolean,
+        match?: FuzzyMatch<TabGroupInfo>,
     ): void {
         const title = group.representative.getDisplayText() || "Untitled tab";
+
+        el.empty();
+        el.addClass("ntg-nav-row");
+
+        const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
+        renderHighlightedText(primaryContainer, title, match?.match.matches ?? []);
 
         const parts: string[] = [];
         // The group descriptor (Current group / relative / Other group + count)
@@ -829,12 +841,14 @@ export default class NextTabGroupPlugin extends Plugin {
         }
         if (showWindow) parts.push(this.getWindowLabel(group.window, labels));
 
-        this.renderNavigationRow(el, title, parts.join(" · "));
+        const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
+        secondaryContainer.setText(parts.join(" · "));
     }
 
     private renderWindowSuggestion(
         item: WindowInfo,
         el: HTMLElement,
+        match?: FuzzyMatch<WindowInfo>,
     ): void {
         const groupCount =
             `${item.groups.length} ` +
@@ -842,11 +856,14 @@ export default class NextTabGroupPlugin extends Plugin {
 
         const recent = item.representative.getDisplayText() || "Untitled tab";
 
-        this.renderNavigationRow(
-            el,
-            item.label,
-            `Most recent: ${recent} · ${groupCount}`,
-        );
+        el.empty();
+        el.addClass("ntg-nav-row");
+
+        const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
+        renderHighlightedText(primaryContainer, item.label, match?.match.matches ?? []);
+
+        const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
+        secondaryContainer.setText(`Most recent: ${recent} · ${groupCount}`);
     }
 
     private renderInGroupTabSuggestion(
@@ -854,6 +871,7 @@ export default class NextTabGroupPlugin extends Plugin {
         el: HTMLElement,
         labels: Map<Window | undefined, string>,
         showWindow: boolean,
+        match?: FuzzyMatch<WorkspaceLeaf>,
     ): void {
         // The group is implied (this command only lists the active group), so
         // its name is never shown; the window is only named when there is more
@@ -861,7 +879,15 @@ export default class NextTabGroupPlugin extends Plugin {
         const secondary = showWindow
             ? this.getWindowLabel(leaf.getContainer()?.win, labels)
             : "";
-        this.renderNavigationRow(el, leaf.getDisplayText(), secondary);
+
+        el.empty();
+        el.addClass("ntg-nav-row");
+
+        const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
+        renderHighlightedText(primaryContainer, leaf.getDisplayText(), match?.match.matches ?? []);
+
+        const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
+        secondaryContainer.setText(secondary);
     }
 
     private cycleTabGroups() {
@@ -1436,7 +1462,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Switch to tab in group",
             (leaf) => leaf.getDisplayText(),
             (leaf) => this.app.workspace.setActiveLeaf(leaf, { focus: true }),
-            (leaf, el) => this.renderInGroupTabSuggestion(leaf, el, windowLabels, showWindow),
+            (leaf, el, match) => this.renderInGroupTabSuggestion(leaf, el, windowLabels, showWindow, match),
             this.firstNonActiveIndex(
                 leaves,
                 (leaf) => leaf === activeLeaf,
@@ -1475,7 +1501,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Switch to any tab",
             (tab) => this.getTabSearchText(tab),
             (tab) => this.app.workspace.setActiveLeaf(tab.leaf, { focus: true }),
-            (tab, el) => this.renderTabSuggestion(tab, el, windowLabels, showGroup, multipleWindows),
+            (tab, el, match) => this.renderTabSuggestion(tab, el, windowLabels, showGroup, multipleWindows, match),
             this.firstNonActiveIndex(
                 tabs,
                 (tab) => tab.leaf === activeLeaf,
@@ -1528,7 +1554,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Switch to tab group",
             (group) => `${group.label} ${group.representative.getDisplayText()}`,
             (group) => this.activateTabGroup(group.group, group.representative),
-            (group, el) => this.renderTabGroupSuggestion(group, el, windowLabels, showGroup, multipleWindows),
+            (group, el, match) => this.renderTabGroupSuggestion(group, el, windowLabels, showGroup, multipleWindows, match),
             this.firstNonActiveIndex(
                 orderedGroups,
                 (group) =>
@@ -1657,7 +1683,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 this.app.workspace.setActiveLeaf(item.representative, {
                     focus: true,
                 }),
-            (item, el) => this.renderWindowSuggestion(item, el),
+            (item, el, match) => this.renderWindowSuggestion(item, el, match),
             this.firstNonActiveIndex(
                 windows,
                 (item) => item.window === activeWindow,
@@ -1690,26 +1716,25 @@ class DedupeConfirmModal extends Modal {
         this.contentEl.classList.add('ntg-dedupe-modal');
         this.contentEl.appendChild(this.body);
 
-        const buttonRow = document.createElement('div');
-        buttonRow.classList.add('ntg-dedupe-buttons');
-        this.contentEl.appendChild(buttonRow);
-
-        const cancelBtn = document.createElement('button');
-        cancelBtn.textContent = 'Cancel';
-        buttonRow.appendChild(cancelBtn);
-
-        const okBtn = document.createElement('button');
-        okBtn.textContent = 'Close tabs';
-        okBtn.classList.add('mod-warning');
-        buttonRow.appendChild(okBtn);
-
         const finish = (ok: boolean) => {
             this.resolve(ok);
             this.close();
         };
-        cancelBtn.addEventListener('click', () => finish(false));
-        okBtn.addEventListener('click', () => finish(true));
 
+        // Standardized abstraction row replaces manual div + button setups
+        new Setting(this.contentEl)
+            .addButton((btn) =>
+                btn.setButtonText('Cancel')
+                   .onClick(() => finish(false))
+            )
+            .addButton((btn) =>
+                btn.setButtonText('Close tabs')
+                   .setWarning()
+                   .setCta()
+                   .onClick(() => finish(true))
+            );
+
+        // Bind core accessibility commands
         this.scope.register([], 'Escape', () => { finish(false); return false; });
         this.scope.register([], 'Enter', () => { finish(true); return false; });
     }
@@ -1719,12 +1744,7 @@ class DedupeConfirmModal extends Modal {
 // Reusable suggestion modal
 // ---------------------------------------------------------------------------
 
-type SuggestionRenderer<T> = (item: T, el: HTMLElement) => void;
-
-interface FuzzyMatch<T> {
-    item: T;
-    match: unknown;
-}
+type SuggestionRenderer<T> = (item: T, el: HTMLElement, match: FuzzyMatch<T>) => void;
 
 class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     constructor(
@@ -1769,15 +1789,15 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     }
 
     renderSuggestion(match: FuzzyMatch<T>, el: HTMLElement): void {
-        const item = match.item;
-
+        // Forward the core match object down to our custom row renderer so the
+        // native fuzzy highlight (.suggestion-highlight) is preserved.
         if (this.renderItem) {
             el.empty();
-            this.renderItem(item, el);
+            this.renderItem(match.item, el, match);
             return;
         }
 
-        el.setText(this.getItemText(item));
+        el.setText(this.getItemText(match.item));
     }
 
     onChooseItem(item: T): void {
