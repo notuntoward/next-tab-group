@@ -471,8 +471,124 @@ export default class NextTabGroupPlugin extends Plugin {
             });
     }
 
+    /**
+     * Sort items recency-first (newest first) but push the currently-active
+     * item to the end of the list. The active item is never something the user
+     * wants at the top of a "switch to" list, yet it must stay reachable (via
+     * scroll or fuzzy search) so it is not deleted. `getRecency` extracts the
+     * timestamp used for ordering; `isActive` identifies the current item.
+     */
+    private sortExcludingActive<T>(
+        items: T[],
+        getRecency: (item: T) => number,
+        isActive: (item: T) => boolean,
+    ): T[] {
+        const recencyCompare = (a: T, b: T) => {
+            const diff = getRecency(b) - getRecency(a);
+            return diff;
+        };
+
+        return [...items].sort((a, b) => {
+            const aActive = isActive(a);
+            const bActive = isActive(b);
+            if (aActive !== bActive) {
+                return aActive ? 1 : -1;
+            }
+            return recencyCompare(a, b);
+        });
+    }
+
     private getTabSearchText(tab: TabInfo): string {
         return `${tab.leaf.getDisplayText()} ${tab.group.label}`;
+    }
+
+    private getTabGroupMeta(tab: TabInfo): string {
+        const group = tab.group;
+
+        let location: string;
+        if (group.isCurrentGroup) {
+            location = "Current group";
+        } else if (group.relativeLabel) {
+            location = group.relativeLabel;
+        } else {
+            location = "Other group";
+        }
+
+        const count =
+            `${group.leaves.length} ` +
+            `tab${group.leaves.length === 1 ? "" : "s"}`;
+
+        return `${location} · ${count}`;
+    }
+
+    private renderNavigationRow(
+        el: HTMLElement,
+        primaryText: string,
+        secondaryText: string,
+    ): void {
+        el.empty();
+        el.addClass("ntg-nav-row");
+
+        const primary = el.createDiv({ cls: "ntg-nav-primary" });
+        primary.setText(primaryText || "Untitled");
+
+        const secondary = el.createDiv({ cls: "ntg-nav-secondary" });
+        secondary.setText(secondaryText);
+    }
+
+    private renderTabSuggestion(tab: TabInfo, el: HTMLElement): void {
+        this.renderNavigationRow(
+            el,
+            tab.leaf.getDisplayText(),
+            this.getTabGroupMeta(tab),
+        );
+    }
+
+    private renderTabGroupSuggestion(
+        group: TabGroupInfo,
+        el: HTMLElement,
+    ): void {
+        const title = group.representative.getDisplayText() || "Untitled tab";
+
+        const location = group.isCurrentGroup
+            ? "Current group"
+            : group.relativeLabel || "Other group";
+
+        const count =
+            `${group.leaves.length} ` +
+            `tab${group.leaves.length === 1 ? "" : "s"}`;
+
+        this.renderNavigationRow(el, title, `${location} · ${count}`);
+    }
+
+    private renderWindowSuggestion(
+        item: WindowInfo,
+        el: HTMLElement,
+    ): void {
+        const role = item.window === window ? "Main window" : "Pop-out";
+
+        const groupCount =
+            `${item.groups.length} ` +
+            `group${item.groups.length === 1 ? "" : "s"}`;
+
+        const recent = item.representative.getDisplayText() || "Untitled tab";
+
+        this.renderNavigationRow(
+            el,
+            role,
+            `Most recent: ${recent} · ${groupCount}`,
+        );
+    }
+
+    private renderInGroupTabSuggestion(
+        leaf: WorkspaceLeaf,
+        el: HTMLElement,
+    ): void {
+        this.renderNavigationRow(
+            el,
+            leaf.getDisplayText(),
+            "Current group",
+        );
     }
 
     private cycleTabGroups() {
@@ -1013,6 +1129,7 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     private switchToTabInGroup(): void {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
         const leaves = this.getActiveTabGroupLeaves();
 
         if (!leaves || leaves.length === 0) {
@@ -1020,8 +1137,10 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const newestFirst = [...leaves].sort(
-            (a, b) => this.compareRecency(b, a),
+        const newestFirst = this.sortExcludingActive(
+            leaves,
+            (leaf) => this.getLeafLastActive(leaf),
+            (leaf) => leaf === activeLeaf,
         );
 
         new NavigationSuggestModal(
@@ -1030,6 +1149,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Switch to tab in group",
             (leaf) => leaf.getDisplayText(),
             (leaf) => this.app.workspace.setActiveLeaf(leaf, { focus: true }),
+            (leaf, el) => this.renderInGroupTabSuggestion(leaf, el),
         ).open();
     }
 
@@ -1043,7 +1163,11 @@ export default class NextTabGroupPlugin extends Plugin {
         }
 
         const groups = this.buildTabGroupInfos(leaves, activeLeaf);
-        const tabs = this.buildTabInfos(groups);
+        const tabs = this.sortExcludingActive(
+            this.buildTabInfos(groups),
+            (tab) => tab.lastActive,
+            (tab) => tab.leaf === activeLeaf,
+        );
 
         new NavigationSuggestModal(
             this.app,
@@ -1051,6 +1175,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Switch to any tab",
             (tab) => this.getTabSearchText(tab),
             (tab) => this.app.workspace.setActiveLeaf(tab.leaf, { focus: true }),
+            (tab, el) => this.renderTabSuggestion(tab, el),
         ).open();
     }
 
@@ -1078,12 +1203,19 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
+        const orderedGroups = this.sortExcludingActive(
+            groups,
+            (group) => group.lastActive,
+            (group) => group.group === activeLeaf?.parent,
+        );
+
         new NavigationSuggestModal(
             this.app,
-            groups,
+            orderedGroups,
             "Switch to tab group",
             (group) => `${group.label} ${group.representative.getDisplayText()}`,
             (group) => this.activateTabGroup(group.group, group.representative),
+            (group, el) => this.renderTabGroupSuggestion(group, el),
         ).open();
     }
 
@@ -1154,7 +1286,11 @@ export default class NextTabGroupPlugin extends Plugin {
         this.app.workspace.iterateAllLeaves((leaf) => allLeaves.push(leaf));
 
         const groups = this.buildTabGroupInfos(allLeaves, activeLeaf);
-        const windows = this.buildWindowInfos(groups, activeLeaf);
+        const windows = this.sortExcludingActive(
+            this.buildWindowInfos(groups, activeLeaf),
+            (win) => win.lastActive,
+            (win) => win.window === activeLeaf?.getContainer()?.win,
+        );
 
         if (windows.length === 0) {
             new Notice("No Obsidian windows to switch to.");
@@ -1170,6 +1306,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 this.app.workspace.setActiveLeaf(item.representative, {
                     focus: true,
                 }),
+            (item, el) => this.renderWindowSuggestion(item, el),
         ).open();
     }
 
@@ -1226,6 +1363,13 @@ class DedupeConfirmModal extends Modal {
 // Reusable suggestion modal
 // ---------------------------------------------------------------------------
 
+type SuggestionRenderer<T> = (item: T, el: HTMLElement) => void;
+
+interface FuzzyMatch<T> {
+    item: T;
+    match: unknown;
+}
+
 class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     constructor(
         app: App,
@@ -1233,6 +1377,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         placeholder: string,
         private readonly getSearchText: (item: T) => string,
         private readonly onChoose: (item: T) => void,
+        private readonly renderItem?: SuggestionRenderer<T>,
     ) {
         super(app);
         this.setPlaceholder(placeholder);
@@ -1244,6 +1389,18 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
 
     getItemText(item: T): string {
         return this.getSearchText(item);
+    }
+
+    renderSuggestion(match: FuzzyMatch<T>, el: HTMLElement): void {
+        const item = match.item;
+
+        if (this.renderItem) {
+            el.empty();
+            this.renderItem(item, el);
+            return;
+        }
+
+        el.setText(this.getItemText(item));
     }
 
     onChooseItem(item: T): void {

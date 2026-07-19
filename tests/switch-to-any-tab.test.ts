@@ -125,6 +125,36 @@ describe('switchToAnyTab', () => {
         expect(items[1].leaf).toBe(asLeaf(older));
     });
 
+    it('moves the currently active (most recent) tab to the end of the list', () => {
+        const group = new MockWorkspaceParent(rootContainer);
+        const older = leaf('older', 'Old.md', group, rootContainer);
+        const middle = leaf('middle', 'Mid.md', group, rootContainer);
+        const active = leaf('active', 'Active.md', group, rootContainer);
+        plugin.leafLastActive.set('older', 100);
+        plugin.leafLastActive.set('middle', 200);
+        plugin.leafLastActive.set('active', 300);
+
+        app.workspace.rootLeaves = [older, middle, active];
+        app.workspace.allLeaves = [older, middle, active];
+        app.workspace.setActiveLeaf(active);
+
+        let captured: MockFuzzySuggestModal<TabInfo> | undefined;
+        const originalOpen = MockFuzzySuggestModal.prototype.open;
+        MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<TabInfo>) {
+            captured = this;
+            return originalOpen.call(this);
+        };
+
+        plugin.switchToAnyTab();
+
+        MockFuzzySuggestModal.prototype.open = originalOpen;
+
+        const items = captured!.getItems();
+        expect((items[0].leaf as unknown as MockWorkspaceLeaf).id).toBe('middle');
+        expect((items[1].leaf as unknown as MockWorkspaceLeaf).id).toBe('older');
+        expect((items[2].leaf as unknown as MockWorkspaceLeaf).id).toBe('active');
+    });
+
     it('each TabInfo references its correct TabGroupInfo', () => {
         const group1 = new MockWorkspaceParent(rootContainer);
         const group2 = new MockWorkspaceParent(rootContainer);

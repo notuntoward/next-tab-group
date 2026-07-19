@@ -33,3 +33,34 @@
     gap: 0.5em;
     margin-top: 1.5em;
 }
+
+/* Shared two-column layout for navigation completion rows. */
+.suggestion-item .ntg-nav-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(12rem, 32%);
+    align-items: center;
+    column-gap: 1rem;
+    width: 100%;
+}
+
+.suggestion-item .ntg-nav-primary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.suggestion-item .ntg-nav-secondary {
+    min-width: 0;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller);
+}
+
+/*
+ * Never set selected-row foreground or background colors here.
+ * Obsidian themes decide how .suggestion-item.is-selected should look.
+ */

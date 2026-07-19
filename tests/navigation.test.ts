@@ -12,6 +12,7 @@ type TestPlugin = NextTabGroupPlugin & {
     getLeafLastActive: (leaf: WorkspaceLeaf) => number;
     compareRecency: (a: WorkspaceLeaf, b: WorkspaceLeaf) => number;
     pickMostRecent: (leaves: WorkspaceLeaf[]) => WorkspaceLeaf;
+    sortExcludingActive: <T>(items: T[], getRecency: (item: T) => number, isActive: (item: T) => boolean) => T[];
     leafLastActive: Map<string, number>;
 };
 
@@ -93,6 +94,61 @@ describe('recency helpers', () => {
             plugin.leafLastActive.set('a', 100);
 
             expect(plugin.compareRecency(asLeaf(a), asLeaf(a))).toBe(0);
+        });
+    });
+
+    describe('sortExcludingActive', () => {
+        it('orders by recency with the active item demoted to the end', () => {
+            const older = leaf('older', group, container);
+            const newer = leaf('newer', group, container);
+            const active = leaf('active', group, container);
+            plugin.leafLastActive.set('older', 100);
+            plugin.leafLastActive.set('newer', 200);
+            plugin.leafLastActive.set('active', 300);
+
+            const result = plugin.sortExcludingActive(
+                [asLeaf(older), asLeaf(newer), asLeaf(active)],
+                (l) => plugin.getLeafLastActive(l),
+                (l) => l === asLeaf(active),
+            );
+
+            expect(result.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual([
+                'newer',
+                'older',
+                'active',
+            ]);
+        });
+
+        it('keeps the active item in the list rather than deleting it', () => {
+            const onlyActive = leaf('only', group, container);
+            plugin.leafLastActive.set('only', 300);
+
+            const result = plugin.sortExcludingActive(
+                [asLeaf(onlyActive)],
+                (l) => plugin.getLeafLastActive(l),
+                (l) => l === asLeaf(onlyActive),
+            );
+
+            expect(result.length).toBe(1);
+            expect((result[0] as unknown as MockWorkspaceLeaf).id).toBe('only');
+        });
+
+        it('leaves ordering unchanged when nothing is active', () => {
+            const older = leaf('older', group, container);
+            const newer = leaf('newer', group, container);
+            plugin.leafLastActive.set('older', 100);
+            plugin.leafLastActive.set('newer', 200);
+
+            const result = plugin.sortExcludingActive(
+                [asLeaf(older), asLeaf(newer)],
+                (l) => plugin.getLeafLastActive(l),
+                () => false,
+            );
+
+            expect(result.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual([
+                'newer',
+                'older',
+            ]);
         });
     });
 
