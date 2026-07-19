@@ -589,6 +589,79 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     /**
+     * Windows in display order, shared by "switch to any tab" and "switch to
+     * tab group" so both present the same arrangement: the active window first,
+     * then every other window ordered by recency of its most recent tab group.
+     */
+    private orderWindowsForDisplay(
+        model: WorkspaceNavigationModel,
+        activeWindow: Window | undefined,
+    ): WindowInfo[] {
+        return [...model.windows].sort((a, b) => {
+            const aActive = a.window === activeWindow ? 1 : 0;
+            const bActive = b.window === activeWindow ? 1 : 0;
+            if (aActive !== bActive) return bActive - aActive;
+
+            const recency = b.lastActive - a.lastActive;
+            if (recency !== 0) return recency;
+            return a.label.localeCompare(b.label);
+        });
+    }
+
+    /**
+     * Tab groups in display order, reused by "switch to tab group" (all
+     * windows) and to expand the "switch to any tab" list: windows lead with the
+     * active one (then others by recency), and within each window groups are
+     * ordered by recency of their most recent tab.
+     */
+    private orderGroupsForDisplay(
+        model: WorkspaceNavigationModel,
+        activeWindow: Window | undefined,
+    ): TabGroupInfo[] {
+        const ordered: TabGroupInfo[] = [];
+
+        for (const win of this.orderWindowsForDisplay(model, activeWindow)) {
+            const windowGroups = this.sortByRecency(
+                win.groups,
+                (group) => group.lastActive,
+                (a, b) => a.label.localeCompare(b.label),
+            );
+            ordered.push(...windowGroups);
+        }
+
+        return ordered;
+    }
+
+    /**
+     * Tabs in display order for "switch to any tab": windows lead with the
+     * active one (then others by recency), each window's groups are ordered by
+     * recency of their most recent tab, and within a group tabs follow recency.
+     * Built directly on top of `orderGroupsForDisplay` so the window/group
+     * ordering is identical to "switch to tab group".
+     */
+    private orderTabsForDisplay(
+        model: WorkspaceNavigationModel,
+        activeWindow: Window | undefined,
+    ): TabInfo[] {
+        const tabByLeaf = new Map(model.tabs.map((tab) => [tab.leaf, tab]));
+
+        const ordered: TabInfo[] = [];
+
+        for (const group of this.orderGroupsForDisplay(model, activeWindow)) {
+            const groupTabs = this.sortByRecency(
+                group.leaves
+                    .map((leaf) => tabByLeaf.get(leaf))
+                    .filter((tab): tab is TabInfo => tab !== undefined),
+                (tab) => tab.lastActive,
+                (a, b) => a.group.label.localeCompare(b.group.label),
+            );
+            ordered.push(...groupTabs);
+        }
+
+        return ordered;
+    }
+
+    /**
      * Sort items recency-first (newest first), preserving the active item's
      * natural position rather than pushing it to the bottom. `getRecency`
      * extracts the timestamp used for ordering; `tiebreak` breaks ties.
@@ -606,16 +679,34 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     /**
-     * Index of the most-recent item that is not the active one, used to set the
-     * modal's initial selection so ENTER switches to it immediately. Falls back
-     * to 0 when every item is active (degenerate) or the list is empty.
+     * Position in the display list of the most-recent item that is not active,
+     * used to set the modal's initial selection so ENTER switches to it
+     * immediately. The display list is grouped by window/tab group, not by pure
+     * recency, so we must rank items by `recency` (higher = newer) to find the
+     * true most-recent non-active item, then return where that item sits in the
+     * already-grouped `items` array. Falls back to 0 when every item is active
+     * (degenerate) or the list is empty.
      */
     private firstNonActiveIndex<T>(
         items: T[],
         isActive: (item: T) => boolean,
+        recency: (item: T) => number,
     ): number {
-        const idx = items.findIndex((item) => !isActive(item));
-        return idx >= 0 ? idx : 0;
+        let bestItem: T | null = null;
+        let bestRecency = -Infinity;
+
+        for (const item of items) {
+            if (isActive(item)) continue;
+            const r = recency(item);
+            if (r > bestRecency) {
+                bestRecency = r;
+                bestItem = item;
+            }
+        }
+
+        if (bestItem === null) return 0;
+
+        return items.indexOf(bestItem);
     }
 
     private getTabSearchText(tab: TabInfo): string {
@@ -680,6 +771,7 @@ export default class NextTabGroupPlugin extends Plugin {
     private renderTabGroupSuggestion(
         group: TabGroupInfo,
         el: HTMLElement,
+        multipleWindows = false,
     ): void {
         const title = group.representative.getDisplayText() || "Untitled tab";
 
@@ -691,7 +783,11 @@ export default class NextTabGroupPlugin extends Plugin {
             `${group.leaves.length} ` +
             `tab${group.leaves.length === 1 ? "" : "s"}`;
 
-        this.renderNavigationRow(el, title, `${location} · ${count}`);
+        const secondary = multipleWindows
+            ? `${location} · ${count} · ${this.getWindowRole(group.window)}`
+            : `${location} · ${count}`;
+
+        this.renderNavigationRow(el, title, secondary);
     }
 
     private renderWindowSuggestion(
@@ -1291,7 +1387,11 @@ export default class NextTabGroupPlugin extends Plugin {
             (leaf) => leaf.getDisplayText(),
             (leaf) => this.app.workspace.setActiveLeaf(leaf, { focus: true }),
             (leaf, el) => this.renderInGroupTabSuggestion(leaf, el),
-            this.firstNonActiveIndex(leaves, (leaf) => leaf === activeLeaf),
+            this.firstNonActiveIndex(
+                leaves,
+                (leaf) => leaf === activeLeaf,
+                (leaf) => this.getLeafLastActive(leaf),
+            ),
         ).open();
     }
 
@@ -1305,22 +1405,11 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        // List the current window's tabs first, then tabs from any other
-        // window, each kept in recency order. The most-recent non-active tab is
-        // selected by default so ENTER switches to it immediately.
-        const currentWindowTabs = this.sortByRecency(
-            this.getTabsInWindow(model, activeWindow),
-            (tab) => tab.lastActive,
-            (a, b) => a.group.label.localeCompare(b.group.label),
-        );
-
-        const otherWindowTabs = this.sortByRecency(
-            model.tabs.filter((tab) => tab.group.window !== activeWindow),
-            (tab) => tab.lastActive,
-            (a, b) => a.group.label.localeCompare(b.group.label),
-        );
-
-        const tabs = [...currentWindowTabs, ...otherWindowTabs];
+        // Tabs are grouped by tab group within each window, and the windows
+        // (and their groups) are ordered by recency so the freshest contexts
+        // sit at the top. The most-recent non-active tab is selected by default
+        // so ENTER switches to it immediately.
+        const tabs = this.orderTabsForDisplay(model, activeWindow);
 
         const multipleWindows =
             new Set(model.groups.map((group) => group.window)).size > 1;
@@ -1332,7 +1421,11 @@ export default class NextTabGroupPlugin extends Plugin {
             (tab) => this.getTabSearchText(tab),
             (tab) => this.app.workspace.setActiveLeaf(tab.leaf, { focus: true }),
             (tab, el) => this.renderTabSuggestion(tab, el, multipleWindows),
-            this.firstNonActiveIndex(tabs, (tab) => tab.leaf === activeLeaf),
+            this.firstNonActiveIndex(
+                tabs,
+                (tab) => tab.leaf === activeLeaf,
+                (tab) => tab.lastActive,
+            ),
         ).open();
     }
 
@@ -1355,18 +1448,19 @@ export default class NextTabGroupPlugin extends Plugin {
         const model = this.buildNavigationModel(activeLeaf);
         const activeWindow = this.getWindowForLeaf(activeLeaf);
 
-        const groups = this.getGroupsInWindow(model, activeWindow);
+        // Include tab groups from every window, ordered the same way as
+        // "switch to any tab": the active window first, then other windows by
+        // recency, with each window's groups ordered by recency of their most
+        // recent tab.
+        const orderedGroups = this.orderGroupsForDisplay(model, activeWindow);
 
-        if (groups.length === 0) {
-            new Notice("No tab groups in this window to switch to.");
+        if (orderedGroups.length === 0) {
+            new Notice("No tab groups to switch to.");
             return;
         }
 
-        const orderedGroups = this.sortByRecency(
-            groups,
-            (group) => group.lastActive,
-            (a, b) => a.label.localeCompare(b.label),
-        );
+        const multipleWindows =
+            new Set(model.groups.map((group) => group.window)).size > 1;
 
         new NavigationSuggestModal(
             this.app,
@@ -1374,12 +1468,13 @@ export default class NextTabGroupPlugin extends Plugin {
             "Switch to tab group",
             (group) => `${group.label} ${group.representative.getDisplayText()}`,
             (group) => this.activateTabGroup(group.group, group.representative),
-            (group, el) => this.renderTabGroupSuggestion(group, el),
+            (group, el) => this.renderTabGroupSuggestion(group, el, multipleWindows),
             this.firstNonActiveIndex(
                 orderedGroups,
                 (group) =>
                     group.window === activeWindow &&
                     group.group === activeLeaf?.parent,
+                (group) => group.lastActive,
             ),
         ).open();
     }
@@ -1478,6 +1573,7 @@ export default class NextTabGroupPlugin extends Plugin {
             this.firstNonActiveIndex(
                 windows,
                 (item) => item.window === activeWindow,
+                (item) => item.lastActive,
             ),
         ).open();
     }
@@ -1564,7 +1660,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         // immediately switches to it.
         if (this.initialIndex > 0 && this.initialIndex < this.items.length) {
             // Defer execution until after the modal renders its initial suggestions
-            setTimeout(() => {
+            window.setTimeout(() => {
                 // Access Obsidian's internal chooser object
                 const chooser = (this as any).chooser;
                 if (chooser && typeof chooser.setSelectedItem === 'function') {

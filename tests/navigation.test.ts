@@ -13,7 +13,7 @@ type TestPlugin = NextTabGroupPlugin & {
     compareRecency: (a: WorkspaceLeaf, b: WorkspaceLeaf) => number;
     pickMostRecent: (leaves: WorkspaceLeaf[]) => WorkspaceLeaf;
     sortByRecency: <T>(items: T[], getRecency: (item: T) => number, tiebreak?: (a: T, b: T) => number) => T[];
-    firstNonActiveIndex: <T>(items: T[], isActive: (item: T) => boolean) => number;
+    firstNonActiveIndex: <T>(items: T[], isActive: (item: T) => boolean, recency: (item: T) => number) => number;
     leafLastActive: Map<string, number>;
 };
 
@@ -131,7 +131,11 @@ describe('recency helpers', () => {
                 [asLeaf(older), asLeaf(newer), asLeaf(active)],
                 (l) => plugin.getLeafLastActive(l),
             );
-            const idx = plugin.firstNonActiveIndex(sorted, (l) => l === asLeaf(active));
+            const idx = plugin.firstNonActiveIndex(
+                sorted,
+                (l) => l === asLeaf(active),
+                (l) => plugin.getLeafLastActive(l),
+            );
 
             expect(sorted[idx]).toBe(asLeaf(newer));
         });
@@ -144,7 +148,11 @@ describe('recency helpers', () => {
                 [asLeaf(onlyActive)],
                 (l) => plugin.getLeafLastActive(l),
             );
-            const idx = plugin.firstNonActiveIndex(sorted, (l) => l === asLeaf(onlyActive));
+            const idx = plugin.firstNonActiveIndex(
+                sorted,
+                (l) => l === asLeaf(onlyActive),
+                (l) => plugin.getLeafLastActive(l),
+            );
 
             expect(idx).toBe(0);
             expect(sorted).toHaveLength(1);

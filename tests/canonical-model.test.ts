@@ -300,14 +300,75 @@ describe('canonical model', () => {
             cap.restore();
         });
 
-        it('switch to tab group contains only active-window groups', () => {
+        it('switch to any tab groups tabs by tab group within each window', () => {
+            const ar = arrange(app);
+            // Recencies chosen so Group A (main-a2) is fresher than Group B
+            // (main-b1), and the pop-out group (popup-c2) is freshest overall.
+            plugin.leafLastActive.set('main-a1', 100);
+            plugin.leafLastActive.set('main-a2', 300);
+            plugin.leafLastActive.set('main-b1', 200);
+            plugin.leafLastActive.set('popup-c1', 400);
+            plugin.leafLastActive.set('popup-c2', 500);
+            app.workspace.setActiveLeaf(ar.mainA1);
+
+            const cap = captureItems<TabInfo>(MockFuzzySuggestModal);
+            plugin.switchToAnyTab();
+            const items = cap.captured!.getItems();
+
+            // Active window block: Group A (main-a2, main-a1) then Group B
+            // (main-b1), all before any pop-out tab.
+            const mainBlock = items.filter((t) => t.group.window === ar.mainWin);
+            expect(mainBlock.map((t) => idOf(t.leaf))).toEqual([
+                'main-a2',
+                'main-a1',
+                'main-b1',
+            ]);
+
+            // Pop-out window block follows, its group after the active window.
+            const popupBlock = items.filter((t) => t.group.window === ar.popupWin);
+            expect(popupBlock.map((t) => idOf(t.leaf))).toEqual([
+                'popup-c2',
+                'popup-c1',
+            ]);
+
+            // A pop-out tab never precedes a main-window tab.
+            expect(items.findIndex((t) => t.group.window === ar.popupWin))
+                .toBeGreaterThan(items.findIndex((t) => t.group.window === ar.mainWin));
+            cap.restore();
+        });
+
+        it('switch to tab group contains groups from every window, active window first', () => {
             const ar = arrange(app);
             app.workspace.setActiveLeaf(ar.mainA1);
             const cap = captureItems<TabGroupInfo>(MockFuzzySuggestModal);
             plugin.switchToTabGroup();
             const groups = cap.captured!.getItems();
-            expect(groups).toHaveLength(2);
-            expect(groups.every((g) => g.window === ar.mainWin)).toBe(true);
+            expect(groups).toHaveLength(3);
+            // Active window (main) leads, then the pop-out window.
+            expect(groups.filter((g) => g.window === ar.mainWin)).toHaveLength(2);
+            expect(groups.filter((g) => g.window === ar.popupWin)).toHaveLength(1);
+            expect(groups[0].window).toBe(ar.mainWin);
+            expect(groups[groups.length - 1].window).toBe(ar.popupWin);
+            cap.restore();
+        });
+
+        it('switch to tab group orders each window groups by recency of most recent tab', () => {
+            const ar = arrange(app);
+            // main-a2 is the most recent main tab; popup-c2 the most recent pop-out tab.
+            plugin.leafLastActive.set('main-a1', 100);
+            plugin.leafLastActive.set('main-a2', 300);
+            plugin.leafLastActive.set('main-b1', 200);
+            plugin.leafLastActive.set('popup-c1', 400);
+            plugin.leafLastActive.set('popup-c2', 500);
+            app.workspace.setActiveLeaf(ar.mainA1);
+
+            const cap = captureItems<TabGroupInfo>(MockFuzzySuggestModal);
+            plugin.switchToTabGroup();
+            const groups = cap.captured!.getItems();
+            const mainGroups = groups.filter((g) => g.window === ar.mainWin);
+            const popupGroups = groups.filter((g) => g.window === ar.popupWin);
+            expect(idOf(mainGroups[0].representative)).toBe('main-a2');
+            expect(idOf(popupGroups[0].representative)).toBe('popup-c2');
             cap.restore();
         });
 
@@ -415,7 +476,7 @@ describe('canonical model', () => {
             expect((dup as unknown as MockWorkspaceLeaf).detached).toBe(true);
         });
 
-        it('switch to any tab keeps the active tab in its recency slot and selects the most recent non-active tab', () => {
+        it('switch to any tab keeps the active tab in its recency slot', () => {
             const ar = arrange(app);
             // Give the active tab and its siblings distinct recencies so the
             // ordering is deterministic: main-a2 is the most recent non-active.
@@ -430,17 +491,69 @@ describe('canonical model', () => {
             plugin.switchToAnyTab();
             const items = cap.captured!.getItems();
 
-            // Pure recency order within the current-window-first layout: the
-            // active tab stays where recency puts it (top of the main block),
-            // not at the bottom.
+            // Grouped by tab group within the current-window-first layout: the
+            // active window leads, its groups are ordered by their most recent
+            // tab (Group A: main-a2 then main-a1, then Group B: main-b1), and
+            // within a group tabs follow recency. The active tab stays in its
+            // recency slot — it is not pushed to the bottom.
             const mainBlock = items.filter((t) => t.group.window === ar.mainWin);
             expect(idOf(mainBlock[0].leaf)).toBe('main-a2');
-            expect(idOf(mainBlock[1].leaf)).toBe('main-b1');
-            expect(idOf(mainBlock[2].leaf)).toBe('main-a1');
+            expect(idOf(mainBlock[1].leaf)).toBe('main-a1');
+            expect(idOf(mainBlock[2].leaf)).toBe('main-b1');
+            cap.restore();
+        });
 
-            // The modal's initial selection is the most recent non-active tab.
+        it('switch to any tab selects the globally most recent non-active tab, even across groups and windows', () => {
+            const ar = arrange(app);
+            // The active tab is main-a1. The most recent non-active tab overall
+            // is popup-c2 (recency 500), which lives in another window AND
+            // another group than the active tab. The grouped display order puts
+            // a same-group tab (main-a2, recency 300) first, so a naive "first
+            // non-active row" selection would wrongly pick main-a2. We assert
+            // the selection targets popup-c2 instead.
+            plugin.leafLastActive.set('main-a1', 100);
+            plugin.leafLastActive.set('main-a2', 300);
+            plugin.leafLastActive.set('main-b1', 200);
+            plugin.leafLastActive.set('popup-c1', 400);
+            plugin.leafLastActive.set('popup-c2', 500);
+            app.workspace.setActiveLeaf(ar.mainA1);
+
+            const cap = captureItems<TabInfo>(MockFuzzySuggestModal);
+            plugin.switchToAnyTab();
+            const items = cap.captured!.getItems();
             const initialIndex = (cap.captured as unknown as { initialIndex: number }).initialIndex;
-            expect(idOf(items[initialIndex].leaf)).toBe('main-a2');
+
+            // The first row in display order is NOT the selected one.
+            expect(idOf(items[0].leaf)).toBe('main-a2');
+            // The selected item is the globally most recent non-active tab.
+            expect(idOf(items[initialIndex].leaf)).toBe('popup-c2');
+            cap.restore();
+        });
+
+        it('switch to tab group selects the most recent non-active group, even when it is in another window', () => {
+            const ar = arrange(app);
+            // Active group is Group A (main). The most recent non-active group
+            // overall is the pop-out Group C (representative popup-c2, recency
+            // 500), even though an active-window group (Group B, recency 200)
+            // appears earlier in the grouped display order.
+            plugin.leafLastActive.set('main-a1', 100);
+            plugin.leafLastActive.set('main-a2', 300);
+            plugin.leafLastActive.set('main-b1', 200);
+            plugin.leafLastActive.set('popup-c1', 400);
+            plugin.leafLastActive.set('popup-c2', 500);
+            app.workspace.setActiveLeaf(ar.mainA1);
+
+            const cap = captureItems<TabGroupInfo>(MockFuzzySuggestModal);
+            plugin.switchToTabGroup();
+            const groups = cap.captured!.getItems();
+            const initialIndex = (cap.captured as unknown as { initialIndex: number }).initialIndex;
+
+            // The first group in display order is in the active window, not the
+            // selected one.
+            expect(groups[0].window).toBe(ar.mainWin);
+            // The selected group is the globally most recent non-active one.
+            expect(idOf(groups[initialIndex].representative)).toBe('popup-c2');
+            expect(groups[initialIndex].window).toBe(ar.popupWin);
             cap.restore();
         });
     });
