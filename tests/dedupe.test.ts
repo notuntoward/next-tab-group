@@ -10,6 +10,8 @@ import {
     MockWorkspaceContainer,
     MockWorkspaceLeaf,
     MockWorkspaceParent,
+    FuzzySuggestModal,
+    MockFuzzySuggestModal,
 } from './mocks/obsidian';
 
 // Public-facing type for the plugin under test so private methods can be exercised.
@@ -18,6 +20,8 @@ type TestPlugin = NextTabGroupPlugin & {
     dedupeInAllGroups: () => Promise<void>;
     dedupeInAllWindows: () => Promise<void>;
     getActiveLeafInFocusedWindow: () => WorkspaceLeaf | null;
+    getActiveTabGroupLeaves: () => WorkspaceLeaf[] | null;
+    switchToTabInGroup: () => void;
     planDedupe: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => { toRemove: WorkspaceLeaf[]; notesAffected: number } | null;
     getLeafFileKey: (leaf: WorkspaceLeaf) => string | null;
     pickSurvivor: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => WorkspaceLeaf;
@@ -382,5 +386,71 @@ describe('getLeafFileKey', () => {
         const leaf = new MockWorkspaceLeaf(null).setId('a');
         leaf.setViewState('graph');
         expect(plugin.getLeafFileKey(asLeaf(leaf))).toBe(null);
+    });
+});
+
+describe('switchToTabInGroup', () => {
+    it('lists only the leaves of the active tab group', () => {
+        const app = new MockApp();
+        const container = new MockWorkspaceContainer('root', {} as Window);
+        const plugin = createPlugin(app);
+        const group = new MockWorkspaceParent(container);
+        const other = new MockWorkspaceParent(container);
+
+        const a = leaf('a', 'Note-A.md', group, container);
+        const b = leaf('b', 'Note-B.md', group, container);
+        const c = leaf('c', 'Note-C.md', group, container);
+        leaf('d', 'Note-D.md', other, container);
+
+        app.workspace.rootLeaves = [a, b, c];
+        app.workspace.allLeaves = [a, b, c];
+        app.workspace.setActiveLeaf(b);
+
+        const leaves = plugin.getActiveTabGroupLeaves();
+        expect(leaves).not.toBeNull();
+        expect(leaves!.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('opens the chosen tab by setting it active', () => {
+        const app = new MockApp();
+        const container = new MockWorkspaceContainer('root', {} as Window);
+        const group = new MockWorkspaceParent(container);
+        const a = leaf('a', 'Note-A.md', group, container);
+        const b = leaf('b', 'Note-B.md', group, container);
+
+        app.workspace.rootLeaves = [a, b];
+        app.workspace.allLeaves = [a, b];
+        app.workspace.setActiveLeaf(a);
+
+        expect(app.workspace.activeLeaf).toBe(a);
+
+        // Capture the real SwitchTabModal instance (a FuzzySuggestModal)
+        // created by the command and drive its onChooseItem.
+        let captured: MockFuzzySuggestModal<MockWorkspaceLeaf> | undefined;
+        const originalOpen = MockFuzzySuggestModal.prototype.open;
+        MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<MockWorkspaceLeaf>) {
+            captured = this;
+            return originalOpen.call(this);
+        };
+
+        const plugin = createPlugin(app);
+        plugin.switchToTabInGroup();
+
+        MockFuzzySuggestModal.prototype.open = originalOpen;
+
+        expect(captured).toBeDefined();
+        const items = captured!.getItems();
+        expect(items.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['a', 'b']);
+
+        const leafB = items.find((l) => (l as unknown as MockWorkspaceLeaf).id === 'b');
+        captured!.onChooseItem(leafB!);
+        expect(app.workspace.activeLeaf).toBe(b);
+    });
+
+    it('returns null when there is no active leaf', () => {
+        const app = new MockApp();
+        const plugin = createPlugin(app);
+        app.workspace.activeLeaf = null;
+        expect(plugin.getActiveTabGroupLeaves()).toBeNull();
     });
 });

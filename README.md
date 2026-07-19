@@ -151,6 +151,12 @@ Scans **every tab in every window** (the main window and any pop-out windows) an
 
 This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all windows**.
 
+## Switch to Tab in Group
+
+**Command ID:** `switch-to-tab-in-group`
+
+Opens a fuzzy-completion prompt listing **every tab in the active tab group**. Pick a tab to make it the active (focused) tab. This is handy for quickly jumping between tabs in the current group without reaching for the mouse.
+
 ### What counts as a "duplicate"?
 
 Two tabs count as duplicates when they point to the same file in your vault. Tabs that aren't backed by a file (e.g. the graph view, settings, the daily note calendar) are ignored and never considered duplicates.
@@ -182,8 +188,9 @@ If the status bar is already cluttered, reload the Quick Explorer plugin or rest
    - `Rotate tab groups`
    - `Deduplicate tabs in group`
    - `Deduplicate tabs in all groups`
-   - `Deduplicate tabs in all windows`
-3. Assign your preferred shortcuts (e.g., `Cmd+K` sequences or Function keys).
+    - `Deduplicate tabs in all windows`
+    - `Switch to tab in group`
+ 3. Assign your preferred shortcuts (e.g., `Cmd+K` sequences or Function keys).
 
 # Running Tests
 

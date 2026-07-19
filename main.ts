@@ -1,4 +1,5 @@
 import {
+    FuzzySuggestModal,
     Modal,
     Notice,
     Plugin,
@@ -123,6 +124,14 @@ export default class NextTabGroupPlugin extends Plugin {
             name: 'Deduplicate tabs in all windows',
             callback: () => {
                 void this.dedupeInAllWindows();
+            }
+        });
+
+        this.addCommand({
+            id: 'switch-to-tab-in-group',
+            name: 'Switch to tab in group',
+            callback: () => {
+                this.switchToTabInGroup();
             }
         });
 
@@ -808,6 +817,32 @@ export default class NextTabGroupPlugin extends Plugin {
         }
     }
 
+    // ------------------------------------------------------------------------
+    // Switch to tab in group
+    // ------------------------------------------------------------------------
+
+    /**
+     * Returns the leaves in the active tab group (the `WorkspaceTabs` parent of
+     * the focused leaf), reusing the same `activeLeaf.parent` identification
+     * the rest of the plugin uses. Returns null when there is no active leaf.
+     */
+    private getActiveTabGroupLeaves(): WorkspaceLeaf[] | null {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        if (!activeLeaf || !activeLeaf.parent) return null;
+
+        const tabGroup = activeLeaf.parent as WorkspaceContainerEl;
+        return (tabGroup.children ?? []) as unknown as WorkspaceLeaf[];
+    }
+
+    private switchToTabInGroup() {
+        const leaves = this.getActiveTabGroupLeaves();
+        if (!leaves || leaves.length === 0) {
+            new Notice('No tabs in the active tab group to switch to.');
+            return;
+        }
+        new SwitchTabModal(this.app, leaves).open();
+    }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -854,6 +889,32 @@ class DedupeConfirmModal extends Modal {
 
         this.scope.register([], 'Escape', () => { finish(false); return false; });
         this.scope.register([], 'Enter', () => { finish(true); return false; });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Switch-to-tab suggeter
+// ---------------------------------------------------------------------------
+
+class SwitchTabModal extends FuzzySuggestModal<WorkspaceLeaf> {
+    private readonly leaves: WorkspaceLeaf[];
+
+    constructor(app: App, leaves: WorkspaceLeaf[]) {
+        super(app);
+        this.leaves = leaves;
+        this.setPlaceholder('Switch to tab in group');
+    }
+
+    getItems(): WorkspaceLeaf[] {
+        return this.leaves;
+    }
+
+    getItemText(leaf: WorkspaceLeaf): string {
+        return leaf.getDisplayText();
+    }
+
+    onChooseItem(leaf: WorkspaceLeaf): void {
+        this.app.workspace.setActiveLeaf(leaf, { focus: true });
     }
 }
 

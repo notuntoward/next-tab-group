@@ -252,12 +252,35 @@ export class MockModal {
     }
 }
 
+export class MockSuggestModal<T> {
+    app: MockApp;
+    placeholder = '';
+
+    constructor(app: MockApp) {
+        this.app = app;
+    }
+
+    setPlaceholder(placeholder: string): void {
+        this.placeholder = placeholder;
+    }
+
+    open(): void { /* no-op */ }
+    close(): void { /* no-op */ }
+    getItems(): T[] { return []; }
+    getItemText(_item: T): string { return String(_item); }
+    onChooseItem(_item: T, _evt?: MouseEvent | KeyboardEvent): void { /* no-op */ }
+}
+
+export class MockFuzzySuggestModal<T> extends MockSuggestModal<T> {}
+
 // Export aliases so that `import { Plugin, Modal, ... } from 'obsidian'` works.
 export const Plugin = MockPlugin;
 export const Modal = MockModal;
 export const PluginSettingTab = MockPluginSettingTab;
 export const Setting = MockSetting;
 export const WorkspaceLeaf = MockWorkspaceLeaf;
+export const SuggestModal = MockSuggestModal;
+export const FuzzySuggestModal = MockFuzzySuggestModal;
 
 // Type aliases for type-only imports.
 export type App = MockApp;
