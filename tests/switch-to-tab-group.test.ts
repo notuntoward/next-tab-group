@@ -46,6 +46,21 @@ function asLeaf(leaf: MockWorkspaceLeaf): WorkspaceLeaf {
     return leaf as unknown as WorkspaceLeaf;
 }
 
+interface LeafLocation {
+    leaf: WorkspaceLeaf;
+    window: Window | undefined;
+    group: MockWorkspaceParent | null;
+}
+
+function loc(leaf: MockWorkspaceLeaf): LeafLocation {
+    const container = leaf.getContainer() as unknown as { win?: Window } | null;
+    return {
+        leaf: leaf as unknown as WorkspaceLeaf,
+        window: container?.win,
+        group: (leaf.parent as MockWorkspaceParent) ?? null,
+    };
+}
+
 describe('switchToTabGroup', () => {
     let app: MockApp;
     let plugin: TestPlugin;
@@ -182,7 +197,7 @@ describe('switchToTabGroup', () => {
         app.workspace.allLeaves = [a1, a2, b1];
         app.workspace.setActiveLeaf(a1);
 
-        const groups = plugin.buildTabGroupInfos([asLeaf(a1), asLeaf(a2), asLeaf(b1)], asLeaf(a1));
+        const groups = plugin.buildTabGroupInfos([loc(a1), loc(a2), loc(b1)], asLeaf(a1));
 
         let captured: MockFuzzySuggestModal<TabGroupInfo> | undefined;
         const originalOpen = MockFuzzySuggestModal.prototype.open;

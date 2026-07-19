@@ -9,8 +9,9 @@ import {
 } from './mocks/obsidian';
 
 type TestPlugin = NextTabGroupPlugin & {
-    buildTabGroupInfos: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => TabGroupInfo[];
+    buildTabGroupInfos: (locations: LeafLocation[], activeLeaf: WorkspaceLeaf | null) => TabGroupInfo[];
     buildTabInfos: (groups: TabGroupInfo[]) => TabInfo[];
+    getEditorLeafLocations: () => LeafLocation[];
     getTabSearchText: (tab: TabInfo) => string;
     formatTabGroupLabel: (
         representative: WorkspaceLeaf,
@@ -21,6 +22,12 @@ type TestPlugin = NextTabGroupPlugin & {
     capitalizeFirst: (value: string) => string;
     leafLastActive: Map<string, number>;
 };
+
+interface LeafLocation {
+    leaf: WorkspaceLeaf;
+    window: Window | undefined;
+    group: WorkspaceParent | null;
+}
 
 interface TabGroupInfo {
     group: WorkspaceParent;
@@ -58,6 +65,15 @@ function asLeaf(leaf: MockWorkspaceLeaf): WorkspaceLeaf {
     return leaf as unknown as WorkspaceLeaf;
 }
 
+function loc(leaf: MockWorkspaceLeaf): LeafLocation {
+    const container = leaf.getContainer() as unknown as { win?: Window } | null;
+    return {
+        leaf: leaf as unknown as WorkspaceLeaf,
+        window: container?.win,
+        group: (leaf.parent as MockWorkspaceParent) ?? null,
+    };
+}
+
 describe('group construction', () => {
     let app: MockApp;
     let plugin: TestPlugin;
@@ -80,7 +96,7 @@ describe('group construction', () => {
             const c = leaf('c', 'C.md', group1, container);
 
             const infos = plugin.buildTabGroupInfos(
-                [asLeaf(a), asLeaf(b), asLeaf(c)],
+                [loc(a), loc(b), loc(c)],
                 null,
             );
             expect(infos).toHaveLength(1);
@@ -92,10 +108,55 @@ describe('group construction', () => {
             const b = leaf('b', 'B.md', group2, container);
 
             const infos = plugin.buildTabGroupInfos(
-                [asLeaf(a), asLeaf(b)],
+                [loc(a), loc(b)],
                 null,
             );
             expect(infos).toHaveLength(2);
+        });
+
+        it('assigns the group window from the location bucket, not the representative', () => {
+            const a = leaf('a', 'A.md', group1, container);
+            const b = leaf('b', 'B.md', group2, container);
+
+            const infos = plugin.buildTabGroupInfos(
+                [loc(a), loc(b)],
+                null,
+            );
+            expect(infos.find((i) => i.group === group1)!.window).toBe(container.win);
+            expect(infos.find((i) => i.group === group2)!.window).toBe(container.win);
+        });
+
+        it('excludes sidebar leaves from tab groups', () => {
+            const a = leaf('a', 'A.md', group1, container);
+            const b = leaf('b', 'B.md', group2, container);
+
+            const sidebar = leaf('sidebar', 'File Explorer', group1, container);
+            (sidebar as unknown as { getRoot: () => unknown }).getRoot = () => app.workspace.leftSplit;
+
+            // Sidebar exclusion is central, in getEditorLeafLocations, not in
+            // buildTabGroupInfos. The model must never surface it.
+            app.workspace.allLeaves = [a, b, sidebar];
+            const locations = plugin.getEditorLeafLocations();
+            const sidebarIds = locations
+                .filter((l) => (l.leaf as unknown as MockWorkspaceLeaf).id === 'sidebar')
+                .map((l) => (l.leaf as unknown as MockWorkspaceLeaf).id);
+            expect(sidebarIds).toHaveLength(0);
+
+            const infos = plugin.buildTabGroupInfos(locations, null);
+            const allIds = infos.flatMap((g) =>
+                g.leaves.map((l) => (l as unknown as MockWorkspaceLeaf).id),
+            );
+            expect(allIds).toContain('a');
+            expect(allIds).toContain('b');
+            expect(allIds).not.toContain('sidebar');
+        });
+
+        it('keeps editor leaves whose root is the main workspace root', () => {
+            const a = leaf('a', 'A.md', group1, container);
+            (a as unknown as { getRoot: () => unknown }).getRoot = () => app.workspace.rootSplit;
+
+            const infos = plugin.buildTabGroupInfos([loc(a)], null);
+            expect(infos).toHaveLength(1);
         });
 
         it('representative is the most-recent leaf', () => {
@@ -105,7 +166,7 @@ describe('group construction', () => {
             plugin.leafLastActive.set('newer', 200);
 
             const infos = plugin.buildTabGroupInfos(
-                [asLeaf(older), asLeaf(newer)],
+                [loc(older), loc(newer)],
                 null,
             );
             expect(infos[0].representative).toBe(asLeaf(newer));
@@ -122,7 +183,7 @@ describe('group construction', () => {
             plugin.leafLastActive.set('b2', 400);
 
             const infos = plugin.buildTabGroupInfos(
-                [asLeaf(a1), asLeaf(a2), asLeaf(b1), asLeaf(b2)],
+                [loc(a1), loc(a2), loc(b1), loc(b2)],
                 null,
             );
             expect(infos[0].group).toBe(group2);
@@ -138,12 +199,31 @@ describe('group construction', () => {
             app.workspace.setActiveLeaf(a);
 
             const infos = plugin.buildTabGroupInfos(
-                [asLeaf(a), asLeaf(b)],
+                [loc(a), loc(b)],
                 asLeaf(a),
             );
             const labels = infos.map((i) => i.label);
             expect(labels.some((l) => l.startsWith('Current group'))).toBe(true);
             expect(labels.filter((l) => l.startsWith('Current group'))).toHaveLength(1);
+        });
+
+        it('a group is current only when both parent and window match the active leaf', () => {
+            const mainContainer = new MockWorkspaceContainer('root', {} as Window);
+            const popupContainer = new MockWorkspaceContainer('window', {} as Window);
+            const mainGroup = new MockWorkspaceParent(mainContainer);
+            const popupGroup = new MockWorkspaceParent(popupContainer);
+
+            const a = leaf('a', 'A.md', mainGroup, mainContainer);
+            const p = leaf('p', 'P.md', popupGroup, popupContainer);
+
+            const infos = plugin.buildTabGroupInfos(
+                [loc(a), loc(p)],
+                asLeaf(a),
+            );
+            const mainInfo = infos.find((i) => i.group === mainGroup)!;
+            const popupInfo = infos.find((i) => i.group === popupGroup)!;
+            expect(mainInfo.isCurrentGroup).toBe(true);
+            expect(popupInfo.isCurrentGroup).toBe(false);
         });
 
         it('singular and plural labels read 1 tab and N tabs', () => {
@@ -152,7 +232,7 @@ describe('group construction', () => {
             const multi2 = leaf('m2', 'M2.md', group2, container);
 
             const infos = plugin.buildTabGroupInfos(
-                [asLeaf(single), asLeaf(multi1), asLeaf(multi2)],
+                [loc(single), loc(multi1), loc(multi2)],
                 null,
             );
             const singleLabel = infos.find((i) => i.group === group1)!.label;
@@ -176,7 +256,7 @@ describe('group construction', () => {
             } as unknown as HTMLElement;
 
             const infos = plugin.buildTabGroupInfos(
-                [asLeaf(a), asLeaf(b)],
+                [loc(a), loc(b)],
                 asLeaf(a),
             );
             const bInfo = infos.find((i) => i.group === group2)!;
@@ -192,7 +272,7 @@ describe('group construction', () => {
             plugin.leafLastActive.set('b', 100);
 
             const infos = plugin.buildTabGroupInfos(
-                [asLeaf(a), asLeaf(b)],
+                [loc(a), loc(b)],
                 null,
             );
             expect(infos[0].label.localeCompare(infos[1].label)).toBeLessThan(0);
@@ -209,7 +289,7 @@ describe('group construction', () => {
             plugin.leafLastActive.set('b1', 300);
 
             const groups = plugin.buildTabGroupInfos(
-                [asLeaf(a1), asLeaf(a2), asLeaf(b1)],
+                [loc(a1), loc(a2), loc(b1)],
                 null,
             );
             const tabs = plugin.buildTabInfos(groups);
@@ -223,7 +303,7 @@ describe('group construction', () => {
             const b = leaf('b', 'B.md', group2, container);
 
             const groups = plugin.buildTabGroupInfos(
-                [asLeaf(a), asLeaf(b)],
+                [loc(a), loc(b)],
                 null,
             );
             const tabs = plugin.buildTabInfos(groups);
@@ -243,7 +323,7 @@ describe('group construction', () => {
             plugin.leafLastActive.set('b', 200);
 
             const groups = plugin.buildTabGroupInfos(
-                [asLeaf(a), asLeaf(b)],
+                [loc(a), loc(b)],
                 null,
             );
             const tabs = plugin.buildTabInfos(groups);

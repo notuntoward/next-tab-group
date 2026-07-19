@@ -98,6 +98,10 @@ export class MockWorkspaceLeaf {
         return this.container;
     }
 
+    getRoot(): unknown {
+        return this.container;
+    }
+
     getViewState(): { type: string; state?: Record<string, unknown> } {
         return this.viewState;
     }
@@ -123,6 +127,9 @@ export class MockWorkspace {
     activeLeaf: MockWorkspaceLeaf | null = null;
     rootLeaves: MockWorkspaceLeaf[] = [];
     allLeaves: MockWorkspaceLeaf[] = [];
+    rootSplit = Symbol('rootSplit');
+    leftSplit = Symbol('leftSplit');
+    rightSplit = Symbol('rightSplit');
     private eventHandlers: Map<string, Array<(...args: unknown[]) => void>> = new Map();
 
     setActiveLeaf(leaf: MockWorkspaceLeaf, _opts?: { focus?: boolean }): void {

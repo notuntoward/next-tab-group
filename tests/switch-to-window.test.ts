@@ -54,6 +54,21 @@ function asLeaf(leaf: MockWorkspaceLeaf): WorkspaceLeaf {
     return leaf as unknown as WorkspaceLeaf;
 }
 
+interface LeafLocation {
+    leaf: WorkspaceLeaf;
+    window: Window | undefined;
+    group: MockWorkspaceParent | null;
+}
+
+function loc(leaf: MockWorkspaceLeaf): LeafLocation {
+    const container = leaf.getContainer() as unknown as { win?: Window } | null;
+    return {
+        leaf: leaf as unknown as WorkspaceLeaf,
+        window: container?.win,
+        group: (leaf.parent as MockWorkspaceParent) ?? null,
+    };
+}
+
 describe('switchToWindow', () => {
     let app: MockApp;
     let plugin: TestPlugin;
@@ -77,7 +92,7 @@ describe('switchToWindow', () => {
         app.workspace.allLeaves = [a, b];
         app.workspace.setActiveLeaf(a);
 
-        const groups = plugin.buildTabGroupInfos([asLeaf(a), asLeaf(b)], asLeaf(a));
+        const groups = plugin.buildTabGroupInfos([loc(a), loc(b)], asLeaf(a));
         const windows = plugin.buildWindowInfos(groups, asLeaf(a));
         expect(windows).toHaveLength(1);
         expect(windows[0].groups).toHaveLength(2);
@@ -91,7 +106,7 @@ describe('switchToWindow', () => {
         app.workspace.allLeaves = [a];
         app.workspace.setActiveLeaf(a);
 
-        const groups = plugin.buildTabGroupInfos([asLeaf(a)], asLeaf(a));
+        const groups = plugin.buildTabGroupInfos([loc(a)], asLeaf(a));
         const windows = plugin.buildWindowInfos(groups, asLeaf(a));
         expect(windows[0].label).toContain('Main window');
     });
@@ -104,7 +119,7 @@ describe('switchToWindow', () => {
         app.workspace.allLeaves = [a];
         app.workspace.setActiveLeaf(a);
 
-        const groups = plugin.buildTabGroupInfos([asLeaf(a)], asLeaf(a));
+        const groups = plugin.buildTabGroupInfos([loc(a)], asLeaf(a));
         const windows = plugin.buildWindowInfos(groups, asLeaf(a));
         expect(windows[0].label).toContain('Pop-out');
     });
@@ -126,7 +141,7 @@ describe('switchToWindow', () => {
         app.workspace.allLeaves = [mainA, mainB, winA];
         app.workspace.setActiveLeaf(mainA);
 
-        const groups = plugin.buildTabGroupInfos([asLeaf(mainA), asLeaf(mainB), asLeaf(winA)], asLeaf(mainA));
+        const groups = plugin.buildTabGroupInfos([loc(mainA), loc(mainB), loc(winA)], asLeaf(mainA));
         const windows = plugin.buildWindowInfos(groups, asLeaf(mainA));
         // Main window has most recent activity (mainB at 300), pop-out at 200
         expect(windows[0].label).toContain('Main window');
@@ -169,7 +184,7 @@ describe('switchToWindow', () => {
         app.workspace.allLeaves = [a];
         app.workspace.setActiveLeaf(a);
 
-        const groups = plugin.buildTabGroupInfos([asLeaf(a)], asLeaf(a));
+        const groups = plugin.buildTabGroupInfos([loc(a)], asLeaf(a));
         const windows = plugin.buildWindowInfos(groups, asLeaf(a));
         expect(windows).toHaveLength(1);
     });
@@ -187,7 +202,7 @@ describe('switchToWindow', () => {
         app.workspace.allLeaves = [a, b, c];
         app.workspace.setActiveLeaf(a);
 
-        const groups = plugin.buildTabGroupInfos([asLeaf(a), asLeaf(b), asLeaf(c)], asLeaf(a));
+        const groups = plugin.buildTabGroupInfos([loc(a), loc(b), loc(c)], asLeaf(a));
         const windows = plugin.buildWindowInfos(groups, asLeaf(a));
         expect(windows[0].label).toContain('3 groups');
     });

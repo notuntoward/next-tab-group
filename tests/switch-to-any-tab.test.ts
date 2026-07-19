@@ -15,6 +15,8 @@ type TestPlugin = NextTabGroupPlugin & {
     buildTabGroupInfos: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => TabGroupInfo[];
     buildTabInfos: (groups: TabGroupInfo[]) => TabInfo[];
     getTabSearchText: (tab: TabInfo) => string;
+    renderTabSuggestion: (tab: TabInfo, el: HTMLElement, multipleWindows?: boolean) => void;
+    getWindowRole: (win: Window | undefined) => string;
 };
 
 interface TabGroupInfo {
@@ -51,6 +53,54 @@ function leaf(
 
 function asLeaf(leaf: MockWorkspaceLeaf): WorkspaceLeaf {
     return leaf as unknown as WorkspaceLeaf;
+}
+
+interface LeafLocation {
+    leaf: WorkspaceLeaf;
+    window: Window | undefined;
+    group: MockWorkspaceParent | null;
+}
+
+function loc(leaf: MockWorkspaceLeaf): LeafLocation {
+    const container = leaf.getContainer() as unknown as { win?: Window } | null;
+    return {
+        leaf: leaf as unknown as WorkspaceLeaf,
+        window: container?.win,
+        group: (leaf.parent as MockWorkspaceParent) ?? null,
+    };
+}
+
+// Obsidian augments HTMLElement with empty()/addClass()/createDiv()/setText(),
+// which jsdom lacks. Build a thin wrapper that delegates to real DOM.
+type AugmentedEl = HTMLElement & {
+    empty(): void;
+    addClass(cls: string): void;
+    setText(text: string): void;
+    createDiv(opts: { cls: string }): AugmentedEl;
+};
+
+function augment(el: HTMLElement): AugmentedEl {
+    const a = el as AugmentedEl;
+    a.empty = function (this: HTMLElement) {
+        while (this.firstChild) this.removeChild(this.firstChild);
+    };
+    a.addClass = function (this: HTMLElement, cls: string) {
+        this.classList.add(cls);
+    };
+    a.setText = function (this: HTMLElement, text: string) {
+        this.textContent = text;
+    };
+    a.createDiv = function (this: HTMLElement, opts: { cls: string }) {
+        const child = document.createElement('div');
+        child.classList.add(opts.cls);
+        this.appendChild(child);
+        return augment(child);
+    };
+    return a;
+}
+
+function rowEl(): AugmentedEl {
+    return augment(document.createElement('div'));
 }
 
 describe('switchToAnyTab', () => {
@@ -195,7 +245,7 @@ describe('switchToAnyTab', () => {
         app.workspace.allLeaves = [a, b];
         app.workspace.setActiveLeaf(a);
 
-        const groups = plugin.buildTabGroupInfos([asLeaf(a), asLeaf(b)], asLeaf(a));
+        const groups = plugin.buildTabGroupInfos([loc(a), loc(b)], asLeaf(a));
         const tabs = plugin.buildTabInfos(groups);
         const text = plugin.getTabSearchText(tabs[0]);
         expect(text).toContain('B.md');
@@ -226,5 +276,67 @@ describe('switchToAnyTab', () => {
         const tabB = items.find((t) => (t.leaf as unknown as MockWorkspaceLeaf).id === 'b')!;
         captured!.onChooseItem(tabB);
         expect(app.workspace.activeLeaf).toBe(b);
+    });
+
+    it('lists tabs from every window, not just the focused one', () => {
+        const groupMain = new MockWorkspaceParent(rootContainer);
+        const groupWin = new MockWorkspaceParent(windowContainer);
+
+        const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
+        const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
+
+        app.workspace.rootLeaves = [mainA];
+        app.workspace.allLeaves = [mainA, winA];
+        app.workspace.setActiveLeaf(mainA);
+
+        let captured: MockFuzzySuggestModal<TabInfo> | undefined;
+        const originalOpen = MockFuzzySuggestModal.prototype.open;
+        MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<TabInfo>) {
+            captured = this;
+            return originalOpen.call(this);
+        };
+
+        plugin.switchToAnyTab();
+
+        MockFuzzySuggestModal.prototype.open = originalOpen;
+
+        const ids = captured!.getItems().map((t) => (t.leaf as unknown as MockWorkspaceLeaf).id);
+        expect(ids).toContain('mainA');
+        expect(ids).toContain('winA');
+    });
+
+    it('appends the window role to the secondary text when more than one window exists', () => {
+        const groupMain = new MockWorkspaceParent(rootContainer);
+        const groupWin = new MockWorkspaceParent(windowContainer);
+
+        const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
+        const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
+
+        const group = plugin.buildTabGroupInfos([loc(mainA), loc(winA)], asLeaf(mainA));
+        const tabs = plugin.buildTabInfos(group);
+        const tabInWin = tabs.find((t) => (t.leaf as unknown as MockWorkspaceLeaf).id === 'winA')!;
+
+        const el = rowEl();
+        plugin.renderTabSuggestion(tabInWin, el, true);
+
+        const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
+        expect(secondary).toContain('Pop-out');
+        expect(secondary).toContain('tab');
+    });
+
+    it('omits the window role from the secondary text with a single window', () => {
+        const group = new MockWorkspaceParent(rootContainer);
+        const a = leaf('a', 'A.md', group, rootContainer);
+
+        const groups = plugin.buildTabGroupInfos([loc(a)], asLeaf(a));
+        const tabs = plugin.buildTabInfos(groups);
+        const tab = tabs[0];
+
+        const el = rowEl();
+        plugin.renderTabSuggestion(tab, el, false);
+
+        const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
+        expect(secondary).not.toContain('Main window');
+        expect(secondary).not.toContain('Pop-out');
     });
 });
