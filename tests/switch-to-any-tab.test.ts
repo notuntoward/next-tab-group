@@ -12,12 +12,20 @@ import {
 type TestPlugin = NextTabGroupPlugin & {
     switchToAnyTab: () => void;
     getLeavesInFocusedWindow: () => WorkspaceLeaf[];
+    buildNavigationModel: (activeLeaf: WorkspaceLeaf | null) => WorkspaceNavigationModel;
     buildTabGroupInfos: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => TabGroupInfo[];
     buildTabInfos: (groups: TabGroupInfo[]) => TabInfo[];
     getTabSearchText: (tab: TabInfo) => string;
-    renderTabSuggestion: (tab: TabInfo, el: HTMLElement, multipleWindows?: boolean) => void;
-    getWindowRole: (win: Window | undefined) => string;
+    renderTabSuggestion: (tab: TabInfo, el: HTMLElement, labels: Map<Window | undefined, string>, showGroup: boolean, showWindow: boolean) => void;
+    buildWindowLabels: (model: WorkspaceNavigationModel) => Map<Window | undefined, string>;
 };
+
+interface WorkspaceNavigationModel {
+    locations: LeafLocation[];
+    windows: WindowInfo[];
+    groups: TabGroupInfo[];
+    tabs: TabInfo[];
+}
 
 interface TabGroupInfo {
     group: MockWorkspaceParent;
@@ -34,6 +42,15 @@ interface TabInfo {
     leaf: WorkspaceLeaf;
     group: TabGroupInfo;
     lastActive: number;
+}
+
+interface WindowInfo {
+    window: Window | undefined;
+    groups: TabGroupInfo[];
+    representative: WorkspaceLeaf;
+    lastActive: number;
+    label: string;
+    isCurrentWindow: boolean;
 }
 
 function createPlugin(app: MockApp): TestPlugin {
@@ -111,7 +128,9 @@ describe('switchToAnyTab', () => {
 
     beforeEach(() => {
         app = new MockApp();
-        rootContainer = new MockWorkspaceContainer('root', {} as Window);
+        // Use the global `window` for the main container so the plugin's
+        // `win === window` main-window check matches (as in real Obsidian).
+        rootContainer = new MockWorkspaceContainer('root', globalThis.window);
         windowContainer = new MockWorkspaceContainer('window', {} as Window);
         plugin = createPlugin(app);
     });
@@ -346,38 +365,94 @@ describe('switchToAnyTab', () => {
         expect((items[items.length - 1].leaf as unknown as MockWorkspaceLeaf).id).toBe('winA');
     });
 
-    it('appends the window role to the secondary text when more than one window exists', () => {
+    it('appends the numbered window label to the secondary text when more than one window exists', () => {
         const groupMain = new MockWorkspaceParent(rootContainer);
         const groupWin = new MockWorkspaceParent(windowContainer);
 
         const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
         const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
 
-        const group = plugin.buildTabGroupInfos([loc(mainA), loc(winA)], asLeaf(mainA));
-        const tabs = plugin.buildTabInfos(group);
-        const tabInWin = tabs.find((t) => (t.leaf as unknown as MockWorkspaceLeaf).id === 'winA')!;
+        app.workspace.allLeaves = [mainA, winA];
+        app.workspace.setActiveLeaf(mainA);
+        const model = plugin.buildNavigationModel(asLeaf(mainA));
+        const labels = plugin.buildWindowLabels(model);
+        const tabInWin = model.tabs.find((t) => (t.leaf as unknown as MockWorkspaceLeaf).id === 'winA')!;
 
         const el = rowEl();
-        plugin.renderTabSuggestion(tabInWin, el, true);
+        plugin.renderTabSuggestion(tabInWin, el, labels, true, true);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
-        expect(secondary).toContain('Pop-out');
+        expect(secondary).toContain('Pop-out 1');
         expect(secondary).toContain('tab');
     });
 
-    it('omits the window role from the secondary text with a single window', () => {
+    it('omits the window label from the secondary text with a single window', () => {
         const group = new MockWorkspaceParent(rootContainer);
         const a = leaf('a', 'A.md', group, rootContainer);
 
-        const groups = plugin.buildTabGroupInfos([loc(a)], asLeaf(a));
-        const tabs = plugin.buildTabInfos(groups);
-        const tab = tabs[0];
+        app.workspace.allLeaves = [a];
+        app.workspace.setActiveLeaf(a);
+        const model = plugin.buildNavigationModel(asLeaf(a));
+        const labels = plugin.buildWindowLabels(model);
+        const tab = model.tabs[0];
 
         const el = rowEl();
-        plugin.renderTabSuggestion(tab, el, false);
+        plugin.renderTabSuggestion(tab, el, labels, false, false);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
+        expect(secondary).toBe('');
         expect(secondary).not.toContain('Main window');
         expect(secondary).not.toContain('Pop-out');
+        expect(secondary).not.toContain('tab');
+    });
+
+    it('shows the window label but not the group when there is one window and many groups', () => {
+        const groupMain = new MockWorkspaceParent(rootContainer);
+        const groupMain2 = new MockWorkspaceParent(rootContainer);
+
+        const a = leaf('a', 'A.md', groupMain, rootContainer);
+        const b = leaf('b', 'B.md', groupMain2, rootContainer);
+
+        app.workspace.allLeaves = [a, b];
+        app.workspace.setActiveLeaf(a);
+        const model = plugin.buildNavigationModel(asLeaf(a));
+        const labels = plugin.buildWindowLabels(model);
+        const tab = model.tabs[0];
+
+        const el = rowEl();
+        // Single window: showWindow false. Multiple groups: showGroup true.
+        plugin.renderTabSuggestion(tab, el, labels, true, false);
+
+        const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
+        expect(secondary).toContain('tab');
+        expect(secondary).not.toContain('Main window');
+        expect(secondary).not.toContain('Pop-out');
+    });
+
+    it('numbers distinct pop-out windows so they are distinguishable', () => {
+        const popout2 = new MockWorkspaceContainer('window', {} as Window);
+
+        const groupMain = new MockWorkspaceParent(rootContainer);
+        const groupWin = new MockWorkspaceParent(windowContainer);
+        const groupWin2 = new MockWorkspaceParent(popout2);
+
+        const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
+        const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
+        const winB = leaf('winB', 'Win-B.md', groupWin2, popout2);
+
+        app.workspace.allLeaves = [mainA, winA, winB];
+        app.workspace.setActiveLeaf(mainA);
+        const model = plugin.buildNavigationModel(asLeaf(mainA));
+        const labels = plugin.buildWindowLabels(model);
+
+        expect(labels.get(rootContainer.win)).toBe('Main window');
+        expect(labels.get(windowContainer.win)).toBe('Pop-out 1');
+        expect(labels.get(popout2.win)).toBe('Pop-out 2');
+
+        const tabInWin2 = model.tabs.find((t) => (t.leaf as unknown as MockWorkspaceLeaf).id === 'winB')!;
+        const el = rowEl();
+        plugin.renderTabSuggestion(tabInWin2, el, labels, true, true);
+        const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
+        expect(secondary).toContain('Pop-out 2');
     });
 });

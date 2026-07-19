@@ -11,7 +11,7 @@ import {
 type TestPlugin = NextTabGroupPlugin & {
     getTabGroupMeta: (tab: TabInfo) => string;
     getTabSearchText: (tab: TabInfo) => string;
-    renderTabGroupSuggestion: (group: TabGroupInfo, el: HTMLElement) => void;
+    renderTabGroupSuggestion: (group: TabGroupInfo, el: HTMLElement, labels: Map<Window | undefined, string>, showGroup: boolean, showWindow: boolean) => void;
     renderWindowSuggestion: (item: WindowInfo, el: HTMLElement) => void;
 };
 
@@ -121,7 +121,7 @@ describe('tab group row metadata', () => {
         const group = makeGroup(container, { leaves, isCurrentGroup: true, relativeLabel: null });
 
         const el = rowEl();
-        plugin.renderTabGroupSuggestion(group, el);
+        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false);
 
         const primary = el.querySelector('.ntg-nav-primary')!.textContent;
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
@@ -134,7 +134,7 @@ describe('tab group row metadata', () => {
         const group = makeGroup(container, { leaves, isCurrentGroup: false, relativeLabel: 'Right group' });
 
         const el = rowEl();
-        plugin.renderTabGroupSuggestion(group, el);
+        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
         expect(secondary).toBe('Right group · 1 tab');
@@ -148,7 +148,7 @@ describe('tab group row metadata', () => {
         const group = makeGroup(container, { leaves, isCurrentGroup: false, relativeLabel: null });
 
         const el = rowEl();
-        plugin.renderTabGroupSuggestion(group, el);
+        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
         expect(secondary).toBe('Other group · 2 tabs');

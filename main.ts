@@ -750,52 +750,61 @@ export default class NextTabGroupPlugin extends Plugin {
     private renderTabSuggestion(
         tab: TabInfo,
         el: HTMLElement,
-        multipleWindows = false,
+        labels: Map<Window | undefined, string>,
+        showGroup: boolean,
+        showWindow: boolean,
     ): void {
-        const groupMeta = this.getTabGroupMeta(tab);
-        const secondary = multipleWindows
-            ? `${groupMeta} · ${this.getWindowRole(tab.group.window)}`
-            : groupMeta;
+        const parts: string[] = [];
+        // The tab group is only named when there is more than one group to
+        // disambiguate; the window only when there is more than one window.
+        if (showGroup) parts.push(this.getTabGroupMeta(tab));
+        if (showWindow) parts.push(this.getWindowLabel(tab.group.window, labels));
 
         this.renderNavigationRow(
             el,
             tab.leaf.getDisplayText(),
-            secondary,
+            parts.join(" · "),
         );
     }
 
-    private getWindowRole(win: Window | undefined): string {
-        return win === window ? "Main window" : "Pop-out";
+    private getWindowLabel(
+        win: Window | undefined,
+        labels: Map<Window | undefined, string>,
+    ): string {
+        return labels.get(win) ?? (win === window ? "Main window" : "Pop-out");
     }
 
     private renderTabGroupSuggestion(
         group: TabGroupInfo,
         el: HTMLElement,
-        multipleWindows = false,
+        labels: Map<Window | undefined, string>,
+        showGroup: boolean,
+        showWindow: boolean,
     ): void {
         const title = group.representative.getDisplayText() || "Untitled tab";
 
-        const location = group.isCurrentGroup
-            ? "Current group"
-            : group.relativeLabel || "Other group";
+        const parts: string[] = [];
+        // The group descriptor (Current group / relative / Other group + count)
+        // is only shown when there is more than one group to tell apart; the
+        // window only when there is more than one window.
+        if (showGroup) {
+            const location = group.isCurrentGroup
+                ? "Current group"
+                : group.relativeLabel || "Other group";
+            const count =
+                `${group.leaves.length} ` +
+                `tab${group.leaves.length === 1 ? "" : "s"}`;
+            parts.push(`${location} · ${count}`);
+        }
+        if (showWindow) parts.push(this.getWindowLabel(group.window, labels));
 
-        const count =
-            `${group.leaves.length} ` +
-            `tab${group.leaves.length === 1 ? "" : "s"}`;
-
-        const secondary = multipleWindows
-            ? `${location} · ${count} · ${this.getWindowRole(group.window)}`
-            : `${location} · ${count}`;
-
-        this.renderNavigationRow(el, title, secondary);
+        this.renderNavigationRow(el, title, parts.join(" · "));
     }
 
     private renderWindowSuggestion(
         item: WindowInfo,
         el: HTMLElement,
     ): void {
-        const role = item.window === window ? "Main window" : "Pop-out";
-
         const groupCount =
             `${item.groups.length} ` +
             `group${item.groups.length === 1 ? "" : "s"}`;
@@ -804,7 +813,7 @@ export default class NextTabGroupPlugin extends Plugin {
 
         this.renderNavigationRow(
             el,
-            role,
+            item.label,
             `Most recent: ${recent} · ${groupCount}`,
         );
     }
@@ -812,12 +821,16 @@ export default class NextTabGroupPlugin extends Plugin {
     private renderInGroupTabSuggestion(
         leaf: WorkspaceLeaf,
         el: HTMLElement,
+        labels: Map<Window | undefined, string>,
+        showWindow: boolean,
     ): void {
-        this.renderNavigationRow(
-            el,
-            leaf.getDisplayText(),
-            "Current group",
-        );
+        // The group is implied (this command only lists the active group), so
+        // its name is never shown; the window is only named when there is more
+        // than one window.
+        const secondary = showWindow
+            ? this.getWindowLabel(leaf.getContainer()?.win, labels)
+            : "";
+        this.renderNavigationRow(el, leaf.getDisplayText(), secondary);
     }
 
     private cycleTabGroups() {
@@ -1380,13 +1393,19 @@ export default class NextTabGroupPlugin extends Plugin {
             (a, b) => this.getLeafId(a).localeCompare(this.getLeafId(b)),
         );
 
+        // The active group is the only group in this modal, so its name is
+        // never needed; the window is named only when more than one exists.
+        const showWindow =
+            new Set(model.groups.map((group) => group.window)).size > 1;
+        const windowLabels = this.buildWindowLabels(model);
+
         new NavigationSuggestModal(
             this.app,
             leaves,
             "Switch to tab in group",
             (leaf) => leaf.getDisplayText(),
             (leaf) => this.app.workspace.setActiveLeaf(leaf, { focus: true }),
-            (leaf, el) => this.renderInGroupTabSuggestion(leaf, el),
+            (leaf, el) => this.renderInGroupTabSuggestion(leaf, el, windowLabels, showWindow),
             this.firstNonActiveIndex(
                 leaves,
                 (leaf) => leaf === activeLeaf,
@@ -1413,6 +1432,8 @@ export default class NextTabGroupPlugin extends Plugin {
 
         const multipleWindows =
             new Set(model.groups.map((group) => group.window)).size > 1;
+        const showGroup = model.groups.length > 1;
+        const windowLabels = this.buildWindowLabels(model);
 
         new NavigationSuggestModal(
             this.app,
@@ -1420,7 +1441,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Switch to any tab",
             (tab) => this.getTabSearchText(tab),
             (tab) => this.app.workspace.setActiveLeaf(tab.leaf, { focus: true }),
-            (tab, el) => this.renderTabSuggestion(tab, el, multipleWindows),
+            (tab, el) => this.renderTabSuggestion(tab, el, windowLabels, showGroup, multipleWindows),
             this.firstNonActiveIndex(
                 tabs,
                 (tab) => tab.leaf === activeLeaf,
@@ -1461,6 +1482,8 @@ export default class NextTabGroupPlugin extends Plugin {
 
         const multipleWindows =
             new Set(model.groups.map((group) => group.window)).size > 1;
+        const showGroup = model.groups.length > 1;
+        const windowLabels = this.buildWindowLabels(model);
 
         new NavigationSuggestModal(
             this.app,
@@ -1468,7 +1491,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Switch to tab group",
             (group) => `${group.label} ${group.representative.getDisplayText()}`,
             (group) => this.activateTabGroup(group.group, group.representative),
-            (group, el) => this.renderTabGroupSuggestion(group, el, multipleWindows),
+            (group, el) => this.renderTabGroupSuggestion(group, el, windowLabels, showGroup, multipleWindows),
             this.firstNonActiveIndex(
                 orderedGroups,
                 (group) =>
@@ -1480,18 +1503,40 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     private formatWindowLabel(
-        win: Window | undefined,
+        role: string,
         groups: TabGroupInfo[],
         representative: WorkspaceLeaf,
     ): string {
-        const isMain = win === window;
-        const role = isMain ? "Main window" : "Pop-out";
         const title = representative.getDisplayText() || "Untitled tab";
 
-        if (isMain) return `${role} — ${title}`;
+        if (role === "Main window") return `${role} — ${title}`;
 
         const count = `${groups.length} group${groups.length === 1 ? "" : "s"}`;
         return `${role} — ${title} · ${count}`;
+    }
+
+    /**
+     * Map each window to a stable display label. The main window (the global
+     * `window`) is "Main window"; every pop-out is numbered by its position in
+     * the recency-ordered window list ("Pop-out 1", "Pop-out 2", …) so distinct
+     * pop-outs are distinguishable from one another.
+     */
+    private buildWindowLabels(
+        model: WorkspaceNavigationModel,
+    ): Map<Window | undefined, string> {
+        const labels = new Map<Window | undefined, string>();
+        let popoutOrdinal = 0;
+
+        for (const win of model.windows) {
+            if (win.window === window) {
+                labels.set(win.window, "Main window");
+            } else {
+                popoutOrdinal += 1;
+                labels.set(win.window, `Pop-out ${popoutOrdinal}`);
+            }
+        }
+
+        return labels;
     }
 
     private buildWindowInfos(
@@ -1512,6 +1557,7 @@ export default class NextTabGroupPlugin extends Plugin {
         const currentWin = activeLeaf?.getContainer()?.win;
 
         const windows: WindowInfo[] = [];
+        let popoutOrdinal = 0;
 
         for (const [win, windowGroups] of byWindow) {
             const sortedGroups = [...windowGroups].sort((a, b) => {
@@ -1522,12 +1568,17 @@ export default class NextTabGroupPlugin extends Plugin {
 
             const representative = sortedGroups[0].representative;
 
+            const role =
+                win === window
+                    ? "Main window"
+                    : `Pop-out ${(popoutOrdinal += 1)}`;
+
             windows.push({
                 window: win,
                 groups: sortedGroups,
                 representative,
                 lastActive: this.getLeafLastActive(representative),
-                label: this.formatWindowLabel(win, sortedGroups, representative),
+                label: this.formatWindowLabel(role, sortedGroups, representative),
                 isCurrentWindow: win === currentWin,
             });
         }
