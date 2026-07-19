@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Pre-push hook: verify dependencies resolve strictly and tests pass.
-# Mirrors the GitHub Actions Build workflow (npm ci + npm test) so issues
-# are caught before push instead of in CI.
+# Pre-push hook: verify tests pass before pushing.
+# Mirrors the GitHub Actions Build workflow so issues are caught locally
+# instead of in CI. We deliberately do NOT run `npm ci` here: it re-links
+# native binaries (e.g. @esbuild/win32-arm64/esbuild.exe) which are often
+# locked by antivirus/EDR on Windows, causing an EPERM that aborts the push
+# even when the code is fine. CI still runs `npm ci` strictly on every push.
 
 set -e
 
@@ -14,9 +17,6 @@ if ! grep -Eq '"test"\s*:' package.json; then
   echo "pre-push: no test script defined, skipping"
   exit 0
 fi
-
-echo "pre-push: running npm ci (strict install like CI)..."
-npm ci
 
 echo "pre-push: running npm test..."
 npm test
