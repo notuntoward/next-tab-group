@@ -102,6 +102,10 @@ export class MockWorkspaceLeaf {
         return this.viewState;
     }
 
+    getDisplayText(): string {
+        return this.filePath ?? 'Untitled tab';
+    }
+
     setViewState(type: string, state?: Record<string, unknown>): this {
         this.viewState = { type, ...(state ? { state } : {}) };
         return this;

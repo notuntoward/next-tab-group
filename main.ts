@@ -67,6 +67,32 @@ interface WorkspaceLayoutNode {
     state?: Record<string, unknown>;
 }
 
+interface TabGroupInfo {
+    group: WorkspaceParent;
+    leaves: WorkspaceLeaf[];
+    representative: WorkspaceLeaf;
+    lastActive: number;
+    label: string;
+    relativeLabel: string | null;
+    isCurrentGroup: boolean;
+    window: Window | undefined;
+}
+
+interface TabInfo {
+    leaf: WorkspaceLeaf;
+    group: TabGroupInfo;
+    lastActive: number;
+}
+
+interface WindowInfo {
+    window: Window | undefined;
+    groups: TabGroupInfo[];
+    representative: WorkspaceLeaf;
+    lastActive: number;
+    label: string;
+    isCurrentWindow: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -135,17 +161,45 @@ export default class NextTabGroupPlugin extends Plugin {
             }
         });
 
+        this.addCommand({
+            id: 'switch-to-any-tab',
+            name: 'Switch to any tab',
+            callback: () => {
+                this.switchToAnyTab();
+            }
+        });
+
+        this.addCommand({
+            id: 'switch-to-tab-group',
+            name: 'Switch to tab group',
+            callback: () => {
+                this.switchToTabGroup();
+            }
+        });
+
+        this.addCommand({
+            id: 'switch-to-window',
+            name: 'Switch to window',
+            callback: () => {
+                this.switchToWindow();
+            }
+        });
+
         this.addSettingTab(new NextTabGroupSettingTab(this.app, this));
 
         this.loadStyleSheet();
 
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', (leaf) => {
-                if (leaf) {
-                    const internal = leaf as WorkspaceLeafInternal;
-                    if (internal.id) {
-                        this.leafLastActive.set(internal.id, Date.now());
-                    }
+                if (!leaf) return;
+
+                const internal = leaf as WorkspaceLeafInternal;
+                if (internal.id) {
+                    this.leafLastActive.set(internal.id, Date.now());
+                }
+
+                if (leaf.parent) {
+                    this.tabGroupActiveLeaves.set(leaf.parent, leaf);
                 }
             })
         );
@@ -219,6 +273,21 @@ export default class NextTabGroupPlugin extends Plugin {
         });
 
         return leafInFocusedWindow ?? globalActive;
+    }
+
+    private getLeavesInFocusedWindow(): WorkspaceLeaf[] {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const focusedWin = activeLeaf?.getContainer()?.win;
+
+        const leaves: WorkspaceLeaf[] = [];
+
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            if (!focusedWin || leaf.getContainer()?.win === focusedWin) {
+                leaves.push(leaf);
+            }
+        });
+
+        return leaves;
     }
 
     // ------------------------------------------------------------------------
@@ -295,6 +364,115 @@ export default class NextTabGroupPlugin extends Plugin {
             if (Math.abs(yDiff) > 50) return yDiff;
             return a.position.x - b.position.x;
         });
+    }
+
+    private capitalizeFirst(value: string): string {
+        return value.length === 0
+            ? value
+            : value.charAt(0).toUpperCase() + value.slice(1);
+    }
+
+    private formatTabGroupLabel(
+        representative: WorkspaceLeaf,
+        leafCount: number,
+        isCurrentGroup: boolean,
+        relativeLabel: string | null,
+    ): string {
+        const count = `${leafCount} tab${leafCount === 1 ? "" : "s"}`;
+        const name = representative.getDisplayText() || "Untitled tab";
+
+        let prefix: string | null = null;
+        if (isCurrentGroup) {
+            prefix = "Current group";
+        } else if (relativeLabel) {
+            prefix = relativeLabel;
+        }
+
+        return prefix ? `${prefix} — ${name} · ${count}` : `${name} · ${count}`;
+    }
+
+    private buildTabGroupInfos(
+        leaves: WorkspaceLeaf[],
+        activeLeaf: WorkspaceLeaf | null,
+    ): TabGroupInfo[] {
+        const byGroup = new Map<WorkspaceParent, WorkspaceLeaf[]>();
+
+        for (const leaf of leaves) {
+            const group = leaf.parent;
+            if (!group) continue;
+
+            const groupLeaves = byGroup.get(group);
+            if (groupLeaves) {
+                groupLeaves.push(leaf);
+            } else {
+                byGroup.set(group, [leaf]);
+            }
+        }
+
+        const activeGroup = activeLeaf?.parent ?? null;
+        const activeGroupRect = activeGroup
+            ? this.getTabGroupRect(activeGroup as WorkspaceContainerEl)
+            : null;
+
+        const infos: TabGroupInfo[] = [];
+
+        for (const [group, groupLeaves] of byGroup) {
+            const representative = this.pickMostRecent(groupLeaves);
+            const isCurrentGroup = group === activeGroup;
+            const groupRect = this.getTabGroupRect(group as WorkspaceContainerEl);
+
+            let relativeLabel: string | null = null;
+            if (!isCurrentGroup && groupRect && activeGroupRect) {
+                relativeLabel = this.capitalizeFirst(
+                    this.relativePosition(groupRect, activeGroupRect),
+                );
+                if (relativeLabel === "another group") {
+                    relativeLabel = null;
+                }
+            }
+
+            infos.push({
+                group,
+                leaves: groupLeaves,
+                representative,
+                lastActive: this.getLeafLastActive(representative),
+                label: this.formatTabGroupLabel(
+                    representative,
+                    groupLeaves.length,
+                    isCurrentGroup,
+                    relativeLabel,
+                ),
+                relativeLabel,
+                isCurrentGroup,
+                window: representative.getContainer()?.win,
+            });
+        }
+
+        return infos.sort((a, b) => {
+            const recency = b.lastActive - a.lastActive;
+            if (recency !== 0) return recency;
+            return a.label.localeCompare(b.label);
+        });
+    }
+
+    private buildTabInfos(groups: TabGroupInfo[]): TabInfo[] {
+        return groups
+            .flatMap((group) =>
+                group.leaves.map((leaf) => ({
+                    leaf,
+                    group,
+                    lastActive: this.getLeafLastActive(leaf),
+                })),
+            )
+            .sort((a, b) => {
+                const recency = b.lastActive - a.lastActive;
+                if (recency !== 0) return recency;
+                return this.getLeafId(a.leaf).localeCompare(this.getLeafId(b.leaf));
+            });
+    }
+
+    private getTabSearchText(tab: TabInfo): string {
+        return `${tab.leaf.getDisplayText()} ${tab.group.label}`;
     }
 
     private cycleTabGroups() {
@@ -834,13 +1012,165 @@ export default class NextTabGroupPlugin extends Plugin {
         return (tabGroup.children ?? []) as unknown as WorkspaceLeaf[];
     }
 
-    private switchToTabInGroup() {
+    private switchToTabInGroup(): void {
         const leaves = this.getActiveTabGroupLeaves();
+
         if (!leaves || leaves.length === 0) {
-            new Notice('No tabs in the active tab group to switch to.');
+            new Notice("No tabs in the active tab group to switch to.");
             return;
         }
-        new SwitchTabModal(this.app, leaves).open();
+
+        const newestFirst = [...leaves].sort(
+            (a, b) => this.compareRecency(b, a),
+        );
+
+        new NavigationSuggestModal(
+            this.app,
+            newestFirst,
+            "Switch to tab in group",
+            (leaf) => leaf.getDisplayText(),
+            (leaf) => this.app.workspace.setActiveLeaf(leaf, { focus: true }),
+        ).open();
+    }
+
+    private switchToAnyTab(): void {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const leaves = this.getLeavesInFocusedWindow();
+
+        if (leaves.length === 0) {
+            new Notice("No tabs in this window to switch to.");
+            return;
+        }
+
+        const groups = this.buildTabGroupInfos(leaves, activeLeaf);
+        const tabs = this.buildTabInfos(groups);
+
+        new NavigationSuggestModal(
+            this.app,
+            tabs,
+            "Switch to any tab",
+            (tab) => this.getTabSearchText(tab),
+            (tab) => this.app.workspace.setActiveLeaf(tab.leaf, { focus: true }),
+        ).open();
+    }
+
+    private activateTabGroup(
+        group: WorkspaceParent,
+        fallbackLeaf: WorkspaceLeaf,
+    ): void {
+        const storedLeaf = this.tabGroupActiveLeaves.get(group);
+
+        if (storedLeaf && storedLeaf.parent === group) {
+            this.app.workspace.setActiveLeaf(storedLeaf, { focus: true });
+            return;
+        }
+
+        this.app.workspace.setActiveLeaf(fallbackLeaf, { focus: true });
+    }
+
+    private switchToTabGroup(): void {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const leaves = this.getLeavesInFocusedWindow();
+        const groups = this.buildTabGroupInfos(leaves, activeLeaf);
+
+        if (groups.length === 0) {
+            new Notice("No tab groups in this window to switch to.");
+            return;
+        }
+
+        new NavigationSuggestModal(
+            this.app,
+            groups,
+            "Switch to tab group",
+            (group) => `${group.label} ${group.representative.getDisplayText()}`,
+            (group) => this.activateTabGroup(group.group, group.representative),
+        ).open();
+    }
+
+    private formatWindowLabel(
+        win: Window | undefined,
+        groups: TabGroupInfo[],
+        representative: WorkspaceLeaf,
+    ): string {
+        const isMain = win === window;
+        const role = isMain ? "Main window" : "Pop-out";
+        const title = representative.getDisplayText() || "Untitled tab";
+
+        if (isMain) return `${role} — ${title}`;
+
+        const count = `${groups.length} group${groups.length === 1 ? "" : "s"}`;
+        return `${role} — ${title} · ${count}`;
+    }
+
+    private buildWindowInfos(
+        groups: TabGroupInfo[],
+        activeLeaf: WorkspaceLeaf | null,
+    ): WindowInfo[] {
+        const byWindow = new Map<Window | undefined, TabGroupInfo[]>();
+
+        for (const group of groups) {
+            const items = byWindow.get(group.window);
+            if (items) {
+                items.push(group);
+            } else {
+                byWindow.set(group.window, [group]);
+            }
+        }
+
+        const currentWin = activeLeaf?.getContainer()?.win;
+
+        const windows: WindowInfo[] = [];
+
+        for (const [win, windowGroups] of byWindow) {
+            const sortedGroups = [...windowGroups].sort((a, b) => {
+                const recency = b.lastActive - a.lastActive;
+                if (recency !== 0) return recency;
+                return a.label.localeCompare(b.label);
+            });
+
+            const representative = sortedGroups[0].representative;
+
+            windows.push({
+                window: win,
+                groups: sortedGroups,
+                representative,
+                lastActive: this.getLeafLastActive(representative),
+                label: this.formatWindowLabel(win, sortedGroups, representative),
+                isCurrentWindow: win === currentWin,
+            });
+        }
+
+        return windows.sort((a, b) => {
+            const recency = b.lastActive - a.lastActive;
+            if (recency !== 0) return recency;
+            return a.label.localeCompare(b.label);
+        });
+    }
+
+    private switchToWindow(): void {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+
+        const allLeaves: WorkspaceLeaf[] = [];
+        this.app.workspace.iterateAllLeaves((leaf) => allLeaves.push(leaf));
+
+        const groups = this.buildTabGroupInfos(allLeaves, activeLeaf);
+        const windows = this.buildWindowInfos(groups, activeLeaf);
+
+        if (windows.length === 0) {
+            new Notice("No Obsidian windows to switch to.");
+            return;
+        }
+
+        new NavigationSuggestModal(
+            this.app,
+            windows,
+            "Switch to window",
+            (item) => `${item.label} ${item.representative.getDisplayText()}`,
+            (item) =>
+                this.app.workspace.setActiveLeaf(item.representative, {
+                    focus: true,
+                }),
+        ).open();
     }
 
 }
@@ -893,28 +1223,31 @@ class DedupeConfirmModal extends Modal {
 }
 
 // ---------------------------------------------------------------------------
-// Switch-to-tab suggeter
+// Reusable suggestion modal
 // ---------------------------------------------------------------------------
 
-class SwitchTabModal extends FuzzySuggestModal<WorkspaceLeaf> {
-    private readonly leaves: WorkspaceLeaf[];
-
-    constructor(app: App, leaves: WorkspaceLeaf[]) {
+class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
+    constructor(
+        app: App,
+        private readonly items: T[],
+        placeholder: string,
+        private readonly getSearchText: (item: T) => string,
+        private readonly onChoose: (item: T) => void,
+    ) {
         super(app);
-        this.leaves = leaves;
-        this.setPlaceholder('Switch to tab in group');
+        this.setPlaceholder(placeholder);
     }
 
-    getItems(): WorkspaceLeaf[] {
-        return this.leaves;
+    getItems(): T[] {
+        return this.items;
     }
 
-    getItemText(leaf: WorkspaceLeaf): string {
-        return leaf.getDisplayText();
+    getItemText(item: T): string {
+        return this.getSearchText(item);
     }
 
-    onChooseItem(leaf: WorkspaceLeaf): void {
-        this.app.workspace.setActiveLeaf(leaf, { focus: true });
+    onChooseItem(item: T): void {
+        this.onChoose(item);
     }
 }
 

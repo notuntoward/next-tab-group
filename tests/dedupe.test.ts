@@ -424,8 +424,8 @@ describe('switchToTabInGroup', () => {
 
         expect(app.workspace.activeLeaf).toBe(a);
 
-        // Capture the real SwitchTabModal instance (a FuzzySuggestModal)
-        // created by the command and drive its onChooseItem.
+        // Capture the real NavigationSuggestModal instance created by the
+        // command and drive its onChooseItem.
         let captured: MockFuzzySuggestModal<MockWorkspaceLeaf> | undefined;
         const originalOpen = MockFuzzySuggestModal.prototype.open;
         MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<MockWorkspaceLeaf>) {
@@ -440,7 +440,9 @@ describe('switchToTabInGroup', () => {
 
         expect(captured).toBeDefined();
         const items = captured!.getItems();
-        expect(items.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['a', 'b']);
+        // Recency-sorted with no timestamps falls back to ID ascending, so
+        // newest-first yields ['b', 'a'].
+        expect(items.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['b', 'a']);
 
         const leafB = items.find((l) => (l as unknown as MockWorkspaceLeaf).id === 'b');
         captured!.onChooseItem(leafB!);
