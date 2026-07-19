@@ -320,56 +320,25 @@ export default class NextTabGroupPlugin extends Plugin {
     // Tab group discovery & navigation
     // ------------------------------------------------------------------------
 
-    private getRelativePosition(leaf: WorkspaceLeaf): { x: number; y: number } {
-        // Use real DOM boundaries
-        try {
-            const tabGroup = leaf.parent as WorkspaceContainerEl | null;
-            const containerEl = tabGroup?.containerEl;
-            if (containerEl && containerEl.instanceOf(HTMLElement)) {
-                const rect = containerEl.getBoundingClientRect();
-                return { x: rect.left, y: rect.top };
-            }
-        } catch {
-            // fall through to fallback
-        }
+    private getSpatiallySortedGroups(
+        groups: TabGroupInfo[],
+    ): TabGroupInfo[] {
+        return [...groups].sort((a, b) => {
+            const aRect = this.getTabGroupRect(a.group as WorkspaceContainerEl);
+            const bRect = this.getTabGroupRect(b.group as WorkspaceContainerEl);
 
-        // Fallback: approximate via split hierarchy
-        let x = 0;
-        let y = 0;
-        let parent: WorkspaceContainerEl | null = leaf.parent as WorkspaceContainerEl | null;
-        let childRef: WorkspaceContainerEl | WorkspaceLeaf = leaf;
-
-        while (parent) {
-            const children = parent.children;
-            if (Array.isArray(children)) {
-                const index = children.indexOf(childRef as WorkspaceContainerEl);
-                if (index >= 0) {
-                    const dir = parent.direction;
-                    if (dir === 'vertical') {
-                        x += index * 1000;
-                    } else if (dir === 'horizontal') {
-                        y += index * 1000;
-                    }
+            if (aRect && bRect) {
+                const yDiff = aRect.y - bRect.y;
+                if (Math.abs(yDiff) > 50) {
+                    return yDiff;
                 }
+                return aRect.x - bRect.x;
             }
-            childRef = parent;
-            parent = parent.parent as WorkspaceContainerEl | null;
-        }
 
-        return { x, y };
-    }
+            if (aRect) return -1;
+            if (bRect) return 1;
 
-    private getGroupPosition(group: TabGroupInfo): { x: number; y: number } {
-        return this.getRelativePosition(group.representative);
-    }
-
-    private sortGroupsSpatially(groups: TabGroupInfo[]): TabGroupInfo[] {
-        return groups.sort((a, b) => {
-            const aPos = this.getGroupPosition(a);
-            const bPos = this.getGroupPosition(b);
-            const yDiff = aPos.y - bPos.y;
-            if (Math.abs(yDiff) > 50) return yDiff;
-            return aPos.x - bPos.x;
+            return a.label.localeCompare(b.label);
         });
     }
 
@@ -767,7 +736,7 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const sorted = this.sortGroupsSpatially(windowGroups);
+        const sorted = this.getSpatiallySortedGroups(windowGroups);
 
         if (!activeLeaf) {
             this.focusTabGroup(sorted[0], workspace);
@@ -1325,17 +1294,29 @@ export default class NextTabGroupPlugin extends Plugin {
     private switchToAnyTab(): void {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         const model = this.buildNavigationModel(activeLeaf);
+        const activeWindow = this.getWindowForLeaf(activeLeaf);
 
         if (model.tabs.length === 0) {
             new Notice("No editor tabs to switch to.");
             return;
         }
 
-        const tabs = this.sortExcludingActive(
-            model.tabs,
+        // Start with the most recent tab in the current window (other than the
+        // active tab), then the remaining tabs from any window. This keeps the
+        // global picker's top item in the window the user is actually in.
+        const currentWindowTabs = this.sortExcludingActive(
+            this.getTabsInWindow(model, activeWindow),
             (tab) => tab.lastActive,
             (tab) => tab.leaf === activeLeaf,
         );
+
+        const otherWindowTabs = this.sortExcludingActive(
+            model.tabs.filter((tab) => tab.group.window !== activeWindow),
+            (tab) => tab.lastActive,
+            (tab) => tab.leaf === activeLeaf,
+        );
+
+        const tabs = [...currentWindowTabs, ...otherWindowTabs];
 
         const multipleWindows =
             new Set(model.groups.map((group) => group.window)).size > 1;

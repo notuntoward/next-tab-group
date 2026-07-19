@@ -305,6 +305,44 @@ describe('switchToAnyTab', () => {
         expect(ids).toContain('winA');
     });
 
+    it('starts with the most recent tab in the current window, not a more recent pop-out tab', () => {
+        const groupMain = new MockWorkspaceParent(rootContainer);
+        const groupWin = new MockWorkspaceParent(windowContainer);
+
+        const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
+        const mainB = leaf('mainB', 'Main-B.md', groupMain, rootContainer);
+        const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
+
+        // The pop-out tab is the most recently visited overall, but the user is
+        // in the main window (active tab mainA), so the top item must be the
+        // most recent main-window tab (mainB).
+        plugin.leafLastActive.set('mainA', 100);
+        plugin.leafLastActive.set('mainB', 300);
+        plugin.leafLastActive.set('winA', 400);
+
+        app.workspace.rootLeaves = [mainA, mainB];
+        app.workspace.allLeaves = [mainA, mainB, winA];
+        app.workspace.setActiveLeaf(mainA);
+
+        let captured: MockFuzzySuggestModal<TabInfo> | undefined;
+        const originalOpen = MockFuzzySuggestModal.prototype.open;
+        MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<TabInfo>) {
+            captured = this;
+            return originalOpen.call(this);
+        };
+
+        plugin.switchToAnyTab();
+
+        MockFuzzySuggestModal.prototype.open = originalOpen;
+
+        const items = captured!.getItems();
+        expect((items[0].leaf as unknown as MockWorkspaceLeaf).id).toBe('mainB');
+        // Active tab is demoted within the current-window block, so it sits
+        // before any other-window tab (winA) and is not the last item.
+        expect((items[1].leaf as unknown as MockWorkspaceLeaf).id).toBe('mainA');
+        expect((items[items.length - 1].leaf as unknown as MockWorkspaceLeaf).id).toBe('winA');
+    });
+
     it('appends the window role to the secondary text when more than one window exists', () => {
         const groupMain = new MockWorkspaceParent(rootContainer);
         const groupWin = new MockWorkspaceParent(windowContainer);

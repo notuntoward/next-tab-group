@@ -415,14 +415,190 @@ describe('canonical model', () => {
             expect((dup as unknown as MockWorkspaceLeaf).detached).toBe(true);
         });
 
-        it('sortExcludingActive pushes the active item to the end', () => {
+        it('switch to any tab starts with the most recent current-window tab and demotes the active tab within the current window', () => {
             const ar = arrange(app);
             app.workspace.setActiveLeaf(ar.mainA1);
             const cap = captureItems<TabInfo>(MockFuzzySuggestModal);
             plugin.switchToAnyTab();
             const items = cap.captured!.getItems();
-            expect(idOf(items[items.length - 1].leaf)).toBe('main-a1');
+            // Active tab main-a1 is demoted to the end of the current-window
+            // block, so it is the last main-window entry and precedes any
+            // pop-out entries.
+            const lastCurrentWindow = [...items]
+                .reverse()
+                .find((t) => t.group.window === ar.mainWin)!;
+            expect(idOf(lastCurrentWindow.leaf)).toBe('main-a1');
             cap.restore();
+        });
+    });
+
+    describe('window-local spatial hints', () => {
+        function setRect(parent: MockWorkspaceParent, rect: { x: number; y: number; w: number; h: number }) {
+            (parent as unknown as { containerEl: unknown }).containerEl = {
+                instanceOf: () => true,
+                getBoundingClientRect: () => ({
+                    left: rect.x,
+                    top: rect.y,
+                    width: rect.w,
+                    height: rect.h,
+                    right: rect.x + rect.w,
+                    bottom: rect.y + rect.h,
+                    x: rect.x,
+                    y: rect.y,
+                    toJSON: () => ({}),
+                }),
+            };
+        }
+
+        it('a group in the active window can receive a directional label', () => {
+            const mainWin: Window = {} as Window;
+            const mainContainer = new MockWorkspaceContainer('root', mainWin);
+            const activeGroup = new MockWorkspaceParent(mainContainer);
+            const rightGroup = new MockWorkspaceParent(mainContainer);
+
+            const active = leaf('active', 'Active.md', activeGroup, mainContainer);
+            const right = leaf('right', 'Right.md', rightGroup, mainContainer);
+
+            setRect(activeGroup, { x: 0, y: 0, w: 100, h: 100 });
+            setRect(rightGroup, { x: 300, y: 0, w: 100, h: 100 });
+
+            const app2 = new MockApp();
+            const plugin2 = createPlugin(app2);
+            app2.workspace.allLeaves = [active, right];
+            app2.workspace.setActiveLeaf(active);
+
+            const model = plugin2.buildNavigationModel(asLeaf(active));
+            const rightInfo = model.groups.find((g) => g.group === rightGroup)!;
+            expect(rightInfo.isCurrentGroup).toBe(false);
+            expect(rightInfo.relativeLabel).toBe('Right group');
+        });
+
+        it('a group in another window always has a null relative label', () => {
+            const mainWin: Window = {} as Window;
+            const popupWin: Window = {} as Window;
+            const mainContainer = new MockWorkspaceContainer('root', mainWin);
+            const popupContainer = new MockWorkspaceContainer('window', popupWin);
+            const activeGroup = new MockWorkspaceParent(mainContainer);
+            const popupGroup = new MockWorkspaceParent(popupContainer);
+
+            const active = leaf('active', 'Active.md', activeGroup, mainContainer);
+            const popup = leaf('popup', 'Popup.md', popupGroup, popupContainer);
+
+            setRect(activeGroup, { x: 0, y: 0, w: 100, h: 100 });
+            setRect(popupGroup, { x: 300, y: 300, w: 100, h: 100 });
+
+            const app2 = new MockApp();
+            const plugin2 = createPlugin(app2);
+            app2.workspace.allLeaves = [active, popup];
+            app2.workspace.setActiveLeaf(active);
+
+            const model = plugin2.buildNavigationModel(asLeaf(active));
+            const popupInfo = model.groups.find((g) => g.group === popupGroup)!;
+            expect(popupInfo.relativeLabel).toBeNull();
+            expect(model.windows.some((w) => w.window === popupWin)).toBe(true);
+        });
+
+        it('the active group has isCurrentGroup true and no relative label', () => {
+            const mainWin: Window = {} as Window;
+            const mainContainer = new MockWorkspaceContainer('root', mainWin);
+            const activeGroup = new MockWorkspaceParent(mainContainer);
+
+            const active = leaf('active', 'Active.md', activeGroup, mainContainer);
+            setRect(activeGroup, { x: 0, y: 0, w: 100, h: 100 });
+
+            const app2 = new MockApp();
+            const plugin2 = createPlugin(app2);
+            app2.workspace.allLeaves = [active];
+            app2.workspace.setActiveLeaf(active);
+
+            const model = plugin2.buildNavigationModel(asLeaf(active));
+            const info = model.groups.find((g) => g.group === activeGroup)!;
+            expect(info.isCurrentGroup).toBe(true);
+            expect(info.relativeLabel).toBeNull();
+        });
+
+        it('a tab inherits its group relative label', () => {
+            const mainWin: Window = {} as Window;
+            const mainContainer = new MockWorkspaceContainer('root', mainWin);
+            const activeGroup = new MockWorkspaceParent(mainContainer);
+            const rightGroup = new MockWorkspaceParent(mainContainer);
+
+            const active = leaf('active', 'Active.md', activeGroup, mainContainer);
+            const right1 = leaf('right1', 'Right1.md', rightGroup, mainContainer);
+            const right2 = leaf('right2', 'Right2.md', rightGroup, mainContainer);
+
+            setRect(activeGroup, { x: 0, y: 0, w: 100, h: 100 });
+            setRect(rightGroup, { x: 300, y: 0, w: 100, h: 100 });
+
+            const app2 = new MockApp();
+            const plugin2 = createPlugin(app2);
+            app2.workspace.allLeaves = [active, right1, right2];
+            app2.workspace.setActiveLeaf(active);
+
+            const model = plugin2.buildNavigationModel(asLeaf(active));
+            const rightInfo = model.groups.find((g) => g.group === rightGroup)!;
+            for (const tab of model.tabs.filter((t) => t.group === rightInfo)) {
+                expect(tab.group.relativeLabel).toBe('Right group');
+            }
+        });
+
+        it('group cycling only takes candidates from the active window', () => {
+            const mainWin: Window = {} as Window;
+            const popupWin: Window = {} as Window;
+            const mainContainer = new MockWorkspaceContainer('root', mainWin);
+            const popupContainer = new MockWorkspaceContainer('window', popupWin);
+            const g1 = new MockWorkspaceParent(mainContainer);
+            const g2 = new MockWorkspaceParent(mainContainer);
+            const gP = new MockWorkspaceParent(popupContainer);
+
+            const a = leaf('a', 'A.md', g1, mainContainer);
+            const b = leaf('b', 'B.md', g2, mainContainer);
+            const p = leaf('p', 'P.md', gP, popupContainer);
+
+            const app2 = new MockApp();
+            const plugin2 = createPlugin(app2);
+            app2.workspace.allLeaves = [a, b, p];
+            app2.workspace.setActiveLeaf(a);
+
+            const type = plugin2 as unknown as {
+                getGroupsInWindow: (m: WorkspaceNavigationModel, w: Window | undefined) => TabGroupInfo[];
+                getWindowForLeaf: (l: WorkspaceLeaf | null) => Window | undefined;
+                getSpatiallySortedGroups: (g: TabGroupInfo[]) => TabGroupInfo[];
+                buildNavigationModel: (l: WorkspaceLeaf | null) => WorkspaceNavigationModel;
+            };
+
+            const model = type.buildNavigationModel(asLeaf(a));
+            const ordered = type.getSpatiallySortedGroups(
+                type.getGroupsInWindow(model, type.getWindowForLeaf(asLeaf(a))),
+            );
+            expect(ordered.map((g) => g.window)).toEqual([mainWin, mainWin]);
+            expect(ordered.some((g) => g.window === popupWin)).toBe(false);
+        });
+
+        it('cycles deterministically by label when geometry is unavailable', () => {
+            const mainWin: Window = {} as Window;
+            const mainContainer = new MockWorkspaceContainer('root', mainWin);
+            const g1 = new MockWorkspaceParent(mainContainer);
+            const g2 = new MockWorkspaceParent(mainContainer);
+
+            const a = leaf('a', 'A.md', g1, mainContainer);
+            const b = leaf('b', 'B.md', g2, mainContainer);
+
+            (g1 as unknown as { containerEl: { instanceOf: () => boolean } }).containerEl = { instanceOf: () => false };
+            (g2 as unknown as { containerEl: { instanceOf: () => boolean } }).containerEl = { instanceOf: () => false };
+
+            const app2 = new MockApp();
+            const plugin2 = createPlugin(app2);
+            app2.workspace.allLeaves = [a, b];
+            app2.workspace.setActiveLeaf(a);
+
+            const type = plugin2 as unknown as {
+                getSpatiallySortedGroups: (g: TabGroupInfo[]) => TabGroupInfo[];
+                buildNavigationModel: (l: WorkspaceLeaf | null) => WorkspaceNavigationModel;
+            };
+            const model = type.buildNavigationModel(asLeaf(a));
+            const ordered = type.getSpatiallySortedGroups(model.groups);
+            expect(ordered.map((g) => (g.group === g1 ? 'g1' : 'g2'))).toEqual(['g2', 'g1']);
         });
     });
 });
