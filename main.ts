@@ -1097,42 +1097,84 @@ export default class NextTabGroupPlugin extends Plugin {
     // Nothing is recreated, so 100% of workspace state is preserved.
     // ------------------------------------------------------------------------
 
+    /**
+     * Rotates the tab group split tree 90 degrees clockwise within the focused window.
+     * Replaces simple direction flipping with true tree transposition + child reversal.
+     */
     private async rotateTabGroups() {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         if (!activeLeaf) return;
 
         const activeWin = this.getWindowForLeaf(activeLeaf);
-        const model = this.buildNavigationModel(activeLeaf);
-        if (model.splits.size === 0) return;
 
-        for (const splitInfo of model.splits.values()) {
-            const split = splitInfo.liveSplit as
-                | (WorkspaceContainerEl & { direction: 'horizontal' | 'vertical' })
-                | undefined;
-            if (!split) continue;
-
-            const splitWin = split.containerEl?.ownerDocument?.defaultView;
-            if (splitWin !== activeWin) continue;
-
-            const oldDirection = split.direction;
-            if (oldDirection !== 'vertical' && oldDirection !== 'horizontal') continue;
-
-            const newDirection: 'horizontal' | 'vertical' =
-                oldDirection === 'vertical' ? 'horizontal' : 'vertical';
-
-            // Update the live orientation property that Obsidian renders from.
-            split.direction = newDirection;
-
-            // Toggle the layout styling flag so the DOM re-flows correctly.
-            const containerEl = split.containerEl;
-            if (containerEl) {
-                containerEl.classList.remove(`mod-${oldDirection}`);
-                containerEl.classList.add(`mod-${newDirection}`);
-            }
+        // Walk up from the active leaf to find the root split in the active window
+        let rootSplit: any = activeLeaf.parent;
+        while (rootSplit && rootSplit.parent && rootSplit.parent.type === 'split') {
+            rootSplit = rootSplit.parent;
         }
 
-        // Re-flow the layout now that split directions have changed.
+        if (!rootSplit || rootSplit.type !== 'split') return;
+
+        // Perform recursive 90-degree clockwise rotation on the split tree
+        this.rotateSplitClockwise(rootSplit, activeWin);
+
+        // Notify Obsidian to re-render layout bounds and tab header containers
         (this.app.workspace as unknown as { onLayoutChange: () => void }).onLayoutChange();
+    }
+
+    /**
+     * Recursively transforms a split node 90 degrees clockwise.
+     * 1. Inverts direction ('vertical' <-> 'horizontal')
+     * 2. Reverses child order array
+     * 3. Re-orders containerEl child DOM nodes to match
+     */
+    public rotateSplitClockwise(node: any, activeWin?: Window): void {
+        if (!node) return;
+
+        // Verify that the target node belongs to the currently active window context
+        if (activeWin && node.containerEl) {
+            const nodeWin = node.containerEl.ownerDocument?.defaultView;
+            if (nodeWin && nodeWin !== activeWin) return;
+        }
+
+        // Check if current node is a Split container with children
+        if (node.children && Array.isArray(node.children) && node.direction) {
+            // 1. Recurse into child splits first (post-order) so nested
+            //    rotations are applied before this node is transposed.
+            for (const child of node.children) {
+                this.rotateSplitClockwise(child, activeWin);
+            }
+
+            const oldDirection = node.direction;
+            if (oldDirection === 'vertical' || oldDirection === 'horizontal') {
+                const newDirection: 'horizontal' | 'vertical' =
+                    oldDirection === 'vertical' ? 'horizontal' : 'vertical';
+
+                // 2. Update internal split direction flag and CSS modifier class
+                node.direction = newDirection;
+                if (node.containerEl) {
+                    node.containerEl.classList.remove(`mod-${oldDirection}`);
+                    node.containerEl.classList.add(`mod-${newDirection}`);
+                }
+
+                // 3. Reverse child order ONLY when transposing vertical->horizontal.
+                //    Emacs-style clockwise rotation is asymmetric: a Top/Bottom
+                //    split swings Bottom around to the Left, while a Left/Right
+                //    split keeps Left as Top and Right as Bottom.
+                if (oldDirection === 'vertical' && newDirection === 'horizontal') {
+                    node.children.reverse();
+                }
+
+                // 4. Re-order actual DOM elements to match the (possibly reversed) array order
+                if (node.containerEl && node.containerEl.children) {
+                    for (const child of node.children) {
+                        if (child.containerEl) {
+                            node.containerEl.appendChild(child.containerEl);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ------------------------------------------------------------------------

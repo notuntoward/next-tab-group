@@ -98,6 +98,10 @@ export class MockWorkspaceLeaf {
         return this;
     }
 
+    getParent(): MockWorkspaceParent | null {
+        return this.parent;
+    }
+
     getContainer(): MockWorkspaceContainer | null {
         return this.container;
     }

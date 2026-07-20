@@ -62,6 +62,7 @@ describe('rotateTabGroups (in-place, no detach)', () => {
 
     it('flips split direction in place without detaching or losing any tabs', async () => {
         const { split, all } = buildVerticalSplit();
+        const originalChildren = (split as unknown as { children: MockWorkspaceParent[] }).children.slice();
         app.workspace.allLeaves = all;
         app.workspace.setActiveLeaf(all[0]);
 
@@ -72,6 +73,12 @@ describe('rotateTabGroups (in-place, no detach)', () => {
         const classList = (split.containerEl as unknown as { classList: { contains: (c: string) => boolean } }).classList;
         expect(classList.contains('mod-horizontal')).toBe(true);
         expect(classList.contains('mod-vertical')).toBe(false);
+
+        // Child order is reversed as part of true 90-degree rotation.
+        const children = (split as unknown as { children: MockWorkspaceParent[] }).children;
+        expect(children[0]).toBe(originalChildren[2]);
+        expect(children[1]).toBe(originalChildren[1]);
+        expect(children[2]).toBe(originalChildren[0]);
 
         // No tab was detached — the workspace tree is fully preserved.
         const detached = (app.workspace.allLeaves as unknown as MockWorkspaceLeaf[]).filter((l) => l.detached);
