@@ -1109,14 +1109,23 @@ export default class NextTabGroupPlugin extends Plugin {
 
         // Walk up from the active leaf to find the root split in the active window
         let rootSplit: any = activeLeaf.parent;
-        while (rootSplit && rootSplit.parent && rootSplit.parent.type === 'split') {
+        let highestSplit: any = null;
+
+        while (rootSplit) {
+            if (rootSplit.type === 'split') {
+                highestSplit = rootSplit;
+            }
             rootSplit = rootSplit.parent;
         }
 
-        if (!rootSplit || rootSplit.type !== 'split') return;
+        // If there are no split containers (e.g., in a single-group popup window), inform the user
+        if (!highestSplit) {
+            new Notice("Cannot rotate: current window has no split groups.");
+            return;
+        }
 
         // Perform recursive 90-degree clockwise rotation on the split tree
-        this.rotateSplitClockwise(rootSplit, activeWin);
+        this.rotateSplitClockwise(highestSplit, activeWin);
 
         // Notify Obsidian to re-render layout bounds and tab header containers
         (this.app.workspace as unknown as { onLayoutChange: () => void }).onLayoutChange();
@@ -1157,11 +1166,10 @@ export default class NextTabGroupPlugin extends Plugin {
                     node.containerEl.classList.add(`mod-${newDirection}`);
                 }
 
-                // 3. Reverse child order ONLY when transposing vertical->horizontal.
-                //    Emacs-style clockwise rotation is asymmetric: a Top/Bottom
-                //    split swings Bottom around to the Left, while a Left/Right
-                //    split keeps Left as Top and Right as Bottom.
-                if (oldDirection === 'vertical' && newDirection === 'horizontal') {
+                // 3. For true clockwise rotation matching Emacs transpose-frame:
+                //    Reversing when converting horizontal to vertical turns
+                //    Top/Bottom into Right/Left (Clockwise 90°).
+                if (oldDirection === 'horizontal' && newDirection === 'vertical') {
                     node.children.reverse();
                 }
 

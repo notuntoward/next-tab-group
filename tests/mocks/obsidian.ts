@@ -336,6 +336,11 @@ export class MockSuggestModal<T> {
     onChooseItem(_item: T, _evt?: MouseEvent | KeyboardEvent): void { /* no-op */ }
 }
 
+export class MockNotice {
+    constructor(public message: string, _timeout?: number) {}
+}
+export const Notice = MockNotice;
+
 export class MockFuzzySuggestModal<T> extends MockSuggestModal<T> {}
 
 // Export aliases so that `import { Plugin, Modal, ... } from 'obsidian'` works.

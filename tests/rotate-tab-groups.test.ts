@@ -74,11 +74,11 @@ describe('rotateTabGroups (in-place, no detach)', () => {
         expect(classList.contains('mod-horizontal')).toBe(true);
         expect(classList.contains('mod-vertical')).toBe(false);
 
-        // Child order is reversed as part of true 90-degree rotation.
+        // A vertical->horizontal transition keeps child order (clockwise 90°).
         const children = (split as unknown as { children: MockWorkspaceParent[] }).children;
-        expect(children[0]).toBe(originalChildren[2]);
+        expect(children[0]).toBe(originalChildren[0]);
         expect(children[1]).toBe(originalChildren[1]);
-        expect(children[2]).toBe(originalChildren[0]);
+        expect(children[2]).toBe(originalChildren[2]);
 
         // No tab was detached — the workspace tree is fully preserved.
         const detached = (app.workspace.allLeaves as unknown as MockWorkspaceLeaf[]).filter((l) => l.detached);
@@ -89,7 +89,7 @@ describe('rotateTabGroups (in-place, no detach)', () => {
         expect(afterTotal).toBe(all.length);
     });
 
-    it('does nothing when there is no enclosing split', async () => {
+    it('notices and does nothing when there is no enclosing split', async () => {
         const g1 = makeGroup([mockLeaf('a1', 'A1.md', container), mockLeaf('a2', 'A2.md', container)], container);
         (g1 as unknown as { type: string }).type = 'tabs';
         app.workspace.allLeaves = g1.children as unknown as MockWorkspaceLeaf[];
@@ -97,6 +97,7 @@ describe('rotateTabGroups (in-place, no detach)', () => {
 
         await plugin.rotateTabGroups();
 
+        // No split means no rotation happened — tree is preserved.
         const detached = (app.workspace.allLeaves as unknown as MockWorkspaceLeaf[]).filter((l) => l.detached);
         expect(detached).toHaveLength(0);
     });
