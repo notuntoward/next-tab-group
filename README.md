@@ -179,6 +179,14 @@ To apply the workaround:
 
 If the status bar is already cluttered, reload the Quick Explorer plugin or restart Obsidian once after changing the setting.
 
+# Page Color Prop / Supercharged Links Compatibility
+
+The "Switch to tab" modals (Switch to any tab, Switch to tab group, Switch to tab in group) now respect note colors applied by **Page Color Prop** and link styles from **Supercharged Links**.
+
+Previously, the suggestion rows did not expose the standard data attributes (`data-path`, `data-href`, `data-link-path`, `data-link-data-href`) that those plugins target, so custom colors and styles were ignored inside the modal. This release adds those attributes to every file-backed suggestion and includes the standard `suggestion-title` / `data-link-text` markers, allowing your existing color rules and link themes to carry through automatically.
+
+No configuration is required — if Page Color Prop or Supercharged Links is enabled, the modal rows will match the rest of your vault.
+
 # Setting Hotkeys
 
 1. Go to **Settings -> Hotkeys** in Obsidian.

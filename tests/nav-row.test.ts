@@ -67,7 +67,9 @@ function augment(el: HTMLElement): AugmentedEl {
     };
     a.createDiv = function (this: HTMLElement, opts: { cls: string }) {
         const child = document.createElement('div');
-        child.classList.add(opts.cls);
+        for (const cls of opts.cls.split(' ')) {
+            if (cls) child.classList.add(cls);
+        }
         this.appendChild(child);
         return augment(child);
     };

@@ -8,6 +8,7 @@ import {
     WorkspaceLeaf,
 } from 'obsidian';
 import type { App, Workspace, WorkspaceParent } from 'obsidian';
+import { updateElementPathDatasets } from './src/utils/dom';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -854,16 +855,19 @@ export default class NextTabGroupPlugin extends Plugin {
         el.empty();
         el.addClass("ntg-nav-row");
 
-        // 1. Left Primary Column (Supports native fuzzy highlights)
-        const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
+        const filePath = this.getLeafFileKey(tab.leaf);
+        if (filePath) {
+            updateElementPathDatasets(el, filePath);
+        }
+
+        const primaryContainer = el.createDiv({
+            cls: "ntg-nav-primary suggestion-title data-link-text",
+        });
         const rawDisplayText = tab.leaf.getDisplayText();
 
         renderHighlightedText(primaryContainer, rawDisplayText, match?.match.matches ?? []);
 
-        // 2. Right Secondary Column (Metadata block)
         const parts: string[] = [];
-        // The tab group is only named when there is more than one group to
-        // disambiguate; the window only when there is more than one window.
         if (showGroup) parts.push(this.getTabGroupMeta(tab));
         if (showWindow) parts.push(this.getWindowLabel(tab.group.window, labels));
 
@@ -891,13 +895,17 @@ export default class NextTabGroupPlugin extends Plugin {
         el.empty();
         el.addClass("ntg-nav-row");
 
-        const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
+        const filePath = this.getLeafFileKey(group.representative);
+        if (filePath) {
+            updateElementPathDatasets(el, filePath);
+        }
+
+        const primaryContainer = el.createDiv({
+            cls: "ntg-nav-primary suggestion-title data-link-text",
+        });
         renderHighlightedText(primaryContainer, title, match?.match.matches ?? []);
 
         const parts: string[] = [];
-        // The group descriptor (Current group / relative / Other group + count)
-        // is only shown when there is more than one group to tell apart; the
-        // window only when there is more than one window.
         if (showGroup) {
             const location = group.isCurrentGroup
                 ? "Current group"
@@ -941,9 +949,6 @@ export default class NextTabGroupPlugin extends Plugin {
         showWindow: boolean,
         match?: FuzzyMatch<WorkspaceLeaf>,
     ): void {
-        // The group is implied (this command only lists the active group), so
-        // its name is never shown; the window is only named when there is more
-        // than one window.
         const secondary = showWindow
             ? this.getWindowLabel(leaf.getContainer()?.win, labels)
             : "";
@@ -951,7 +956,14 @@ export default class NextTabGroupPlugin extends Plugin {
         el.empty();
         el.addClass("ntg-nav-row");
 
-        const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
+        const filePath = this.getLeafFileKey(leaf);
+        if (filePath) {
+            updateElementPathDatasets(el, filePath);
+        }
+
+        const primaryContainer = el.createDiv({
+            cls: "ntg-nav-primary suggestion-title data-link-text",
+        });
         renderHighlightedText(primaryContainer, leaf.getDisplayText(), match?.match.matches ?? []);
 
         const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
@@ -1482,6 +1494,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 (leaf) => leaf === activeLeaf,
                 (leaf) => this.getLeafLastActive(leaf),
             ),
+            (leaf) => this.getLeafFileKey(leaf),
         ).open();
     }
 
@@ -1521,6 +1534,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 (tab) => tab.leaf === activeLeaf,
                 (tab) => tab.lastActive,
             ),
+            (tab) => this.getLeafFileKey(tab.leaf),
         ).open();
     }
 
@@ -1576,6 +1590,7 @@ export default class NextTabGroupPlugin extends Plugin {
                     group.group === activeLeaf?.parent,
                 (group) => group.lastActive,
             ),
+            (group) => this.getLeafFileKey(group.representative),
         ).open();
     }
 
@@ -1703,6 +1718,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 (item) => item.window === activeWindow,
                 (item) => item.lastActive,
             ),
+            (item) => this.getLeafFileKey(item.representative),
         ).open();
     }
 
@@ -1769,6 +1785,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         private readonly onChoose: (item: T) => void,
         private readonly renderItem?: SuggestionRenderer<T>,
         private readonly initialIndex = 0,
+        private readonly getFilePath?: (item: T) => string | null,
     ) {
         super(app);
         this.setPlaceholder(placeholder);
@@ -1803,8 +1820,13 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     }
 
     renderSuggestion(match: FuzzyMatch<T>, el: HTMLElement): void {
-        // Forward the core match object down to our custom row renderer so the
-        // native fuzzy highlight (.suggestion-highlight) is preserved.
+        if (this.getFilePath) {
+            const filePath = this.getFilePath(match.item);
+            updateElementPathDatasets(el, filePath);
+        } else {
+            updateElementPathDatasets(el, null);
+        }
+
         if (this.renderItem) {
             el.empty();
             this.renderItem(match.item, el, match);
