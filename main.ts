@@ -168,7 +168,8 @@ export default class NextTabGroupPlugin extends Plugin {
 
         this.addCommand({
             id: 'next',
-            name: 'Next',
+            // eslint-disable-next-line obsidianmd/commands/no-plugin-name-in-command-name
+            name: 'Next tab group',
             callback: () => {
                 this.cycleTabGroups();
             }

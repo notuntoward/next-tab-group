@@ -9,7 +9,7 @@ This plugin provides commands for efficient tab group navigation, tab/tab-group/
 
 # Commands
 
-## Next
+## Next tab group
 
 **Command ID:** `next`
 
@@ -25,7 +25,7 @@ Cycles your cursor between “tab groups”: whole windows with individual tabs 
 └───────────┴───────────┘
 ```
 
-Pressing the Next command: Group 1 -> Group 2 -> Group 1 -> ...
+Pressing the "Next tab group" command: Group 1 -> Group 2 -> Group 1 -> ...
 
 **Four tab groups in a 2×2 grid**:
 ```
@@ -212,7 +212,7 @@ Each confirmation dialog lists every tab to be closed, grouped by note with coun
 
 1. Go to **Settings -> Hotkeys** in Obsidian.
 2. Search for:
-   - `Next`
+   - `Next tab group`
    - `Collect tabs`
    - `Rotate tab groups`
    - `Deduplicate tabs in group`
