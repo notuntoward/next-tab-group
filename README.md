@@ -5,7 +5,7 @@
 [![OpenSSF Scorecard](https://github.com/notuntoward/next-tab-group/actions/workflows/scorecard.yml/badge.svg)](https://github.com/notuntoward/next-tab-group/actions/workflows/scorecard.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/notuntoward/next-tab-group/badge)](https://securityscorecards.dev/viewer/?uri=github.com/notuntoward/next-tab-group)
 
-This plugin provides commands for efficient tab group navigation and workspace manipulation in Obsidian, inspired by Emacs window commands. Note the [Quick Explorer Plugin Side Effect](#quick-explorer-plugin-side-effect).
+This plugin provides commands for efficient tab group navigation, tab/tab-group/window switching, workspace layout manipulation, and tab deduplication in Obsidian, inspired by Emacs window commands. It is fully aware of Obsidian's multi-window setup (the main window and any pop-out windows) and handles them as separate scopes throughout.
 
 # Commands
 
@@ -157,6 +157,28 @@ This command shows a confirmation dialog by default, listing every tab it will c
 
 Opens a fuzzy-completion prompt listing **every tab in the active tab group**. Pick a tab to make it the active (focused) tab. This is handy for quickly jumping between tabs in the current group without reaching for the mouse.
 
+## Switch to Any Tab
+
+**Command ID:** `switch-to-any-tab`
+
+Opens a fuzzy-completion prompt listing **every editor tab across all windows**, newest contexts first. Pick a tab to focus it — the plugin also brings its native window (main or pop-out) to the foreground. Press Enter without typing to jump straight to the most recently used tab that isn't already active.
+
+By default results are clustered by window and then tab group (freshest first). Disable **Settings → Next Tab Group → Group results by tab group and window** to list every tab in a single pure recency order instead.
+
+## Switch to Tab Group
+
+**Command ID:** `switch-to-tab-group`
+
+Opens a fuzzy-completion prompt listing **every tab group across all windows**. Pick a group to focus its most recently active tab (or the tab you last had open there). The active group is marked "Current group"; other groups in the same window get relative labels like "group below" or "right group". Press Enter without typing to jump straight to the next-most-recent group.
+
+Like "Switch to any tab", the listing respects the **Group results by tab group and window** setting.
+
+## Switch to Window
+
+**Command ID:** `switch-to-window`
+
+Opens a fuzzy-completion prompt listing **every Obsidian window** (the main window and each pop-out), ordered by recency of its most recently used tab. Pick a window to focus it and activate its most recent tab. This is the fastest way to move between the main window and pop-out windows.
+
 ### What counts as a "duplicate"?
 
 Two tabs count as duplicates when they point to the same file in your vault. Tabs that aren't backed by a file (e.g. the graph view, settings, the daily note calendar) are ignored and never considered duplicates.
@@ -164,28 +186,27 @@ Two tabs count as duplicates when they point to the same file in your vault. Tab
 ### What if a tab's recency is unknown?
 
 The plugin tracks recency by listening for `active-leaf-change` events. After a vault restart, plugin reload, or the first time you run a dedupe command, recency may be unavailable for some tabs. In that case, a stable tie-break by leaf id is used so the result is deterministic.
-# Quick Explorer Plugin Side Effect
-
-Rotating tab groups forces a workspace rebuild, which may cause Quick Explorer to duplicate its status bar breadcrumbs along the bottom of the screen. This is because Quick Explorer reacts to the rapid recreation of tabs.
-
-Recommended workaround: hide Quick Explorer's status bar breadcrumbs. Quick Explorer can show breadcrumbs in Obsidian's tab title bars on recent Obsidian versions, so disabling the status bar breadcrumbs avoids the duplicated bottom-bar elements without changing this plugin's behavior.
-
-To apply the workaround:
-
-1. Install or enable the Style Settings community plugin.
-2. Open **Settings → Style Settings → Quick Explorer**.
-3. Disable Quick Explorer's default/status bar breadcrumbs.
-4. Keep Quick Explorer's tab title bar breadcrumbs enabled if you still want breadcrumb navigation.
-
-If the status bar is already cluttered, reload the Quick Explorer plugin or restart Obsidian once after changing the setting.
-
 # Page Color Prop / Supercharged Links Compatibility
 
-The "Switch to tab" modals (Switch to any tab, Switch to tab group, Switch to tab in group) now respect note colors applied by **Page Color Prop** and link styles from **Supercharged Links**.
+The "Switch to…" modals (Switch to any tab, Switch to tab group, Switch to tab in group, Switch to window) respect note colors applied by **Page Color Prop** and link styles from **Supercharged Links**. Every file-backed suggestion row exposes the standard data attributes (`data-path`, `data-href`, `data-link-path`, `data-link-data-href`) along with the `suggestion-title` / `data-link-text` markers those plugins target, so your existing color rules and link themes carry through automatically.
 
-Previously, the suggestion rows did not expose the standard data attributes (`data-path`, `data-href`, `data-link-path`, `data-link-data-href`) that those plugins target, so custom colors and styles were ignored inside the modal. This release adds those attributes to every file-backed suggestion and includes the standard `suggestion-title` / `data-link-text` markers, allowing your existing color rules and link themes to carry through automatically.
+No configuration is required — if Page Color Prop or Supercharged Links is enabled, the modal rows match the rest of your vault.
 
-No configuration is required — if Page Color Prop or Supercharged Links is enabled, the modal rows will match the rest of your vault.
+# Settings
+
+The plugin adds a **Settings → Next Tab Group** tab with the following options:
+
+## Deduplicate tabs
+
+- **Confirm before deduplicating in group** — Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs in group". Off by default; enable to prompt before closing tabs in the current group.
+- **Confirm before deduplicating in all groups** — Show a confirmation dialog when running "Deduplicate tabs in all groups". On by default; disable to run without prompting.
+- **Confirm before deduplicating in all windows** — Show a confirmation dialog when running "Deduplicate tabs in all windows". On by default; disable to run without prompting.
+
+Each confirmation dialog lists every tab to be closed, grouped by note with counts per tab group and per window, before anything is removed.
+
+## Switch tabs
+
+- **Group results by tab group and window** — When on (default), the "Switch to any tab" and "Switch to tab group" modals cluster results by window and then tab group, with the freshest contexts first. When off, every result is listed in a single pure recency order, newest at the top.
 
 # Setting Hotkeys
 
@@ -196,9 +217,12 @@ No configuration is required — if Page Color Prop or Supercharged Links is ena
    - `Rotate tab groups`
    - `Deduplicate tabs in group`
    - `Deduplicate tabs in all groups`
-    - `Deduplicate tabs in all windows`
-    - `Switch to tab in group`
- 3. Assign your preferred shortcuts (e.g., `Cmd+K` sequences or Function keys).
+   - `Deduplicate tabs in all windows`
+   - `Switch to tab in group`
+   - `Switch to any tab`
+   - `Switch to tab group`
+   - `Switch to window`
+3. Assign your preferred shortcuts (e.g., `Cmd+K` sequences or Function keys).
 
 # Running Tests
 
