@@ -154,6 +154,9 @@ describe('switchToAnyTab', () => {
     });
 
     it('the fallback includes all leaves when focused-window identity is unavailable', () => {
+        const originalActiveWindow = (globalThis as any).activeWindow;
+        (globalThis as any).activeWindow = undefined;
+
         const groupMain = new MockWorkspaceParent(rootContainer);
         const groupWin = new MockWorkspaceParent(windowContainer);
 
@@ -166,6 +169,8 @@ describe('switchToAnyTab', () => {
 
         const leaves = plugin.getLeavesInFocusedWindow();
         expect(leaves.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['mainA', 'winA']);
+
+        (globalThis as any).activeWindow = originalActiveWindow;
     });
 
     it('tabs sort newest-first', () => {

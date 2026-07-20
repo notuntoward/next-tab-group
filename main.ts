@@ -262,10 +262,32 @@ export default class NextTabGroupPlugin extends Plugin {
                 }
             })
         );
+
+        this.registerEvent(
+            this.app.workspace.on('layout-change', () => {
+                for (const [parent, leaf] of this.tabGroupActiveLeaves.entries()) {
+                    if (!leaf.parent || leaf.parent !== parent) {
+                        this.tabGroupActiveLeaves.delete(parent);
+                    }
+                }
+            })
+        );
     }
 
     async saveSettings(): Promise<void> {
         await this.saveData(this.settings);
+    }
+
+    /**
+     * Activates a leaf and guarantees OS-level window focus.
+     */
+    private focusLeafAndWindow(leaf: WorkspaceLeaf): void {
+        const targetWin = leaf.getContainer()?.win;
+        this.app.workspace.setActiveLeaf(leaf, { focus: true });
+
+        if (targetWin && targetWin !== activeWindow && typeof targetWin.focus === 'function') {
+            targetWin.focus();
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -973,7 +995,6 @@ export default class NextTabGroupPlugin extends Plugin {
     private cycleTabGroups() {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         const activeWindow = this.getWindowForLeaf(activeLeaf);
-        const workspace = activeLeaf ? this.getWorkspaceForLeaf(activeLeaf) : this.app.workspace;
 
         // Scope cycling to the active leaf's window: never cycle from the main
         // window into a pop-out or vice versa. The model already buckets groups
@@ -988,7 +1009,7 @@ export default class NextTabGroupPlugin extends Plugin {
         const sorted = this.getSpatiallySortedGroups(windowGroups);
 
         if (!activeLeaf) {
-            this.focusTabGroup(sorted[0], workspace);
+            this.focusTabGroup(sorted[0]);
             return;
         }
 
@@ -1002,24 +1023,24 @@ export default class NextTabGroupPlugin extends Plugin {
             group.group === activeTabGroup,
         );
         if (currentIndex === -1) {
-            this.focusTabGroup(sorted[0], workspace);
+            this.focusTabGroup(sorted[0]);
             return;
         }
 
         const nextIndex = (currentIndex + 1) % sorted.length;
-        this.focusTabGroup(sorted[nextIndex], workspace);
+        this.focusTabGroup(sorted[nextIndex]);
     }
 
-    private focusTabGroup(group: TabGroupInfo, workspace: Workspace) {
+    private focusTabGroup(group: TabGroupInfo) {
         const tabGroup = group.group;
         const storedLeaf = this.tabGroupActiveLeaves.get(tabGroup);
 
         if (storedLeaf && storedLeaf.parent === tabGroup) {
-            workspace.setActiveLeaf(storedLeaf, { focus: true });
+            this.focusLeafAndWindow(storedLeaf);
             return;
         }
 
-        workspace.setActiveLeaf(group.representative, { focus: true });
+        this.focusLeafAndWindow(group.representative);
     }
 
     // ------------------------------------------------------------------------
@@ -1051,15 +1072,16 @@ export default class NextTabGroupPlugin extends Plugin {
             leaf.detach();
         }
 
+        const targetParent = activeLeaf.parent as any;
         for (const state of states) {
-            const newLeaf = this.app.workspace.getLeaf('tab');
-            newLeaf.setViewState(state);
+            const newLeaf = this.app.workspace.createLeafInParent(targetParent, -1);
+            await newLeaf.setViewState(state);
         }
 
         if (activeLeaf.parent) {
             this.tabGroupActiveLeaves.set(activeLeaf.parent, activeLeaf);
         }
-        this.app.workspace.setActiveLeaf(activeLeaf, { focus: true });
+        this.focusLeafAndWindow(activeLeaf);
     }
 
     // ------------------------------------------------------------------------
@@ -1079,6 +1101,7 @@ export default class NextTabGroupPlugin extends Plugin {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         if (!activeLeaf) return;
 
+        const activeWin = this.getWindowForLeaf(activeLeaf);
         const model = this.buildNavigationModel(activeLeaf);
         if (model.splits.size === 0) return;
 
@@ -1087,6 +1110,9 @@ export default class NextTabGroupPlugin extends Plugin {
                 | (WorkspaceContainerEl & { direction: 'horizontal' | 'vertical' })
                 | undefined;
             if (!split) continue;
+
+            const splitWin = split.containerEl?.ownerDocument?.defaultView;
+            if (splitWin !== activeWin) continue;
 
             const oldDirection = split.direction;
             if (oldDirection !== 'vertical' && oldDirection !== 'horizontal') continue;
@@ -1250,7 +1276,9 @@ export default class NextTabGroupPlugin extends Plugin {
         activeLeaf: WorkspaceLeaf | null,
         removed: WorkspaceLeaf[]
     ): HTMLElement {
-        const root = document.createElement('div');
+        // Multi-window context safety: createElement using activeDocument
+        const doc = activeDocument as unknown as Document;
+        const root = doc.createElement('div');
         root.classList.add('ntg-dedupe-confirm');
 
         const removedIds = new Set(removed.map((l) => this.getLeafId(l)));
@@ -1307,26 +1335,26 @@ export default class NextTabGroupPlugin extends Plugin {
             entries.push({ file, count: fileRemoved.length, parts });
         }
 
-        const summary = document.createElement('p');
+        const summary = doc.createElement('p');
         summary.classList.add('ntg-dedupe-summary');
         summary.textContent = `Will close ${totalRemoved} duplicate tab${totalRemoved === 1 ? '' : 's'} of ${entries.length} note${entries.length === 1 ? '' : 's'}.`;
         root.appendChild(summary);
 
         if (entries.length > 0) {
-            const list = document.createElement('ul');
+            const list = doc.createElement('ul');
             list.classList.add('ntg-dedupe-list');
             root.appendChild(list);
             for (const entry of entries) {
-                const li = document.createElement('li');
+                const li = doc.createElement('li');
                 li.classList.add('ntg-dedupe-item');
                 list.appendChild(li);
 
-                const name = document.createElement('span');
+                const name = doc.createElement('span');
                 name.classList.add('ntg-dedupe-name');
                 name.textContent = this.basename(entry.file);
                 li.appendChild(name);
 
-                const tail = document.createElement('span');
+                const tail = doc.createElement('span');
                 tail.classList.add('ntg-dedupe-locations');
                 const tabWord = entry.count === 1 ? 'tab' : 'tabs';
                 tail.textContent = ` (${entry.count} ${tabWord} removed: ${entry.parts.join(', ')})`;
@@ -1487,7 +1515,7 @@ export default class NextTabGroupPlugin extends Plugin {
             leaves,
             "Switch to tab in group",
             (leaf) => leaf.getDisplayText(),
-            (leaf) => this.app.workspace.setActiveLeaf(leaf, { focus: true }),
+            (leaf) => this.focusLeafAndWindow(leaf),
             (leaf, el, match) => this.renderInGroupTabSuggestion(leaf, el, windowLabels, showWindow, match),
             this.firstNonActiveIndex(
                 leaves,
@@ -1527,7 +1555,7 @@ export default class NextTabGroupPlugin extends Plugin {
             tabs,
             "Switch to any tab",
             (tab) => this.getTabSearchText(tab),
-            (tab) => this.app.workspace.setActiveLeaf(tab.leaf, { focus: true }),
+            (tab) => this.focusLeafAndWindow(tab.leaf),
             (tab, el, match) => this.renderTabSuggestion(tab, el, windowLabels, showGroup, multipleWindows, match),
             this.firstNonActiveIndex(
                 tabs,
@@ -1545,11 +1573,11 @@ export default class NextTabGroupPlugin extends Plugin {
         const storedLeaf = this.tabGroupActiveLeaves.get(group);
 
         if (storedLeaf && storedLeaf.parent === group) {
-            this.app.workspace.setActiveLeaf(storedLeaf, { focus: true });
+            this.focusLeafAndWindow(storedLeaf);
             return;
         }
 
-        this.app.workspace.setActiveLeaf(fallbackLeaf, { focus: true });
+        this.focusLeafAndWindow(fallbackLeaf);
     }
 
     private switchToTabGroup(): void {
@@ -1708,10 +1736,7 @@ export default class NextTabGroupPlugin extends Plugin {
             windows,
             "Switch to window",
             (item) => `${item.label} ${item.representative.getDisplayText()}`,
-            (item) =>
-                this.app.workspace.setActiveLeaf(item.representative, {
-                    focus: true,
-                }),
+            (item) => this.focusLeafAndWindow(item.representative),
             (item, el, match) => this.renderWindowSuggestion(item, el, match),
             this.firstNonActiveIndex(
                 windows,

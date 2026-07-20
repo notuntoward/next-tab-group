@@ -2,6 +2,7 @@
 // These are not full implementations — they only cover what the plugin touches.
 
 export class MockContainerEl {
+    ownerDocument: { defaultView: Window } | undefined;
     private classes = new Set<string>();
     classList = {
         contains: (c: string) => this.classes.has(c),
@@ -188,6 +189,14 @@ export class MockWorkspace {
         const leaf = new MockWorkspaceLeaf(null);
         leaf.setId(`leaf_${this.allLeaves.length}`);
         leaf.setParent(split);
+        this.allLeaves.push(leaf);
+        return leaf;
+    }
+
+    createLeafInParent(parent: MockWorkspaceParent, _index: number): MockWorkspaceLeaf {
+        const leaf = new MockWorkspaceLeaf(null);
+        leaf.setId(`leaf_${this.allLeaves.length}`);
+        leaf.setParent(parent);
         this.allLeaves.push(leaf);
         return leaf;
     }
