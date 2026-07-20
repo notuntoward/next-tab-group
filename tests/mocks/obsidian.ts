@@ -2,8 +2,11 @@
 // These are not full implementations — they only cover what the plugin touches.
 
 export class MockContainerEl {
+    private classes = new Set<string>();
     classList = {
-        contains: () => false,
+        contains: (c: string) => this.classes.has(c),
+        add: (c: string) => this.classes.add(c),
+        remove: (c: string) => this.classes.delete(c),
     };
 
     getBoundingClientRect(): DOMRect {
@@ -120,6 +123,7 @@ export class MockWorkspaceLeaf {
         if (this.parent) {
             this.parent.children = this.parent.children.filter((c) => c !== this);
         }
+        this.parent = null;
     }
 }
 
@@ -136,6 +140,10 @@ export class MockWorkspace {
         this.activeLeaf = leaf;
     }
 
+    onLayoutChange(): void {
+        // no-op for mock
+    }
+
     iterateRootLeaves(callback: (leaf: MockWorkspaceLeaf) => void): void {
         for (const leaf of this.rootLeaves) {
             callback(leaf);
@@ -150,6 +158,38 @@ export class MockWorkspace {
 
     getLeafById(id: string): MockWorkspaceLeaf | null {
         return this.allLeaves.find((l) => l.id === id) ?? null;
+    }
+
+    /**
+     * Spawn a new leaf and register it. `'tab'` produces a sibling leaf in the
+     * currently active group (its parent becomes that of the active leaf when
+     * one exists); any other argument produces a child leaf that is wired to a
+     * fresh `MockWorkspaceParent` so `createLeafBySplit` can anchor off it.
+     */
+    getLeaf(type: 'tab' | 'split'): MockWorkspaceLeaf {
+        const leaf = new MockWorkspaceLeaf(null);
+        leaf.setId(`leaf_${this.allLeaves.length}`);
+        if (type === 'tab') {
+            const activeParent = this.activeLeaf?.parent as MockWorkspaceParent | null;
+            if (activeParent) leaf.setParent(activeParent);
+        } else {
+            leaf.setParent(new MockWorkspaceParent(this.activeLeaf?.getContainer() ?? undefined));
+        }
+        this.allLeaves.push(leaf);
+        return leaf;
+    }
+
+    createLeafBySplit(
+        anchor: MockWorkspaceLeaf,
+        _direction: 'horizontal' | 'vertical',
+    ): MockWorkspaceLeaf {
+        const split = new MockWorkspaceParent(anchor.getContainer() ?? undefined);
+        anchor.setParent(split);
+        const leaf = new MockWorkspaceLeaf(null);
+        leaf.setId(`leaf_${this.allLeaves.length}`);
+        leaf.setParent(split);
+        this.allLeaves.push(leaf);
+        return leaf;
     }
 
     on(name: string, callback: (...args: unknown[]) => void): { unload: () => void } {

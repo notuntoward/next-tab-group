@@ -48,28 +48,18 @@ interface WorkspaceItemInternal {
     workspace?: Workspace;
 }
 
-interface ObsidianWorkspaceInternal {
-    activeLeaf: WorkspaceLeafInternal | null;
-    rootSplit: WorkspaceContainerEl;
-    getLayout(): WorkspaceLayout;
-    setLayout(layout: WorkspaceLayout): Promise<void>;
-    setActiveLeaf(leaf: WorkspaceLeaf, opts: { focus: boolean }): void;
-}
-
-interface WorkspaceLayout {
-    main: WorkspaceLayoutNode;
-    left?: WorkspaceLayoutNode;
-    right?: WorkspaceLayoutNode;
-    floating?: Record<string, WorkspaceLayoutNode>;
-}
-
-interface WorkspaceLayoutNode {
-    id?: string;
-    type: string;
-    direction?: string;
-    children?: WorkspaceLayoutNode[];
-    currentTab?: number;
-    state?: Record<string, unknown>;
+/**
+ * A serializable snapshot of a split's position in the live-object topology
+ * graph. `childIds` may contain ids of both nested splits and tab groups.
+ */
+interface SplitNodeInfo {
+    id: string;
+    direction: 'horizontal' | 'vertical';
+    parentSplitId: string | null;
+    childIds: string[];
+    // Retained reference to the live Obsidian split object so layout commands
+    // can mutate its orientation in place instead of tearing down the tree.
+    liveSplit?: unknown;
 }
 
 interface TabGroupInfo {
@@ -117,6 +107,13 @@ interface WorkspaceNavigationModel {
     windows: WindowInfo[];
     groups: TabGroupInfo[];
     tabs: TabInfo[];
+
+    // Live-object topology graph: a map of split id -> split node info, and a
+    // map from each tab group's `WorkspaceParent` to the id of the split that
+    // directly contains it. Lets layout commands reason about split directions
+    // and nesting without going through the destructive `getLayout`/`setLayout`.
+    splits: Map<string, SplitNodeInfo>;
+    groupToSplitMap: Map<WorkspaceParent, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -558,12 +555,83 @@ export default class NextTabGroupPlugin extends Plugin {
         const tabs = this.buildTabInfos(groups);
         const windows = this.buildWindowInfos(groups, activeLeaf);
 
-        return {
+        const model: WorkspaceNavigationModel = {
             locations,
             groups,
             tabs,
             windows,
+            splits: new Map<string, SplitNodeInfo>(),
+            groupToSplitMap: new Map<WorkspaceParent, string>(),
         };
+
+        this.buildTopology(locations, model);
+
+        return model;
+    }
+
+    /**
+     * Build the live-object topology graph by bubbling up from each discovered
+     * tab group's `WorkspaceParent` to its enclosing `WorkspaceSplit` and
+     * recursively through ancestor splits. Each Obsidian split object is tagged
+     * with a stable synthetic id (`_ntg_id`) so we can reference it in a plain
+     * Map without depending on Obsidian's private `id` field. The result lets
+     * layout commands read split directions and nesting from live references
+     * instead of serializing the workspace via `getLayout`/`setLayout`.
+     */
+    private buildTopology(
+        locations: LeafLocation[],
+        model: WorkspaceNavigationModel,
+    ): void {
+        const processedParents = new Set<WorkspaceParent>();
+
+        // Obsidian's live hierarchy nodes aren't fully described by the public
+        // typings (the `type` discriminator and `direction` live on private
+        // internals), so we read them off the real objects via this loose shape.
+        type SplitNode = {
+            _ntg_id?: string;
+            type?: string;
+            direction?: 'horizontal' | 'vertical';
+            parent?: SplitNode | null;
+            children?: (SplitNode | WorkspaceParent)[];
+        };
+
+        const getObjectId = (obj: SplitNode): string => {
+            if (!obj._ntg_id) {
+                obj._ntg_id = 'split_' + Math.random().toString(36).substring(2, 11);
+            }
+            return obj._ntg_id;
+        };
+
+        for (const loc of locations) {
+            if (!loc.group || processedParents.has(loc.group)) continue;
+            processedParents.add(loc.group);
+
+            const firstParent = (loc.group.parent as unknown as SplitNode) ?? null;
+            if (firstParent && firstParent.type === 'split') {
+                model.groupToSplitMap.set(loc.group, getObjectId(firstParent));
+            }
+
+            let currentParent = firstParent;
+            while (currentParent && currentParent.type === 'split') {
+                const currentId = getObjectId(currentParent);
+                const upperParent = (currentParent.parent as SplitNode) ?? null;
+                if (!model.splits.has(currentId)) {
+                    model.splits.set(currentId, {
+                        id: currentId,
+                        direction: currentParent.direction!,
+                        parentSplitId:
+                            upperParent && upperParent.type === 'split'
+                                ? getObjectId(upperParent)
+                                : null,
+                        childIds: (currentParent.children ?? []).map((child) =>
+                            getObjectId(child as { _ntg_id?: string }),
+                        ),
+                        liveSplit: currentParent,
+                    });
+                }
+                currentParent = upperParent;
+            }
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -946,141 +1014,87 @@ export default class NextTabGroupPlugin extends Plugin {
     // Collect tabs into the active tab group
     // ------------------------------------------------------------------------
 
+    /**
+     * Collect every editor tab in the active leaf's window into the active tab
+     * group, leaving the rest of the workspace (selections, history, scroll,
+     * view state) untouched. We snapshot each leaf's view state, detach it in
+     * place, then re-create each one as a tab next to the active survivor leaf
+     * using native workspace APIs — no `getLayout`/`setLayout`, so nothing is
+     * recreated from scratch.
+     */
     private async collectTabs() {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
-        const workspace = activeLeaf ? this.getWorkspaceForLeaf(activeLeaf) : this.app.workspace;
-        const ws = workspace as unknown as ObsidianWorkspaceInternal;
+        if (!activeLeaf) return;
 
-        // 1. Get the FULL current layout (includes left, right, floating, and main)
-        const layout = ws.getLayout();
+        const model = this.buildNavigationModel(activeLeaf);
+        const activeWindow = this.getWindowForLeaf(activeLeaf);
+        const tabsToMigrate = this.getTabsInWindow(model, activeWindow)
+            .map((t) => t.leaf)
+            .filter((leaf) => leaf !== activeLeaf);
 
-        // 2. Extract leaves ONLY from the MAIN area
-        // We specifically target 'layout.main' so we don't accidentally
-        // collect tabs from the sidebars (like the File Explorer or Outline).
-        const mainRoot = layout.main;
-        const allLeaves: WorkspaceLayoutNode[] = [];
-        this.extractLeaves(mainRoot, allLeaves);
+        if (tabsToMigrate.length === 0) return;
 
-        if (allLeaves.length <= 1) {
-            return;
+        const states = tabsToMigrate.map((leaf) => leaf.getViewState());
+        for (const leaf of tabsToMigrate) {
+            leaf.detach();
         }
 
-        // 3. Prepare the new Main Layout structure
-        const activeLeafId = activeLeaf ? (activeLeaf as WorkspaceLeafInternal).id : null;
-
-        const newMain: WorkspaceLayoutNode = {
-            id: 'root-split',
-            type: 'split',
-            direction: 'vertical',
-            children: [
-                {
-                    type: 'tabs',
-                    children: allLeaves,
-                    currentTab: activeLeafId ? allLeaves.findIndex(l => l.id === activeLeafId) : 0
-                }
-            ]
-        };
-
-        // 4. Update the layout object IN PLACE
-        // CRITICAL: This keeps layout.left and layout.right untouched,
-        // preventing sidebars from resetting or popping open.
-        layout.main = newMain;
-
-        // 5. Apply
-        await ws.setLayout(layout);
-
-        // 6. Restore Focus
-        if (activeLeaf) {
-            ws.setActiveLeaf(activeLeaf, { focus: true });
-        }
-    }
-
-    // Helper to extract all leaves from a node tree
-    private extractLeaves(node: WorkspaceLayoutNode, collection: WorkspaceLayoutNode[]) {
-        if (!node || typeof node !== 'object') return;
-
-        if (node.type === 'leaf') {
-            collection.push(node);
-            return;
+        for (const state of states) {
+            const newLeaf = this.app.workspace.getLeaf('tab');
+            newLeaf.setViewState(state);
         }
 
-        if (node.children && Array.isArray(node.children)) {
-            for (const child of node.children) {
-                this.extractLeaves(child, collection);
-            }
+        if (activeLeaf.parent) {
+            this.tabGroupActiveLeaves.set(activeLeaf.parent, activeLeaf);
         }
+        this.app.workspace.setActiveLeaf(activeLeaf, { focus: true });
     }
 
     // ------------------------------------------------------------------------
     // ------------------------------------------------------------------------
-    // Rotate tab groups — getLayout/setLayout, with pop-out safety guards
+    // Rotate tab groups — safe in-place split orientation toggle.
     //
-    // Two guards before we touch the workspace layout:
-    //  1. Active leaf must be in the MAIN window. Pop-out windows are simply
-    //     skipped with a notice (per user direction: don't fight pop-outs).
-    //  2. There must be no pop-out windows in the layout at all. setLayout()
-    //     rebuilds the entire workspace from the layout object, and any
-    //     floating entries cause it to create new pop-out windows, duplicating
-    //     the ones already open. With zero pop-outs, setLayout() only rebuilds
-    //     the main editor area.
+    // Swapping every tab group's nesting orientation (vertical <-> horizontal)
+    // does NOT require tearing down the workspace. Detaching every leaf destroys
+    // the layout tree, leaving `createLeafBySplit` with no valid parent and
+    // wiping selections, history, and scroll. Instead we mutate the live
+    // `direction` property and the corresponding `mod-horizontal`/`mod-vertical`
+    // CSS class on each captured split object, then ask Obsidian to re-flow.
+    // Nothing is recreated, so 100% of workspace state is preserved.
     // ------------------------------------------------------------------------
 
     private async rotateTabGroups() {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         if (!activeLeaf) return;
 
-        if (!this.isMainWindow(activeLeaf)) {
-            new Notice('Rotate tab groups only works in the main Obsidian window.');
-            return;
-        }
+        const model = this.buildNavigationModel(activeLeaf);
+        if (model.splits.size === 0) return;
 
-        const ws = this.app.workspace as unknown as ObsidianWorkspaceInternal;
-        const layout = ws.getLayout();
-        if (!layout.main) return;
+        for (const splitInfo of model.splits.values()) {
+            const split = splitInfo.liveSplit as
+                | (WorkspaceContainerEl & { direction: 'horizontal' | 'vertical' })
+                | undefined;
+            if (!split) continue;
 
-        if (layout.floating && Object.keys(layout.floating).length > 0) {
-            new Notice('Close pop-out windows before rotating tab groups.');
-            return;
-        }
+            const oldDirection = split.direction;
+            if (oldDirection !== 'vertical' && oldDirection !== 'horizontal') continue;
 
-        const rotatedMain = JSON.parse(JSON.stringify(layout.main)) as WorkspaceLayoutNode;
-        this.rotateLayoutNode(rotatedMain);
-        this.stripSplitIds(rotatedMain);
+            const newDirection: 'horizontal' | 'vertical' =
+                oldDirection === 'vertical' ? 'horizontal' : 'vertical';
 
-        layout.main = rotatedMain;
-        await ws.setLayout(layout);
-    }
+            // Update the live orientation property that Obsidian renders from.
+            split.direction = newDirection;
 
-    private rotateLayoutNode(node: WorkspaceLayoutNode): void {
-        if (!node || typeof node !== 'object') return;
-        if (node.type === 'split' && Array.isArray(node.children)) {
-            if (node.direction === 'horizontal') {
-                node.direction = 'vertical';
-                node.children.reverse();
-            } else if (node.direction === 'vertical') {
-                node.direction = 'horizontal';
-            }
-            for (const child of node.children) {
-                this.rotateLayoutNode(child);
+            // Toggle the layout styling flag so the DOM re-flows correctly.
+            const containerEl = split.containerEl;
+            if (containerEl) {
+                containerEl.classList.remove(`mod-${oldDirection}`);
+                containerEl.classList.add(`mod-${newDirection}`);
             }
         }
-    }
 
-    private stripSplitIds(node: WorkspaceLayoutNode): void {
-        if (!node || typeof node !== 'object') return;
-        if (node.type === 'split') {
-            delete node.id;
-        }
-        if (Array.isArray(node.children)) {
-            for (const child of node.children) {
-                this.stripSplitIds(child);
-            }
-        }
-    }
-
-    private isMainWindow(leaf: WorkspaceLeaf): boolean {
-        const container = leaf.getContainer();
-        return (container as unknown as { win?: Window }).win === window;
+        // Re-flow the layout now that split directions have changed.
+        (this.app.workspace as unknown as { onLayoutChange: () => void }).onLayoutChange();
     }
 
     // ------------------------------------------------------------------------
