@@ -19,6 +19,9 @@ interface NextTabGroupSettings {
     confirmDedupeAllGroups: boolean;
     confirmDedupeAllWindows: boolean;
     groupSwitchByContext: boolean;
+    colorActiveTabEnabled: boolean;
+    activeTabColorLight: string;
+    activeTabColorDark: string;
 }
 
 const DEFAULT_SETTINGS: NextTabGroupSettings = {
@@ -29,6 +32,9 @@ const DEFAULT_SETTINGS: NextTabGroupSettings = {
     // window then tab group (current behavior). When false, everything is
     // sorted by pure recency instead.
     groupSwitchByContext: true,
+    colorActiveTabEnabled: false,
+    activeTabColorLight: "#e0edff",
+    activeTabColorDark: "#33415c",
 };
 
 // ---------------------------------------------------------------------------
@@ -165,6 +171,7 @@ export default class NextTabGroupPlugin extends Plugin {
 
     async onload() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        this.applyActiveTabColors();
 
         this.addCommand({
             id: 'next',
@@ -271,12 +278,51 @@ export default class NextTabGroupPlugin extends Plugin {
                         this.tabGroupActiveLeaves.delete(parent);
                     }
                 }
+                this.applyActiveTabColors();
             })
         );
     }
 
     async saveSettings(): Promise<void> {
         await this.saveData(this.settings);
+    }
+
+    onunload(): void {
+        const windows = new Set<Window>();
+        windows.add(window);
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            const win = leaf.getContainer()?.win;
+            if (win) windows.add(win);
+        });
+        for (const win of windows) {
+            const body = win.document.body;
+            body.classList.remove("ntg-color-active-tab");
+            body.style.removeProperty("--ntg-active-tab-color-light");
+            body.style.removeProperty("--ntg-active-tab-color-dark");
+        }
+    }
+
+    /**
+     * Pushes the configured active-tab colors onto every open window's body
+     * element as CSS custom properties, and toggles the marker class so the
+     * CSS rule only applies when the feature is enabled.
+     */
+    applyActiveTabColors(): void {
+        const { colorActiveTabEnabled, activeTabColorLight, activeTabColorDark } = this.settings;
+
+        const windows = new Set<Window>();
+        windows.add(window);
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            const win = leaf.getContainer()?.win;
+            if (win) windows.add(win);
+        });
+
+        for (const win of windows) {
+            const body = win.document.body;
+            body.classList.toggle("ntg-color-active-tab", colorActiveTabEnabled);
+            body.style.setProperty("--ntg-active-tab-color-light", activeTabColorLight);
+            body.style.setProperty("--ntg-active-tab-color-dark", activeTabColorDark);
+        }
     }
 
     /**
@@ -1984,6 +2030,48 @@ class NextTabGroupSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     })
             );
+
+        containerEl.createEl('h2', { text: 'Active tab color' });
+
+        new Setting(containerEl)
+            .setName('Color the active tab')
+            .setDesc('Highlight the active tab with a custom color in light and dark mode.')
+            .addToggle((toggle) =>
+                toggle
+                    .setValue(this.plugin.settings.colorActiveTabEnabled)
+                    .onChange(async (value) => {
+                        this.plugin.settings.colorActiveTabEnabled = value;
+                        await this.plugin.saveSettings();
+                        this.plugin.applyActiveTabColors();
+                        this.display();
+                    })
+            );
+
+        if (this.plugin.settings.colorActiveTabEnabled) {
+            new Setting(containerEl)
+                .setName('Active tab color (light mode)')
+                .addColorPicker((picker) =>
+                    picker
+                        .setValue(this.plugin.settings.activeTabColorLight)
+                        .onChange(async (value) => {
+                            this.plugin.settings.activeTabColorLight = value;
+                            await this.plugin.saveSettings();
+                            this.plugin.applyActiveTabColors();
+                        })
+                );
+
+            new Setting(containerEl)
+                .setName('Active tab color (dark mode)')
+                .addColorPicker((picker) =>
+                    picker
+                        .setValue(this.plugin.settings.activeTabColorDark)
+                        .onChange(async (value) => {
+                            this.plugin.settings.activeTabColorDark = value;
+                            await this.plugin.saveSettings();
+                            this.plugin.applyActiveTabColors();
+                        })
+                );
+        }
     }
 }
 

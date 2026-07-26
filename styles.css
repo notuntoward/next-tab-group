@@ -87,3 +87,12 @@
     color: var(--page-color, var(--text-accent));
     font-weight: bold;
 }
+
+/* Active tab coloring, controlled by the plugin's on/off toggle */
+body.ntg-color-active-tab.theme-light .workspace-tab-header.is-active {
+    background-color: var(--ntg-active-tab-color-light) !important;
+}
+
+body.ntg-color-active-tab.theme-dark .workspace-tab-header.is-active {
+    background-color: var(--ntg-active-tab-color-dark) !important;
+}
