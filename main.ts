@@ -9,6 +9,7 @@ import {
 } from 'obsidian';
 import type { App, Workspace, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
+import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText } from './src/utils/modal';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -894,6 +895,12 @@ export default class NextTabGroupPlugin extends Plugin {
         return `${tab.leaf.getDisplayText()} ${tab.group.label}`;
     }
 
+    private getTabGroupLocation(group: TabGroupInfo): string {
+        return group.isCurrentGroup
+            ? "Current group"
+            : group.relativeLabel || "Other group";
+    }
+
     private getTabGroupMeta(tab: TabInfo): string {
         const group = tab.group;
 
@@ -933,8 +940,15 @@ export default class NextTabGroupPlugin extends Plugin {
             cls: "ntg-nav-primary suggestion-title data-link-text",
         });
         const rawDisplayText = tab.leaf.getDisplayText();
+        const searchText = this.getTabSearchText(tab);
+        const matches = mapFuzzyMatchesToDisplayText(
+            searchText,
+            rawDisplayText,
+            0,
+            match?.match.matches ?? [],
+        );
 
-        renderHighlightedText(primaryContainer, rawDisplayText, match?.match.matches ?? []);
+        renderHighlightedText(primaryContainer, rawDisplayText, matches);
 
         const parts: string[] = [];
         if (showGroup) parts.push(this.getTabGroupMeta(tab));
@@ -972,13 +986,20 @@ export default class NextTabGroupPlugin extends Plugin {
         const primaryContainer = el.createDiv({
             cls: "ntg-nav-primary suggestion-title data-link-text",
         });
-        renderHighlightedText(primaryContainer, title, match?.match.matches ?? []);
+        const location = this.getTabGroupLocation(group);
+        const searchText = location ? `${location} ${title}` : title;
+        const displayOffset = location ? location.length + 1 : 0;
+        const matches = mapFuzzyMatchesToDisplayText(
+            searchText,
+            title,
+            displayOffset,
+            match?.match.matches ?? [],
+        );
+
+        renderHighlightedText(primaryContainer, title, matches);
 
         const parts: string[] = [];
         if (showGroup) {
-            const location = group.isCurrentGroup
-                ? "Current group"
-                : group.relativeLabel || "Other group";
             const count =
                 `${group.leaves.length} ` +
                 `tab${group.leaves.length === 1 ? "" : "s"}`;
@@ -1005,7 +1026,15 @@ export default class NextTabGroupPlugin extends Plugin {
         el.addClass("ntg-nav-row");
 
         const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
-        renderHighlightedText(primaryContainer, item.label, match?.match.matches ?? []);
+        const searchText = `${item.label} ${recent}`;
+        const matches = mapFuzzyMatchesToDisplayText(
+            searchText,
+            item.label,
+            0,
+            match?.match.matches ?? [],
+        );
+
+        renderHighlightedText(primaryContainer, item.label, matches);
 
         const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
         secondaryContainer.setText(`Most recent: ${recent} · ${groupCount}`);
@@ -1705,8 +1734,11 @@ export default class NextTabGroupPlugin extends Plugin {
             this.app,
             orderedGroups,
             "Switch to tab group",
-            (group) => `${group.label} ${group.representative.getDisplayText()}`,
-            (group) => this.activateTabGroup(group.group, group.representative),
+            (group) => {
+                const title = group.representative.getDisplayText() || "Untitled tab";
+                const location = this.getTabGroupLocation(group);
+                return location ? `${location} ${title}` : title;
+            },            (group) => this.activateTabGroup(group.group, group.representative),
             (group, el, match) => this.renderTabGroupSuggestion(group, el, windowLabels, showGroup, multipleWindows, match),
             this.firstNonActiveIndex(
                 orderedGroups,
@@ -1915,7 +1947,9 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
 
     onOpen() {
         super.onOpen();
-        
+
+        registerEmacsMotionKeys(this);
+
         // Keep the list in recency order (the active item stays in its slot)
         // but select the most-recent item that is not the active one so ENTER
         // immediately switches to it.

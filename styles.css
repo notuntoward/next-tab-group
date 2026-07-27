@@ -47,9 +47,11 @@
 }
 
 /* Highlight protection: matched fragments must not break the grid layout or
- * the single-line truncation of the primary column. */
+ * the single-line truncation of the primary column. Match the quick switcher's
+ * default highlight style (bold, inheriting surrounding color). */
 .suggestion-item .ntg-nav-primary .suggestion-highlight {
     display: inline;
+    font-weight: bold;
 }
 
 .suggestion-item .ntg-nav-secondary {
@@ -75,17 +77,6 @@
 .ntg-nav-row[data-link-path] .ntg-nav-primary,
 .ntg-nav-row[data-href] .ntg-nav-primary {
     color: var(--page-color, inherit);
-}
-
-/**
- * Retain high-contrast search visibility even when dynamic note color modifications trigger
- */
-.suggestion-item[data-link-path] .ntg-nav-primary .suggestion-highlight,
-.suggestion-item[data-href] .ntg-nav-primary .suggestion-highlight,
-.ntg-nav-row[data-link-path] .ntg-nav-primary .suggestion-highlight,
-.ntg-nav-row[data-href] .ntg-nav-primary .suggestion-highlight {
-    color: var(--page-color, var(--text-accent));
-    font-weight: bold;
 }
 
 /* Active tab coloring, controlled by the plugin's on/off toggle */

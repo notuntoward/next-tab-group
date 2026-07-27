@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { App, WorkspaceLeaf } from 'obsidian';
-import NextTabGroupPlugin from '../main.ts';
+import NextTabGroupPlugin, { type FuzzyMatch } from '../main.ts';
 import {
     MockApp,
     MockWorkspaceContainer,
@@ -52,6 +52,7 @@ type AugmentedEl = HTMLElement & {
     addClass(cls: string): void;
     setText(text: string): void;
     createDiv(opts: { cls: string }): AugmentedEl;
+    createSpan(opts?: { cls: string }): AugmentedEl;
 };
 
 function augment(el: HTMLElement): AugmentedEl {
@@ -69,6 +70,16 @@ function augment(el: HTMLElement): AugmentedEl {
         const child = document.createElement('div');
         for (const cls of opts.cls.split(' ')) {
             if (cls) child.classList.add(cls);
+        }
+        this.appendChild(child);
+        return augment(child);
+    };
+    a.createSpan = function (this: HTMLElement, opts?: { cls: string }) {
+        const child = document.createElement('span');
+        if (opts?.cls) {
+            for (const cls of opts.cls.split(' ')) {
+                if (cls) child.classList.add(cls);
+            }
         }
         this.appendChild(child);
         return augment(child);
@@ -142,18 +153,52 @@ describe('tab group row metadata', () => {
         expect(secondary).toBe('Right group · 1 tab');
     });
 
-    it('falls back to Other group when no relative label exists', () => {
-        const leaves = [
-            new MockWorkspaceLeaf('A.md').setId('a'),
-            new MockWorkspaceLeaf('B.md').setId('b'),
-        ];
-        const group = makeGroup(container, { leaves, isCurrentGroup: false, relativeLabel: null });
+    it('maps fuzzy highlights from the search text onto the representative title only', () => {
+        const rep = new MockWorkspaceLeaf('Burton15libsNeuroticConsrvsHappy.md').setId('rep');
+        const group = makeGroup(container, {
+            leaves: [rep],
+            isCurrentGroup: false,
+            relativeLabel: 'Left group',
+        });
 
         const el = rowEl();
-        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false);
+        const searchText = 'Left group Burton15libsNeuroticConsrvsHappy';
+        const match: FuzzyMatch<TabGroupInfo> = {
+            item: group as unknown as TabGroupInfo,
+            match: {
+                score: 1,
+                matches: [[searchText.indexOf('Bur'), searchText.indexOf('Bur') + 3]],
+            },
+        };
 
-        const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
-        expect(secondary).toBe('Other group · 2 tabs');
+        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false, match);
+
+        const highlight = el.querySelector('.ntg-nav-primary .suggestion-highlight');
+        expect(highlight).not.toBeNull();
+        expect(highlight!.textContent).toBe('Bur');
+    });
+
+    it('does not highlight a match that falls outside the representative title', () => {
+        const rep = new MockWorkspaceLeaf('Burton15libsNeuroticConsrvsHappy.md').setId('rep');
+        const group = makeGroup(container, {
+            leaves: [rep],
+            isCurrentGroup: false,
+            relativeLabel: 'Left group',
+        });
+
+        const el = rowEl();
+        const match: FuzzyMatch<TabGroupInfo> = {
+            item: group as unknown as TabGroupInfo,
+            match: {
+                score: 1,
+                matches: [[0, 4]],
+            },
+        };
+
+        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false, match);
+
+        const highlight = el.querySelector('.ntg-nav-primary .suggestion-highlight');
+        expect(highlight).toBeNull();
     });
 });
 

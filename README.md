@@ -165,6 +165,8 @@ Opens a fuzzy-completion prompt listing **every editor tab across all windows**,
 
 By default results are clustered by window and then tab group (freshest first). Disable **Settings → Next Tab Group → Group results by tab group and window** to list every tab in a single pure recency order instead.
 
+All fuzzy-completion modals in this plugin support Emacs-style motion keys: **Ctrl+F** / **Ctrl+B** move the input cursor right / left, and **Ctrl+N** / **Ctrl+P** move the selection down / up.
+
 ## Switch to Tab Group
 
 **Command ID:** `switch-to-tab-group`
@@ -207,6 +209,14 @@ Each confirmation dialog lists every tab to be closed, grouped by note with coun
 ## Switch tabs
 
 - **Group results by tab group and window** — When on (default), the "Switch to any tab" and "Switch to tab group" modals cluster results by window and then tab group, with the freshest contexts first. When off, every result is listed in a single pure recency order, newest at the top.
+
+## Active tab color
+
+- **Color the active tab** — Highlight the active tab with a custom background color in both light and dark mode. Off by default.
+- **Active tab color (light mode)** — Background color for the active tab when Obsidian is in light mode.
+- **Active tab color (dark mode)** — Background color for the active tab when Obsidian is in dark mode.
+
+The color is applied as a CSS custom property on every open window's `<body>`, so it automatically follows pop-out windows and updates instantly when you change the setting.
 
 # Setting Hotkeys
 
