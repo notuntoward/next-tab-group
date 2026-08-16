@@ -2001,7 +2001,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
 // Settings tab
 // ---------------------------------------------------------------------------
 
-class NextTabGroupSettingTab extends PluginSettingTab {
+export class NextTabGroupSettingTab extends PluginSettingTab {
     private readonly plugin: NextTabGroupPlugin;
 
     constructor(app: App, plugin: NextTabGroupPlugin) {
@@ -2010,102 +2010,95 @@ class NextTabGroupSettingTab extends PluginSettingTab {
     }
 
     display(): void {
-        const { containerEl } = this;
-        containerEl.empty();
+        // Handled by getSettingDefinitions() in Obsidian 1.13+
+    }
 
-        containerEl.createEl('h2', { text: 'Deduplicate tabs' });
-
-        new Setting(containerEl)
-            .setName('Confirm before deduplicating in group')
-            .setDesc('Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs in group". Off by default; enable to prompt before closing tabs in the current group.')
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.confirmDedupeGroup)
-                    .onChange(async (value) => {
-                        this.plugin.settings.confirmDedupeGroup = value;
-                        await this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Confirm before deduplicating in all groups')
-            .setDesc('Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs in all groups". Disable to run without prompting.')
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.confirmDedupeAllGroups)
-                    .onChange(async (value) => {
-                        this.plugin.settings.confirmDedupeAllGroups = value;
-                        await this.plugin.saveSettings();
-                    })
-            );
-
-        new Setting(containerEl)
-            .setName('Confirm before deduplicating in all windows')
-            .setDesc('Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs in all windows". Disable to run without prompting.')
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.confirmDedupeAllWindows)
-                    .onChange(async (value) => {
-                        this.plugin.settings.confirmDedupeAllWindows = value;
-                        await this.plugin.saveSettings();
-                    })
-            );
-
-        containerEl.createEl('h2', { text: 'Switch tabs' });
-
-        new Setting(containerEl)
-            .setName('Group results by tab group and window')
-            .setDesc('When on, "Switch to any tab" and "Switch to tab group" cluster results by window and tab group (freshest first). When off, every result is listed in a single pure recency order, newest at the top.')
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.groupSwitchByContext)
-                    .onChange(async (value) => {
-                        this.plugin.settings.groupSwitchByContext = value;
-                        await this.plugin.saveSettings();
-                    })
-            );
-
-        containerEl.createEl('h2', { text: 'Active tab color' });
-
-        new Setting(containerEl)
-            .setName('Color the active tab')
-            .setDesc('Highlight the active tab with a custom color in light and dark mode.')
-            .addToggle((toggle) =>
-                toggle
-                    .setValue(this.plugin.settings.colorActiveTabEnabled)
-                    .onChange(async (value) => {
-                        this.plugin.settings.colorActiveTabEnabled = value;
-                        await this.plugin.saveSettings();
-                        this.plugin.applyActiveTabColors();
-                        this.display();
-                    })
-            );
-
-        if (this.plugin.settings.colorActiveTabEnabled) {
-            new Setting(containerEl)
-                .setName('Active tab color (light mode)')
-                .addColorPicker((picker) =>
-                    picker
-                        .setValue(this.plugin.settings.activeTabColorLight)
-                        .onChange(async (value) => {
-                            this.plugin.settings.activeTabColorLight = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.applyActiveTabColors();
-                        })
-                );
-
-            new Setting(containerEl)
-                .setName('Active tab color (dark mode)')
-                .addColorPicker((picker) =>
-                    picker
-                        .setValue(this.plugin.settings.activeTabColorDark)
-                        .onChange(async (value) => {
-                            this.plugin.settings.activeTabColorDark = value;
-                            await this.plugin.saveSettings();
-                            this.plugin.applyActiveTabColors();
-                        })
-                );
-        }
+    getSettingDefinitions() {
+        return [
+            {
+                type: 'group',
+                heading: 'Deduplicate tabs',
+                items: [
+                    {
+                        name: 'Confirm before deduplicating in group',
+                        desc: 'Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs in group". Off by default; enable to prompt before closing tabs in the current group.',
+                        control: {
+                            type: 'toggle',
+                            key: 'confirmDedupeGroup',
+                        },
+                    },
+                    {
+                        name: 'Confirm before deduplicating in all groups',
+                        desc: 'Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs in all groups". Disable to run without prompting.',
+                        control: {
+                            type: 'toggle',
+                            key: 'confirmDedupeAllGroups',
+                        },
+                    },
+                    {
+                        name: 'Confirm before deduplicating in all windows',
+                        desc: 'Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs in all windows". Disable to run without prompting.',
+                        control: {
+                            type: 'toggle',
+                            key: 'confirmDedupeAllWindows',
+                        },
+                    },
+                ],
+            },
+            {
+                type: 'group',
+                heading: 'Switch tabs',
+                items: [
+                    {
+                        name: 'Group results by tab group and window',
+                        desc: 'When on, "Switch to any tab" and "Switch to tab group" cluster results by window and tab group (freshest first). When off, every result is listed in a single pure recency order, newest at the top.',
+                        control: {
+                            type: 'toggle',
+                            key: 'groupSwitchByContext',
+                        },
+                    },
+                ],
+            },
+            {
+                type: 'group',
+                heading: 'Active tab color',
+                items: [
+                    {
+                        name: 'Color the active tab',
+                        desc: 'Highlight the active tab with a custom color in light and dark mode.',
+                        control: {
+                            type: 'toggle',
+                            key: 'colorActiveTabEnabled',
+                            onChange: () => {
+                                this.plugin.applyActiveTabColors();
+                            },
+                        },
+                    },
+                    {
+                        name: 'Active tab color (light mode)',
+                        visible: () => this.plugin.settings.colorActiveTabEnabled,
+                        control: {
+                            type: 'color',
+                            key: 'activeTabColorLight',
+                            onChange: () => {
+                                this.plugin.applyActiveTabColors();
+                            },
+                        },
+                    },
+                    {
+                        name: 'Active tab color (dark mode)',
+                        visible: () => this.plugin.settings.colorActiveTabEnabled,
+                        control: {
+                            type: 'color',
+                            key: 'activeTabColorDark',
+                            onChange: () => {
+                                this.plugin.applyActiveTabColors();
+                            },
+                        },
+                    },
+                ],
+            },
+        ];
     }
 }
 

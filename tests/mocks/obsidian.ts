@@ -249,8 +249,11 @@ export class MockPlugin {
         this.settings = data;
     }
 
+    settingTab: unknown;
     addCommand(): void { /* no-op */ }
-    addSettingTab(): void { /* no-op */ }
+    addSettingTab(tab: unknown): void {
+        this.settingTab = tab;
+    }
     addRibbonIcon(): void { /* no-op */ }
     addStatusBarItem(): void { /* no-op */ }
     registerView(): void { /* no-op */ }
