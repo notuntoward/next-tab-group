@@ -36,14 +36,15 @@ jobs:
           results_format: sarif
           publish_results: true
 
-      - name: Upload SARIF artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.3.7
-        with:
-          name: scorecard SARIF
-          path: scorecard-results.sarif
-          retention-days: 5
-
       - name: Upload Scorecard SARIF
         uses: github/codeql-action/upload-sarif@d77b13a0df3134d64a457ea9003f600b09fa1c8a # v3.36.1
         with:
           sarif_file: scorecard-results.sarif
+
+      - name: Upload SARIF artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.3.7
+        continue-on-error: true
+        with:
+          name: scorecard SARIF
+          path: scorecard-results.sarif
+          retention-days: 5
