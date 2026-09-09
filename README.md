@@ -38,7 +38,7 @@ Pressing the "Next tab group" command: Group 1 -> Group 2 -> Group 1 -> ...
 
 Order: Top L -> Top R -> Bot L -> Bot R -> Top L -> ...
 
-The command remembers which tab was active in each group, so switching between groups restores your previous position.
+The command remembers which tab was active in each group, so switching between groups restores your previous position. Use this when you have a split workspace and want to quickly move focus between panes without reaching for the mouse.
 
 ## Collect Tabs
 
@@ -61,7 +61,7 @@ Gathers **all tabs from all other tab groups** into the currently active tab gro
 └─────────────────────────────────────┘
 ```
 
-All files remain open; the layout is simplified into a single focused group. Your cursor stays on the tab you started with.
+All files remain open; the layout is simplified into a single focused group. Your cursor stays on the tab you started with. Use this when you're done comparing notes across panes and want to consolidate everything into one group.
 
 ## Rotate Tab Groups
 
@@ -112,6 +112,8 @@ Performs a recursive **90° Clockwise Rotation** of the entire workspace layout.
 └───────────────────────────┘
 ```
 
+Use this when you need to reorient your workspace layout for better screen utilization, such as switching from side-by-side panes to stacked panes.
+
 ## Deduplicate Tabs in Group
 
 **Command ID:** `dedupe-tabs-in-group`
@@ -122,7 +124,7 @@ Removes duplicate tabs in the **current tab group** that point to the same file.
 2. The most recently visited tab in the current tab group (if recency is available).
 3. A stable fallback by leaf id.
 
-This command runs without confirmation by default. Enable confirmation in **Settings → Next Tab Group → Confirm before deduplicating in group** to show a dialog listing the tabs to be closed before running it.
+This command runs without confirmation by default. Enable confirmation in **Settings → Next Tab Group → Confirm before deduplicating in group** to show a dialog listing the tabs to be closed before running it. Use this when you've opened the same note in multiple tabs within a group and want to clean up the duplicates.
 
 ## Deduplicate Tabs in All Groups
 
@@ -135,7 +137,7 @@ Scans **every tab group in the current window** and removes duplicate tabs that 
 3. The most recently visited tab in any other group in the current window.
 4. A stable fallback by leaf id.
 
-This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all groups**.
+This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all groups**. Use this for a quick cleanup when duplicate tabs have accumulated across all groups in your current window.
 
 ## Deduplicate Tabs in All Windows
 
@@ -149,7 +151,7 @@ Scans **every tab in every window** (the main window and any pop-out windows) an
 4. The most recently visited tab in any other window.
 5. A stable fallback by leaf id.
 
-This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all windows**.
+This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all windows**. Use this for a full workspace cleanup when duplicate tabs exist across the main window and any pop-out windows.
 
 ## Switch to Tab in Group
 
@@ -161,7 +163,7 @@ Opens a fuzzy-completion prompt listing **every tab in the active tab group**. P
 
 **Command ID:** `switch-to-any-tab`
 
-Opens a fuzzy-completion prompt listing **every editor tab across all windows**, newest contexts first. Pick a tab to focus it — the plugin also brings its native window (main or pop-out) to the foreground. Press Enter without typing to jump straight to the most recently used tab that isn't already active.
+Opens a fuzzy-completion prompt listing **every editor tab across all windows**, newest contexts first. Pick a tab to focus it — the plugin also brings its native window (main or pop-out) to the foreground. Press Enter without typing to jump straight to the most recently used tab that isn't already active. Use this when you need to jump to a tab in any window or pop-out, especially when you can't remember which pane it's in.
 
 By default results are clustered by window and then tab group (freshest first). Disable **Settings → Next Tab Group → Group results by tab group and window** to list every tab in a single pure recency order instead.
 
@@ -173,7 +175,7 @@ All fuzzy-completion modals in this plugin support Emacs-style motion keys: **Ct
 
 Opens a fuzzy-completion prompt listing **every tab group across all windows**. Pick a group to focus its most recently active tab (or the tab you last had open there). The active group is marked "Current group"; other groups in the same window get relative labels like "group below" or "right group". Press Enter without typing to jump straight to the next-most-recent group.
 
-Like "Switch to any tab", the listing respects the **Group results by tab group and window** setting.
+Like "Switch to any tab", the listing respects the **Group results by tab group and window** setting. Use this when you know which group you want to focus but don't want to click through panes manually.
 
 ## Switch to Window
 
