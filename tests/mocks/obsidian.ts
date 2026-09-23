@@ -118,9 +118,35 @@ export class MockWorkspaceLeaf {
         return this.filePath ?? 'Untitled tab';
     }
 
-    setViewState(type: string, state?: Record<string, unknown>): this {
-        this.viewState = { type, ...(state ? { state } : {}) };
+    ephemeralState: Record<string, unknown> = {};
+    lastSetViewStateArg: unknown = null;
+    lastSetEphemeralStateArg: unknown = null;
+
+    getEphemeralState(): Record<string, unknown> {
+        return this.ephemeralState;
+    }
+
+    setEphemeralState(state: Record<string, unknown>): this {
+        this.ephemeralState = state;
         return this;
+    }
+
+    setViewState(
+        typeOrViewState: string | { type: string; state?: Record<string, unknown>; [key: string]: unknown },
+        stateOrEphemeral?: Record<string, unknown>
+    ): Promise<void> {
+        if (typeof typeOrViewState === 'string') {
+            this.viewState = { type: typeOrViewState, ...(stateOrEphemeral ? { state: stateOrEphemeral } : {}) };
+            this.lastSetViewStateArg = this.viewState;
+        } else {
+            this.viewState = typeOrViewState;
+            this.lastSetViewStateArg = typeOrViewState;
+            if (stateOrEphemeral) {
+                this.ephemeralState = stateOrEphemeral;
+                this.lastSetEphemeralStateArg = stateOrEphemeral;
+            }
+        }
+        return Promise.resolve();
     }
 
     detach(): void {

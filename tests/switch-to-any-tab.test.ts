@@ -11,7 +11,6 @@ import {
 
 type TestPlugin = NextTabGroupPlugin & {
     switchToAnyTab: () => void;
-    getLeavesInFocusedWindow: () => WorkspaceLeaf[];
     buildNavigationModel: (activeLeaf: WorkspaceLeaf | null) => WorkspaceNavigationModel;
     buildTabGroupInfos: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => TabGroupInfo[];
     buildTabInfos: (groups: TabGroupInfo[]) => TabInfo[];
@@ -137,41 +136,6 @@ describe('switchToAnyTab', () => {
         plugin = createPlugin(app);
     });
 
-    it('leaves in another window do not appear when a focused window is identifiable', () => {
-        const groupMain = new MockWorkspaceParent(rootContainer);
-        const groupWin = new MockWorkspaceParent(windowContainer);
-
-        const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
-        const mainB = leaf('mainB', 'Main-B.md', groupMain, rootContainer);
-        const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
-
-        app.workspace.rootLeaves = [mainA, mainB];
-        app.workspace.allLeaves = [mainA, mainB, winA];
-        app.workspace.setActiveLeaf(mainA);
-
-        const leaves = plugin.getLeavesInFocusedWindow();
-        expect(leaves.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['mainA', 'mainB']);
-    });
-
-    it('the fallback includes all leaves when focused-window identity is unavailable', () => {
-        const originalActiveWindow = (globalThis as any).activeWindow;
-        (globalThis as any).activeWindow = undefined;
-
-        const groupMain = new MockWorkspaceParent(rootContainer);
-        const groupWin = new MockWorkspaceParent(windowContainer);
-
-        const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
-        const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
-
-        app.workspace.rootLeaves = [mainA];
-        app.workspace.allLeaves = [mainA, winA];
-        app.workspace.activeLeaf = null;
-
-        const leaves = plugin.getLeavesInFocusedWindow();
-        expect(leaves.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['mainA', 'winA']);
-
-        (globalThis as any).activeWindow = originalActiveWindow;
-    });
 
     it('tabs sort newest-first', () => {
         const group = new MockWorkspaceParent(rootContainer);

@@ -20,7 +20,6 @@ type TestPlugin = NextTabGroupPlugin & {
     dedupeInAllGroups: () => Promise<void>;
     dedupeInAllWindows: () => Promise<void>;
     getActiveLeafInFocusedWindow: () => WorkspaceLeaf | null;
-    getActiveTabGroupLeaves: () => WorkspaceLeaf[] | null;
     switchToTabInGroup: () => void;
     planDedupe: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => { toRemove: WorkspaceLeaf[]; notesAffected: number } | null;
     getLeafFileKey: (leaf: WorkspaceLeaf) => string | null;
@@ -400,15 +399,25 @@ describe('switchToTabInGroup', () => {
         const a = leaf('a', 'Note-A.md', group, container);
         const b = leaf('b', 'Note-B.md', group, container);
         const c = leaf('c', 'Note-C.md', group, container);
-        leaf('d', 'Note-D.md', other, container);
+        const d = leaf('d', 'Note-D.md', other, container);
 
-        app.workspace.rootLeaves = [a, b, c];
-        app.workspace.allLeaves = [a, b, c];
+        app.workspace.rootLeaves = [a, b, c, d];
+        app.workspace.allLeaves = [a, b, c, d];
         app.workspace.setActiveLeaf(b);
 
-        const leaves = plugin.getActiveTabGroupLeaves();
-        expect(leaves).not.toBeNull();
-        expect(leaves!.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['a', 'b', 'c']);
+        let captured: MockFuzzySuggestModal<MockWorkspaceLeaf> | undefined;
+        const originalOpen = MockFuzzySuggestModal.prototype.open;
+        MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<MockWorkspaceLeaf>) {
+            captured = this;
+            return originalOpen.call(this);
+        };
+
+        plugin.switchToTabInGroup();
+        MockFuzzySuggestModal.prototype.open = originalOpen;
+
+        expect(captured).toBeDefined();
+        const items = captured!.getItems();
+        expect(items.map((l) => (l as unknown as MockWorkspaceLeaf).id).sort()).toEqual(['a', 'b', 'c']);
     });
 
     it('opens the chosen tab by setting it active', () => {
@@ -449,10 +458,21 @@ describe('switchToTabInGroup', () => {
         expect(app.workspace.activeLeaf).toBe(b);
     });
 
-    it('returns null when there is no active leaf', () => {
+    it('does not open modal when there is no active leaf', () => {
         const app = new MockApp();
         const plugin = createPlugin(app);
         app.workspace.activeLeaf = null;
-        expect(plugin.getActiveTabGroupLeaves()).toBeNull();
+
+        let opened = false;
+        const originalOpen = MockFuzzySuggestModal.prototype.open;
+        MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<MockWorkspaceLeaf>) {
+            opened = true;
+            return originalOpen.call(this);
+        };
+
+        plugin.switchToTabInGroup();
+        MockFuzzySuggestModal.prototype.open = originalOpen;
+
+        expect(opened).toBe(false);
     });
 });

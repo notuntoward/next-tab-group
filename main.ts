@@ -56,20 +56,6 @@ interface WorkspaceItemInternal {
     workspace?: Workspace;
 }
 
-/**
- * A serializable snapshot of a split's position in the live-object topology
- * graph. `childIds` may contain ids of both nested splits and tab groups.
- */
-interface SplitNodeInfo {
-    id: string;
-    direction: 'horizontal' | 'vertical';
-    parentSplitId: string | null;
-    childIds: string[];
-    // Retained reference to the live Obsidian split object so layout commands
-    // can mutate its orientation in place instead of tearing down the tree.
-    liveSplit?: unknown;
-}
-
 interface TabGroupInfo {
     group: WorkspaceParent;
     leaves: WorkspaceLeaf[];
@@ -115,13 +101,6 @@ interface WorkspaceNavigationModel {
     windows: WindowInfo[];
     groups: TabGroupInfo[];
     tabs: TabInfo[];
-
-    // Live-object topology graph: a map of split id -> split node info, and a
-    // map from each tab group's `WorkspaceParent` to the id of the split that
-    // directly contains it. Lets layout commands reason about split directions
-    // and nesting without going through the destructive `getLayout`/`setLayout`.
-    splits: Map<string, SplitNodeInfo>;
-    groupToSplitMap: Map<WorkspaceParent, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +166,7 @@ export default class NextTabGroupPlugin extends Plugin {
             id: 'collect-tabs',
             name: 'Collect tabs',
             callback: () => {
-                this.collectTabs();
+                void this.collectTabs();
             }
         });
 
@@ -342,14 +321,6 @@ export default class NextTabGroupPlugin extends Plugin {
     // Window-aware helpers
     // ------------------------------------------------------------------------
 
-    /**
-     * Get the workspace for a leaf. Note: Obsidian has only one Workspace
-     * instance (app.workspace) shared across all windows. This method exists
-     * for API consistency but always returns app.workspace.
-     */
-    private getWorkspaceForLeaf(_leaf: WorkspaceLeaf): Workspace {
-        return this.app.workspace;
-    }
 
     /**
      * Get the active leaf in the currently focused window. Falls back to
@@ -363,43 +334,34 @@ export default class NextTabGroupPlugin extends Plugin {
     private getActiveLeafInFocusedWindow(): WorkspaceLeaf | null {
         const globalActive = this.app.workspace.activeLeaf;
 
-        if (typeof activeWindow === 'undefined') {
-            return globalActive;
+        if (typeof activeWindow === 'undefined' || activeWindow === undefined) {
+            return globalActive && !this.isSidebarLeaf(globalActive) ? globalActive : null;
         }
 
-        if (globalActive) {
-            const container = globalActive.getContainer();
-            if (container && container.win === activeWindow) {
-                return globalActive;
-            }
+        if (globalActive && globalActive.getContainer()?.win === activeWindow && !this.isSidebarLeaf(globalActive)) {
+            return globalActive;
         }
 
         let leafInFocusedWindow: WorkspaceLeaf | null = null;
         this.app.workspace.iterateAllLeaves((leaf) => {
             if (leafInFocusedWindow) return;
-            const container = leaf.getContainer();
-            if (container && container.win === activeWindow) {
+            if (this.isSidebarLeaf(leaf)) return;
+            if (leaf.getContainer()?.win === activeWindow) {
                 leafInFocusedWindow = leaf;
             }
         });
 
-        return leafInFocusedWindow ?? globalActive;
+        if (leafInFocusedWindow) {
+            return leafInFocusedWindow;
+        }
+
+        if (globalActive && !this.isSidebarLeaf(globalActive)) {
+            return globalActive;
+        }
+
+        return null;
     }
 
-    private getLeavesInFocusedWindow(): WorkspaceLeaf[] {
-        const activeLeaf = this.getActiveLeafInFocusedWindow();
-        const focusedWin = activeLeaf?.getContainer()?.win;
-
-        const leaves: WorkspaceLeaf[] = [];
-
-        this.app.workspace.iterateAllLeaves((leaf) => {
-            if (!focusedWin || leaf.getContainer()?.win === focusedWin) {
-                leaves.push(leaf);
-            }
-        });
-
-        return leaves;
-    }
 
     // ------------------------------------------------------------------------
     // Tab group discovery & navigation
@@ -631,78 +593,9 @@ export default class NextTabGroupPlugin extends Plugin {
             groups,
             tabs,
             windows,
-            splits: new Map<string, SplitNodeInfo>(),
-            groupToSplitMap: new Map<WorkspaceParent, string>(),
         };
-
-        this.buildTopology(locations, model);
 
         return model;
-    }
-
-    /**
-     * Build the live-object topology graph by bubbling up from each discovered
-     * tab group's `WorkspaceParent` to its enclosing `WorkspaceSplit` and
-     * recursively through ancestor splits. Each Obsidian split object is tagged
-     * with a stable synthetic id (`_ntg_id`) so we can reference it in a plain
-     * Map without depending on Obsidian's private `id` field. The result lets
-     * layout commands read split directions and nesting from live references
-     * instead of serializing the workspace via `getLayout`/`setLayout`.
-     */
-    private buildTopology(
-        locations: LeafLocation[],
-        model: WorkspaceNavigationModel,
-    ): void {
-        const processedParents = new Set<WorkspaceParent>();
-
-        // Obsidian's live hierarchy nodes aren't fully described by the public
-        // typings (the `type` discriminator and `direction` live on private
-        // internals), so we read them off the real objects via this loose shape.
-        type SplitNode = {
-            _ntg_id?: string;
-            type?: string;
-            direction?: 'horizontal' | 'vertical';
-            parent?: SplitNode | null;
-            children?: (SplitNode | WorkspaceParent)[];
-        };
-
-        const getObjectId = (obj: SplitNode): string => {
-            if (!obj._ntg_id) {
-                obj._ntg_id = 'split_' + Math.random().toString(36).substring(2, 11);
-            }
-            return obj._ntg_id;
-        };
-
-        for (const loc of locations) {
-            if (!loc.group || processedParents.has(loc.group)) continue;
-            processedParents.add(loc.group);
-
-            const firstParent = (loc.group.parent as unknown as SplitNode) ?? null;
-            if (firstParent && firstParent.type === 'split') {
-                model.groupToSplitMap.set(loc.group, getObjectId(firstParent));
-            }
-
-            let currentParent = firstParent;
-            while (currentParent && currentParent.type === 'split') {
-                const currentId = getObjectId(currentParent);
-                const upperParent = (currentParent.parent as SplitNode) ?? null;
-                if (!model.splits.has(currentId)) {
-                    model.splits.set(currentId, {
-                        id: currentId,
-                        direction: currentParent.direction!,
-                        parentSplitId:
-                            upperParent && upperParent.type === 'split'
-                                ? getObjectId(upperParent)
-                                : null,
-                        childIds: (currentParent.children ?? []).map((child) =>
-                            getObjectId(child as { _ntg_id?: string }),
-                        ),
-                        liveSplit: currentParent,
-                    });
-                }
-                currentParent = upperParent;
-            }
-        }
     }
 
     // ------------------------------------------------------------------------
@@ -1133,31 +1026,43 @@ export default class NextTabGroupPlugin extends Plugin {
      */
     private async collectTabs() {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
-        if (!activeLeaf) return;
+        if (!activeLeaf || this.isSidebarLeaf(activeLeaf)) return;
+
+        const targetParent = activeLeaf.parent as any;
+        if (!targetParent) return;
 
         const model = this.buildNavigationModel(activeLeaf);
         const activeWindow = this.getWindowForLeaf(activeLeaf);
         const tabsToMigrate = this.getTabsInWindow(model, activeWindow)
             .map((t) => t.leaf)
-            .filter((leaf) => leaf !== activeLeaf);
+            .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf));
 
         if (tabsToMigrate.length === 0) return;
 
-        const states = tabsToMigrate.map((leaf) => leaf.getViewState());
-        for (const leaf of tabsToMigrate) {
-            leaf.detach();
-        }
+        try {
+            for (const leaf of tabsToMigrate) {
+                const state = leaf.getViewState();
+                const ephemeralState = typeof (leaf as any).getEphemeralState === 'function'
+                    ? (leaf as any).getEphemeralState()
+                    : undefined;
 
-        const targetParent = activeLeaf.parent as any;
-        for (const state of states) {
-            const newLeaf = this.app.workspace.createLeafInParent(targetParent, -1);
-            await newLeaf.setViewState(state);
+                const newLeaf = this.app.workspace.createLeafInParent(targetParent, -1);
+                const cleanState = {
+                    ...state,
+                    active: false,
+                    group: undefined,
+                };
+                await newLeaf.setViewState(cleanState, ephemeralState);
+                leaf.detach();
+            }
+        } catch (err) {
+            console.error('Failed to collect tabs:', err);
+        } finally {
+            if (activeLeaf.parent) {
+                this.tabGroupActiveLeaves.set(activeLeaf.parent, activeLeaf);
+            }
+            this.focusLeafAndWindow(activeLeaf);
         }
-
-        if (activeLeaf.parent) {
-            this.tabGroupActiveLeaves.set(activeLeaf.parent, activeLeaf);
-        }
-        this.focusLeafAndWindow(activeLeaf);
     }
 
     // ------------------------------------------------------------------------
@@ -1601,18 +1506,6 @@ export default class NextTabGroupPlugin extends Plugin {
     // Switch to tab in group
     // ------------------------------------------------------------------------
 
-    /**
-     * Returns the leaves in the active tab group (the `WorkspaceTabs` parent of
-     * the focused leaf), reusing the same `activeLeaf.parent` identification
-     * the rest of the plugin uses. Returns null when there is no active leaf.
-     */
-    private getActiveTabGroupLeaves(): WorkspaceLeaf[] | null {
-        const activeLeaf = this.getActiveLeafInFocusedWindow();
-        if (!activeLeaf || !activeLeaf.parent) return null;
-
-        const tabGroup = activeLeaf.parent as WorkspaceContainerEl;
-        return (tabGroup.children ?? []) as unknown as WorkspaceLeaf[];
-    }
 
     private switchToTabInGroup(): void {
         const activeLeaf = this.getActiveLeafInFocusedWindow();

@@ -5,7 +5,7 @@
 [![OpenSSF Scorecard](https://github.com/notuntoward/next-tab-group/actions/workflows/scorecard.yml/badge.svg)](https://github.com/notuntoward/next-tab-group/actions/workflows/scorecard.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/notuntoward/next-tab-group/badge)](https://securityscorecards.dev/viewer/?uri=github.com/notuntoward/next-tab-group)
 
-This plugin provides commands for efficient tab group navigation, tab/tab-group/window switching, workspace layout manipulation, and tab deduplication in Obsidian, inspired by Emacs window commands. It is fully aware of Obsidian's multi-window setup (the main window and any pop-out windows) and handles them as separate scopes throughout.
+This plugin provides commands for efficient tab group navigation, tab/tab-group/window switching, workspace layout manipulation, and tab deduplication in Obsidian, inspired by Emacs window and frame commands; Obsidian tab groups are treated similarly to emacs windows; Obsidian pop out windows similar to other frames in Emacs.
 
 # Commands
 
@@ -13,7 +13,9 @@ This plugin provides commands for efficient tab group navigation, tab/tab-group/
 
 **Command ID:** `next`
 
-Cycles your cursor between “tab groups”: whole windows with individual tabs inside. The cycling is similar to the Emacs `other-window` command:
+Cycles your cursor between “tab groups”. The cycling is similar to the Emacs `other-window` command:
+
+**TODO** rewrite to clarify emacs buffers vs. windows!
 
 1. Top to bottom  
 2. Left to right (within each row)
