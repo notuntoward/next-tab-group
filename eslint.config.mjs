@@ -11,7 +11,7 @@ export default [
     ]
   },
   {
-    files: ['main.ts'],
+    files: ['main.ts', 'src/**/*.ts'],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {

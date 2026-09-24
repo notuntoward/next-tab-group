@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { App, WorkspaceLeaf } from 'obsidian';
 import NextTabGroupPlugin from '../main.ts';
 import {
@@ -346,11 +346,13 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             const suggestions = modal.getSuggestions('');
 
             expect(suggestions).toHaveLength(3);
+            // The HERE row starts checked: it is what Enter/Collect acts on by
+            // default, and the checkbox must reflect that truthfully.
             expect(suggestions[0]).toEqual({
                 kind: 'current',
                 winInfo: currentWin,
                 label: 'Main Note.md',
-                checked: false,
+                checked: true,
                 windowIndex: 1,
             });
             expect(suggestions[1]).toEqual({
@@ -485,13 +487,14 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
 
             const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
             const suggestionsBefore = modal.getSuggestions('');
-            expect(suggestionsBefore[0].checked).toBe(false);
-
-            modal.toggleRow(suggestionsBefore[0]);
+            // HERE row starts checked by default.
             expect(suggestionsBefore[0].checked).toBe(true);
 
             modal.toggleRow(suggestionsBefore[0]);
             expect(suggestionsBefore[0].checked).toBe(false);
+
+            modal.toggleRow(suggestionsBefore[0]);
+            expect(suggestionsBefore[0].checked).toBe(true);
         });
 
         it('Clear selection toolbar button enables/disables based on checked state without altering list geometry', () => {
@@ -518,19 +521,20 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
             modal.open();
 
-            expect(modal.clearSelectionBtn?.disabled).toBe(true);
+            // HERE row is checked by default, so Clear selection starts enabled.
+            expect(modal.clearSelectionBtn?.disabled).toBe(false);
             const suggestions = modal.getSuggestions('');
             expect(suggestions).toHaveLength(3);
 
-            // Check row 0
+            // Uncheck row 0 -> nothing checked -> clear-selection disabled
             modal.toggleRow(suggestions[0]);
-            expect(modal.clearSelectionBtn?.disabled).toBe(false);
+            expect(modal.clearSelectionBtn?.disabled).toBe(true);
             // Suggestions count is strictly unchanged
             expect(modal.getSuggestions('')).toHaveLength(3);
 
-            // Uncheck row 0 -> clear-selection disabled again
+            // Re-check row 0 -> clear-selection enabled again
             modal.toggleRow(suggestions[0]);
-            expect(modal.clearSelectionBtn?.disabled).toBe(true);
+            expect(modal.clearSelectionBtn?.disabled).toBe(false);
             expect(modal.getSuggestions('')).toHaveLength(3);
 
             modal.close();
@@ -571,7 +575,8 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
 
             const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin1, otherWin2], () => {});
             modal.open();
-            expect(modal.clearSelectionBtn?.disabled).toBe(true);
+            // HERE row is checked by default, so Clear selection starts enabled.
+            expect(modal.clearSelectionBtn?.disabled).toBe(false);
 
             modal.selectAllBtn?.click();
 
@@ -674,7 +679,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             ]);
         });
 
-        it('triggers onPick with the chosen single item when nothing is checked (fallback)', () => {
+        it('triggers onPick with the union of the explicitly chosen row and the default-checked HERE row', () => {
             const m1 = leaf('m1', 'Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Pop.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
 
@@ -703,11 +708,18 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             const choice = modal.getSuggestions('')[1]; // 'All windows'
             modal.onChooseSuggestion(choice, new MouseEvent('click'));
 
+            // The HERE row is checked by default and was never unchecked, so it is
+            // included alongside the explicitly chosen 'All windows' row. (Harmless
+            // in practice: the plugin's 'all' handling already short-circuits on any
+            // 'all' entry in the array and ignores the rest.)
             expect(picked).not.toBeNull();
-            expect(picked?.kind).toBe('all');
+            expect(Array.isArray(picked)).toBe(true);
+            expect(picked).toHaveLength(2);
+            expect(picked.some((c: any) => c.kind === 'all')).toBe(true);
+            expect(picked.some((c: any) => c.kind === 'current')).toBe(true);
         });
 
-        it('triggers onPick with the set of checked choices when one or more rows are checked', () => {
+        it('triggers onPick with the union of the explicitly chosen row and any additionally checked rows', () => {
             const m1 = leaf('m1', 'Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Pop.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
 
@@ -734,17 +746,17 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             });
 
             const suggestions = modal.getSuggestions('');
-            // Check the otherWin row (index 2)
+            // Check the otherWin row (index 2), in addition to the default-checked HERE row
             modal.toggleRow(suggestions[2]);
 
             // User highlights row 0 ("This window") and presses Enter
             modal.onChooseSuggestion(suggestions[0], new MouseEvent('click'));
 
-            // onPick receives array of checked rows, ignoring highlighted row 0!
+            // onPick receives the chosen row 0 plus the additionally-checked otherWin row.
             expect(Array.isArray(picked)).toBe(true);
-            expect(picked).toHaveLength(1);
-            expect(picked[0].kind).toBe('window');
-            expect(picked[0].winInfo.window).toBe(win1Obj);
+            expect(picked).toHaveLength(2);
+            expect(picked.some((c: any) => c.kind === 'current')).toBe(true);
+            expect(picked.some((c: any) => c.kind === 'window' && c.winInfo.window === win1Obj)).toBe(true);
         });
 
         it('selectSuggestion on MouseEvent toggles row without closing modal or calling onPick', () => {
@@ -843,7 +855,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
         });
 
         describe('Section 7: 12 Interaction Requirements', () => {
-            it('1. Open modal with no rows checked: Clear selection is visible, disabled, and remains in place', () => {
+            it('1. Open modal with HERE row checked by default: Clear selection is visible, enabled, and remains in place', () => {
                 const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
                 const currentWin: WindowInfo = {
                     window: globalThis.window,
@@ -859,7 +871,8 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
 
                 expect(modal.clearSelectionBtn).not.toBeNull();
                 expect(modal.clearSelectionBtn?.textContent).toBe('Clear selection');
-                expect(modal.clearSelectionBtn?.disabled).toBe(true);
+                // HERE row is checked by default, so Clear selection starts enabled.
+                expect(modal.clearSelectionBtn?.disabled).toBe(false);
                 expect(modal.toolbarEl?.contains(modal.clearSelectionBtn!)).toBe(true);
                 modal.close();
             });
@@ -980,8 +993,8 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 });
                 modal.open();
 
-                // Mock chooser selected item pointing to otherWin (index 2)
-                (modal as any).chooser = { selectedItem: 2 };
+                // Move the highlight to otherWin (index 2), as arrow-key navigation would.
+                modal.setHighlightedIndex(2);
                 modal.handleSpace();
 
                 const suggestions = modal.getSuggestions('');
@@ -991,7 +1004,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal.close();
             });
 
-            it('6. Clear selection enables immediately after checking row without shifting list layout', () => {
+            it('6. Clear selection toggles immediately with checked state without shifting list layout', () => {
                 const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
                 const currentWin: WindowInfo = {
                     window: globalThis.window,
@@ -1006,10 +1019,16 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal.open();
 
                 const initialLength = modal.getSuggestions('').length;
-                expect(modal.clearSelectionBtn?.disabled).toBe(true);
+                // HERE row is checked by default, so Clear selection starts enabled.
+                expect(modal.clearSelectionBtn?.disabled).toBe(false);
 
+                // Unchecking the only checked row disables it again.
                 modal.toggleRow(modal.getSuggestions('')[0]);
+                expect(modal.clearSelectionBtn?.disabled).toBe(true);
+                expect(modal.getSuggestions('').length).toBe(initialLength);
 
+                // Re-checking it enables it again, without shifting list geometry.
+                modal.toggleRow(modal.getSuggestions('')[0]);
                 expect(modal.clearSelectionBtn?.disabled).toBe(false);
                 expect(modal.getSuggestions('').length).toBe(initialLength);
                 modal.close();
@@ -1128,9 +1147,13 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
 
                 modal.collectBtn?.click();
 
+                // HERE row remains checked by default (never unchecked), so it is
+                // included alongside the two explicitly checked windows. (Order is
+                // not significant: toggling moves the highlight to the toggled row,
+                // which becomes the "chosen" entry first in the union.)
                 expect(Array.isArray(picked)).toBe(true);
-                expect(picked).toHaveLength(2);
-                expect(picked.map((p: any) => p.label)).toEqual(['Pop1.md', 'Pop2.md']);
+                expect(picked).toHaveLength(3);
+                expect(picked.map((p: any) => p.label).sort()).toEqual(['Main Note.md', 'Pop1.md', 'Pop2.md']);
                 expect(modal.isOpen).toBe(false);
             });
 
@@ -1151,7 +1174,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 });
                 modal.open();
 
-                modal.toggleRow(modal.getSuggestions('')[0]);
+                // HERE row is checked by default.
                 expect(modal.hasAnyChecked()).toBe(true);
 
                 modal.cancelBtn?.click();
@@ -1907,8 +1930,20 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
                 modal.open();
 
-                // When nothing is checked, Clear selection is disabled and skipped
+                // HERE row is checked by default, so Clear selection starts enabled
+                // and already appears in Tab order.
                 let controls = modal.getFocusableControls();
+                expect(controls).toEqual([
+                    modal.inputEl,
+                    modal.selectAllBtn,
+                    modal.clearSelectionBtn,
+                    modal.cancelBtn,
+                    modal.collectBtn,
+                ]);
+
+                // Uncheck the only checked row -> Clear selection disappears from Tab order
+                modal.toggleRow(modal.getSuggestions('')[0]);
+                controls = modal.getFocusableControls();
                 expect(controls).toEqual([
                     modal.inputEl,
                     modal.selectAllBtn,
@@ -1916,7 +1951,8 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                     modal.collectBtn,
                 ]);
 
-                // Check a row -> Clear selection becomes enabled and appears in Tab order
+                // Re-check it so the remainder of this test exercises the 5-control
+                // Tab cycle (matching what a fresh modal open already looks like).
                 modal.toggleRow(modal.getSuggestions('')[0]);
                 controls = modal.getFocusableControls();
                 expect(controls).toEqual([
@@ -1991,28 +2027,31 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 const modal = new CollectTabsModal(app as unknown as App, mainWin, [pop1, pop2], () => {});
                 modal.open();
 
-                // 1. On open, HERE row (index 0) has neutral full-row current highlight, no boxes checked
+                // 1. On open, HERE row (index 0) has neutral full-row current highlight
+                // AND is checked by default (it's what Enter/Collect will act on).
                 expect(modal.highlightedIndex).toBe(0);
                 const suggestions = modal.getSuggestions('');
-                expect(suggestions[0].checked).toBe(false);
+                expect(suggestions[0].checked).toBe(true);
                 expect(suggestions[1].checked).toBe(false);
                 expect(suggestions[2].checked).toBe(false);
 
                 const items = modal.modalEl.querySelectorAll('.suggestion-item');
                 expect(items[0].classList.contains('is-selected')).toBe(true);
                 expect(items[0].classList.contains('ntg-keyboard-current')).toBe(true);
-                expect(items[0].classList.contains('is-checked')).toBe(false);
+                expect(items[0].classList.contains('is-checked')).toBe(true);
 
-                // 2. Press Ctrl+N / moveHighlight(1) -> highlight moves to index 1 (All windows), HERE loses highlight
+                // 2. Press Ctrl+N / moveHighlight(1) -> highlight moves to index 1 (All windows).
+                // HERE loses the highlight but remains checked.
                 modal.moveHighlight(1);
                 expect(modal.highlightedIndex).toBe(1);
                 expect(items[0].classList.contains('is-selected')).toBe(false);
                 expect(items[0].classList.contains('ntg-keyboard-current')).toBe(false);
+                expect(items[0].classList.contains('is-checked')).toBe(true);
                 expect(items[1].classList.contains('is-selected')).toBe(true);
                 expect(items[1].classList.contains('ntg-keyboard-current')).toBe(true);
 
-                // 3. Check two rows (0 and 2), and move current to unchecked row (1)
-                modal.toggleRow(suggestions[0]);
+                // 3. Check row 2 as well (row 0 is already checked by default), and
+                // move current to the unchecked row (1)
                 modal.toggleRow(suggestions[2]);
                 modal.setHighlightedIndex(1);
 
@@ -2091,7 +2130,9 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 expect(pickedChoice.winInfo).toBe(mainWin);
                 modal2.close();
 
-                // Case 3: Move highlight to another row without checking anything -> collects highlighted row
+                // Case 3: Move highlight to another row without touching any checkbox.
+                // HERE remains checked by default, so both it and the highlighted
+                // row are collected (the explicit choice is never silently dropped).
                 pickedChoice = null;
                 const modal3 = new CollectTabsModal(app as unknown as App, mainWin, [pop1], (choice) => {
                     pickedChoice = choice;
@@ -2099,11 +2140,14 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal3.open();
                 modal3.setHighlightedIndex(2); // pop1
                 modal3.executeCollection();
-                expect(pickedChoice.kind).toBe('window');
-                expect(pickedChoice.winInfo).toBe(pop1);
+                expect(Array.isArray(pickedChoice)).toBe(true);
+                expect(pickedChoice).toHaveLength(2);
+                expect(pickedChoice.some((c: any) => c.kind === 'window' && c.winInfo === pop1)).toBe(true);
+                expect(pickedChoice.some((c: any) => c.kind === 'current' && c.winInfo === mainWin)).toBe(true);
                 modal3.close();
 
-                // Case 4: With checked rows, collects checked set
+                // Case 4: With an additional row checked, collects HERE (default) plus
+                // that row.
                 let pickedSet: any = null;
                 const modal4 = new CollectTabsModal(app as unknown as App, mainWin, [pop1], (choice) => {
                     pickedSet = choice;
@@ -2112,8 +2156,9 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal4.toggleRow(modal4.getSuggestions('')[2]);
                 modal4.collectBtn?.click();
                 expect(Array.isArray(pickedSet)).toBe(true);
-                expect(pickedSet).toHaveLength(1);
-                expect(pickedSet[0].winInfo).toBe(pop1);
+                expect(pickedSet).toHaveLength(2);
+                expect(pickedSet.some((c: any) => c.winInfo === pop1)).toBe(true);
+                expect(pickedSet.some((c: any) => c.winInfo === mainWin)).toBe(true);
                 modal4.close();
             });
 
@@ -2251,12 +2296,12 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 const modal = new CollectTabsModal(app as unknown as App, mainWin, [pop1], () => {});
                 modal.open();
 
-                // On open, nothing selected -> Clear button must be hidden (display === 'none')
-                expect(modal.clearSelectionBtn?.style.display).toBe('none');
+                // HERE row is checked by default -> Clear button is already visible
+                expect(modal.clearSelectionBtn?.style.display).not.toBe('none');
                 let controls = modal.getFocusableControls();
-                expect(controls.includes(modal.clearSelectionBtn!)).toBe(false);
+                expect(controls.includes(modal.clearSelectionBtn!)).toBe(true);
 
-                // Select all windows -> Clear button becomes visible (display !== 'none')
+                // Select all windows -> Clear button remains visible (display !== 'none')
                 modal.checkAll();
                 expect(modal.clearSelectionBtn?.style.display).not.toBe('none');
                 controls = modal.getFocusableControls();
@@ -2321,6 +2366,313 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 // Must not have border-left for checked row / suggestion-item
                 expect(css).not.toMatch(/\.suggestion-item\.(?:is|ntg)-checked[^{]*\{[^}]*border-left:\s*3px/);
                 expect(css).not.toMatch(/\.ntg-collect-row\.(?:is|ntg)-checked[^{]*\{[^}]*border-left:\s*3px/);
+            });
+
+            it('6. Space handling has exactly one source of truth: no duplicate Scope registrations for Space', () => {
+                // Bug: collect-tabs-modal previously registered Space handling in THREE
+                // overlapping places (scope ' ', scope 'Space', and a modalEl capture
+                // listener), causing the same physical keypress to run handleSpace()
+                // multiple times and net out to a check-then-uncheck no-op. The fix
+                // consolidates Space handling to the single modalEl capture listener.
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
+                modal.open();
+
+                const spaceRegistrations = (modal.scope as any).registrations.filter(
+                    (r: { key: string | null }) => r.key === ' ' || r.key === 'Space',
+                );
+                expect(spaceRegistrations).toHaveLength(0);
+
+                modal.close();
+            });
+
+            it('7. A single Space keydown on the filter input toggles the highlighted row exactly once', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
+                modal.open();
+                modal.setHighlightedIndex(1);
+
+                const handleSpaceSpy = vi.spyOn(modal, 'handleSpace');
+                const spaceEvt = new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true });
+                modal.inputEl.dispatchEvent(spaceEvt);
+
+                expect(handleSpaceSpy).toHaveBeenCalledTimes(1);
+                const suggestions = modal.getSuggestions('');
+                expect(suggestions[1].checked).toBe(true);
+
+                modal.close();
+            });
+
+            it('8. HERE row (index 0) is highlighted on open even if the underlying chooser diverges from our tracked index', () => {
+                // Bug: renderSuggestion()/getHighlightedItem() previously trusted
+                // Obsidian's internal chooser.selectedItem over our own tracked
+                // highlightedIndex. If Obsidian's chooser mutates selectedItem directly
+                // (bypassing our setSelectedItem hook) -- which is exactly what its
+                // asynchronous post-onOpen suggestion rendering can do -- the wrong row
+                // ends up rendered as selected. Our own highlightedIndex must remain the
+                // single source of truth for both rendering and lookups.
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
+                modal.open();
+                expect(modal.highlightedIndex).toBe(0);
+
+                // Simulate Obsidian's own internal chooser desyncing selectedItem from
+                // our tracked highlightedIndex without going through our override.
+                (modal as any).chooser.selectedItem = 1;
+
+                expect(modal.getHighlightedItem()?.kind).toBe('current');
+
+                const el = document.createElement('div');
+                modal.renderSuggestion(modal.getSuggestions('')[0], el);
+                expect(el.classList.contains('is-selected')).toBe(true);
+
+                const otherEl = document.createElement('div');
+                modal.renderSuggestion(modal.getSuggestions('')[1], otherEl);
+                expect(otherEl.classList.contains('is-selected')).toBe(false);
+
+                modal.close();
+            });
+
+            it('9. Deferred re-assertion restores HERE row highlight after an asynchronous chooser reset', async () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
+                modal.open();
+
+                // Simulate Obsidian resetting the chooser's selection asynchronously,
+                // right after onOpen() returns but before our deferred re-assertion runs.
+                (modal as any).chooser.selectedItem = 1;
+
+                await new Promise((resolve) => window.setTimeout(resolve, 10));
+
+                expect(modal.highlightedIndex).toBe(0);
+                const items = modal.modalEl.querySelectorAll('.suggestion-item');
+                expect(items[0].classList.contains('is-selected')).toBe(true);
+                expect(items[1].classList.contains('is-selected')).toBe(false);
+
+                modal.close();
+            });
+
+            it('10. The HERE row checkbox is checked by default, matching what a bare Enter/Collect would do', () => {
+                // Bug: the checkbox on the HERE row stayed unchecked on open even
+                // though it was the row that would actually be collected by default
+                // (via the keyboard-current highlight). This made the checkbox lie
+                // about what pressing Enter/Collect would do, which is confusing:
+                // an all-unchecked list looks like "nothing selected", but pressing
+                // Enter immediately would still collect the current window.
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
+                modal.open();
+
+                const suggestions = modal.getSuggestions('');
+                expect(suggestions[0].checked).toBe(true);
+                expect(suggestions[1].checked).toBe(false);
+                expect(suggestions[2].checked).toBe(false);
+
+                // The rendered checkbox for row 0 must visually reflect this.
+                const el = document.createElement('div');
+                modal.renderSuggestion(suggestions[0], el);
+                const checkbox = el.querySelector<HTMLInputElement>('input[type="checkbox"]');
+                expect(checkbox?.checked).toBe(true);
+                expect(el.classList.contains('is-checked')).toBe(true);
+
+                modal.close();
+            });
+
+            it('11. Choosing a different row via Enter always includes that row, even though HERE remains checked', () => {
+                // Once the HERE row is checked by default, Enter/Collect on a
+                // different, explicitly-chosen row must never silently discard that
+                // choice just because something else happens to be checked.
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                let picked: any = null;
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], (result) => {
+                    picked = result;
+                });
+                modal.open();
+
+                // Navigate to "All windows" (row 1) and choose it via Enter, without
+                // ever touching a checkbox.
+                modal.setHighlightedIndex(1);
+                modal.executeCollection();
+
+                expect(Array.isArray(picked)).toBe(true);
+                expect(picked.some((c: any) => c.kind === 'all')).toBe(true);
+                modal.close();
+            });
+
+            it('12. After clicking Clear selection, focus unconditionally returns to the filter input so Spacebar keeps toggling rows', () => {
+                // Bug: clicking "Clear selection" could leave focus somewhere other
+                // than the filter input (a toolbar BUTTON, or <body> once the
+                // now-hidden clearSelectionBtn is blurred by the browser). The
+                // modal's Space handler treats a focused BUTTON specially (activates
+                // it via .click() instead of toggling the highlighted row), and does
+                // nothing useful for <body>, so subsequent Spacebar presses stopped
+                // toggling rows -- to the user this looked like "Spacebar stopped
+                // selecting windows" even though mouse clicks still worked.
+                //
+                // Note: real browsers blur the currently-focused element as soon as
+                // it is hidden (display: none), which jsdom does not replicate, so
+                // clearSelection() cannot rely on inspecting document.activeElement
+                // at all -- it must unconditionally refocus the filter input. This
+                // test simulates the real-browser precondition explicitly (focus on
+                // <body>, as it would be after the hide-triggered blur) rather than
+                // relying on jsdom's non-standard focus retention.
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
+                modal.open();
+
+                // Simulate the real-browser blur-on-hide: by the time clearSelection()
+                // checks focus, it would already have moved off clearSelectionBtn.
+                (document.body as HTMLElement).focus();
+                modal.clearSelectionBtn?.click();
+
+                expect(document.activeElement).toBe(modal.inputEl);
+
+                // With focus back on the filter input, Space must toggle the
+                // highlighted row (index 0, HERE), not activate a toolbar button.
+                const suggestions = modal.getSuggestions('');
+                expect(suggestions[0].checked).toBe(false);
+
+                const spaceEvt = new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true });
+                modal.inputEl.dispatchEvent(spaceEvt);
+
+                expect(suggestions[0].checked).toBe(true);
+
+                modal.close();
             });
 
             it('5. The redundant X cancel button is removed from modal and focusable controls', () => {

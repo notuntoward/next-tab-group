@@ -130,13 +130,16 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         super(app);
         this.onPick = onPick;
 
-        // Clean row content with no prefix text; status is conveyed by the badge & column grid
+        // Clean row content with no prefix text; status is conveyed by the badge & column grid.
+        // The HERE row starts checked: it is what Enter/Collect acts on by default,
+        // and the checkbox must reflect that truthfully instead of relying solely
+        // on the keyboard-current highlight to convey "this will be collected".
         const currentIdx = getSessionWindowIndex(currentWindow);
         this.currentRow = {
             kind: 'current',
             winInfo: currentWindow,
             label: describeWindow(currentWindow),
-            checked: false,
+            checked: true,
             windowIndex: currentIdx,
         };
 
@@ -243,9 +246,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     public moveHighlight(delta: number): void {
-        const chooser = (this as any).chooser;
-        const current = typeof chooser?.selectedItem === 'number' ? chooser.selectedItem : this.highlightedIndex;
-        this.setHighlightedIndex(current + delta);
+        this.setHighlightedIndex(this.highlightedIndex + delta);
     }
 
     public updateHighlightVisuals(): void {
@@ -427,16 +428,6 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             this.modalEl.addEventListener('keydown', this.handleKeyDown, true);
         }
 
-        if (this.inputEl) {
-            this.inputEl.addEventListener('keydown', (evt: KeyboardEvent) => {
-                if (evt.key === ' ' || evt.code === 'Space') {
-                    evt.preventDefault();
-                    evt.stopPropagation();
-                    this.handleSpace();
-                }
-            }, true);
-        }
-
         // Hook chooser.setSelectedItem if present
         const chooser = (this as any).chooser;
         if (chooser) {
@@ -449,8 +440,21 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             };
         }
 
-        // Initialize keyboard-current highlight to index 0 (the HERE row)
+        // Initialize keyboard-current highlight to index 0 (the HERE row).
         this.setHighlightedIndex(0);
+
+        // Defensive re-assertion: Obsidian's SuggestModal can (re)render its
+        // suggestion list and reset its internal chooser.selectedItem after
+        // onOpen() returns, independent of the synchronous call above. Re-apply
+        // the HERE-row highlight once more on the next tick so it wins over any
+        // such later reset. This mirrors the established pattern already used by
+        // NavigationSuggestModal in main.ts for the same class of problem.
+        if (typeof window !== 'undefined') {
+            window.setTimeout(() => {
+                if (!this.isOpen) return;
+                this.setHighlightedIndex(0);
+            }, 0);
+        }
 
         registerEmacsMotionKeys(this);
 
@@ -466,17 +470,12 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             return false;
         });
 
-        this.scope.register([], ' ', (evt) => {
-            evt.preventDefault();
-            this.handleSpace();
-            return false;
-        });
-
-        this.scope.register([], 'Space', (evt) => {
-            evt.preventDefault();
-            this.handleSpace();
-            return false;
-        });
+        // Space is handled exclusively by the modalEl capture listener above
+        // (this.handleKeyDown). Do not also register it on this.scope or on
+        // this.inputEl: Obsidian's Scope dispatches key events independently of
+        // DOM propagation, so registering the same key in multiple places causes
+        // a single physical keypress to run handleSpace() more than once, which
+        // nets out to a check-then-immediate-uncheck no-op.
     }
 
     onClose(): void {
@@ -576,14 +575,18 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         }
         this.syncAllRowVisuals();
         this.updateToolbarState();
-        const active = (this.modalEl?.ownerDocument || document).activeElement;
-        if (active === this.clearSelectionBtn) {
-            if (this.selectAllBtn) {
-                this.selectAllBtn.focus();
-            } else {
-                this.inputEl.focus();
-            }
-        }
+        // clearSelection() is only ever reached via the clearSelectionBtn click
+        // handler, and updateToolbarState() just hid that button (display: none)
+        // because nothing is checked anymore. In a real browser, hiding the
+        // currently-focused element blurs it immediately, moving focus to
+        // <body> -- so checking document.activeElement here is unreliable (it
+        // already reads as something other than clearSelectionBtn by the time we
+        // get here). Unconditionally return focus to the filter input instead:
+        // that's the row-browsing context where Spacebar toggles the highlighted
+        // row, whereas focus left on <body> or a BUTTON makes Spacebar do nothing
+        // useful (or activate that button per handleKeyDown), silently breaking
+        // row toggling by keyboard.
+        this.inputEl.focus();
     }
 
     public toggleRow(choice: CollectChoice): void {
@@ -598,12 +601,14 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     public getHighlightedItem(): CollectChoice | undefined {
-        const chooser = (this as any).chooser;
+        // this.highlightedIndex is the single source of truth for the current
+        // selection. It is kept in sync with Obsidian's internal chooser via
+        // setHighlightedIndex() and the hooked chooser.setSelectedItem(), so it
+        // must not be shadowed by reading chooser.selectedItem directly here:
+        // Obsidian can mutate that field on its own (e.g. during its internal
+        // suggestion re-rendering) without going through our hook, which would
+        // otherwise desync the highlighted row from what onOpen() established.
         const currentSuggestions = this.getSuggestions(this.inputEl?.value ?? '');
-        if (chooser && typeof chooser.selectedItem === 'number') {
-            const index = Math.max(0, Math.min(chooser.selectedItem, currentSuggestions.length - 1));
-            return currentSuggestions[index];
-        }
         const index = Math.max(0, Math.min(this.highlightedIndex, currentSuggestions.length - 1));
         return currentSuggestions[index] ?? currentSuggestions[0];
     }
@@ -617,46 +622,29 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
     /**
      * Shared collection execution method used by both Enter key and Collect button.
-     * 1. If one or more rows are checked -> collects checked set.
-     * 2. If nothing is checked -> collects highlighted default row.
+     * Collects the union of the explicitly chosen/highlighted row and whatever is
+     * checked, so an explicit choose action (Enter on a specific suggestion, or
+     * Collect with a given row highlighted) is never silently discarded just
+     * because the HERE row is checked by default. Checking more rows only adds
+     * to what gets collected; it never removes the row you just chose.
      */
     public executeCollection(fallbackChoice?: CollectChoice): void {
+        const chosen = fallbackChoice ?? this.getHighlightedItem() ?? this.currentRow;
         const checked = this.getCheckedRows();
-        if (checked.length > 0) {
-            this.onPick(checked);
-            this.close();
-            return;
-        }
 
-        const target = fallbackChoice ?? this.getHighlightedItem() ?? this.currentRow;
-        this.onPick(target);
-        this.close();
-    }
-
-    /** Backward-compatible alias for executeCollection */
-    public executeCollect(): void {
-        this.executeCollection();
-    }
-
-    private refreshSuggestions(): void {
-        const chooser = (this as any).chooser;
-        const prevIndex = typeof chooser?.selectedItem === 'number' ? chooser.selectedItem : this.highlightedIndex;
-
-        if (typeof (this as any).updateSuggestions === 'function') {
-            (this as any).updateSuggestions();
-        } else if (this.inputEl && typeof this.inputEl.dispatchEvent === 'function') {
-            this.inputEl.dispatchEvent(new Event('input'));
-        }
-
-        const newSuggestions = this.getSuggestions(this.inputEl?.value ?? '');
-        if (chooser) {
-            chooser.values = newSuggestions;
-            if (typeof chooser.setSelectedItem === 'function' && typeof prevIndex === 'number') {
-                const target = Math.max(0, Math.min(prevIndex, newSuggestions.length - 1));
-                chooser.setSelectedItem(target, true);
+        const result: CollectChoice[] = [];
+        const include = (choice: CollectChoice) => {
+            if (!result.includes(choice)) {
+                result.push(choice);
             }
+        };
+        include(chosen);
+        for (const choice of checked) {
+            include(choice);
         }
-        this.setHighlightedIndex(prevIndex);
+
+        this.onPick(result.length === 1 ? result[0] : result);
+        this.close();
     }
 
     public buildChoices(): CollectChoice[] {
