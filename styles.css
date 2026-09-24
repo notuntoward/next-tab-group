@@ -133,9 +133,24 @@ body.ntg-color-active-tab.theme-dark .workspace-tab-header.is-active {
     background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.08)) !important;
 }
 
-/* Remove redundant X close button in upper right */
-.ntg-collect-modal .modal-close-button {
+/* Remove redundant X close / clear button in upper right corner */
+.ntg-collect-modal .modal-close-button,
+.ntg-collect-modal-container .modal-close-button,
+.modal-container:has(.ntg-collect-modal) .modal-close-button,
+.ntg-collect-modal .search-input-clear-button,
+.ntg-collect-modal .prompt-input-container .search-input-clear-button,
+.ntg-collect-modal input::-webkit-search-cancel-button,
+.ntg-collect-modal input::-webkit-search-decoration,
+.ntg-collect-modal input::-webkit-search-results-button,
+.ntg-collect-modal input::-webkit-search-results-decoration {
     display: none !important;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    width: 0 !important;
+    height: 0 !important;
 }
 
 /* Section 2: Fixed-column grid layout for every row */

@@ -443,6 +443,7 @@ export class MockSuggestModal<T> {
     instructions: Array<{ command: string; purpose: string }> = [];
     emptyStateText = '';
     isOpen = false;
+    containerEl: HTMLElement = document.createElement('div');
     contentEl: HTMLElement = document.createElement('div');
     modalEl: HTMLElement = document.createElement('div');
     resultContainerEl: HTMLElement = document.createElement('div');

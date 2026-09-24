@@ -295,14 +295,48 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
     onOpen(): void {
         super.onOpen();
+        if (this.containerEl) {
+            this.containerEl.addClass('ntg-collect-modal-container');
+        }
+
         if (this.modalEl) {
             this.modalEl.addClass('ntg-collect-modal');
 
-            // Remove redundant 'X' close button per spec
-            const closeBtn = this.modalEl.querySelector<HTMLElement>('.modal-close-button');
-            if (closeBtn) {
-                closeBtn.style.display = 'none';
-                closeBtn.remove();
+            // Ensure input type is 'text' so WebKit never renders a native search cancel button
+            if (this.inputEl) {
+                this.inputEl.type = 'text';
+            }
+
+            // Remove redundant 'X' close / clear button per spec
+            const removeRedundantX = () => {
+                const selectors = [
+                    '.modal-close-button',
+                    '.search-input-clear-button',
+                    '.prompt-input-container .search-input-clear-button',
+                ];
+                const roots = [
+                    this.modalEl,
+                    this.containerEl,
+                    this.modalEl?.parentElement,
+                    this.modalEl?.ownerDocument?.body,
+                ];
+                for (const root of roots) {
+                    if (!root) continue;
+                    for (const sel of selectors) {
+                        const found = root.querySelectorAll<HTMLElement>(sel);
+                        found.forEach((el) => {
+                            if (el.closest('.collect-tabs-action-toolbar')) return;
+                            el.style.setProperty('display', 'none', 'important');
+                            el.remove();
+                        });
+                    }
+                }
+            };
+
+            removeRedundantX();
+            if (typeof window !== 'undefined') {
+                window.setTimeout(removeRedundantX, 0);
+                window.setTimeout(removeRedundantX, 50);
             }
 
             // Find prompt or modal container to place persistent action toolbar above keyboard hints

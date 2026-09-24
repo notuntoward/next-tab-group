@@ -2336,17 +2336,32 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 };
 
                 const modal = new CollectTabsModal(app as unknown as App, mainWin, [], () => {});
-                // Simulate Obsidian modal creating a close button
+                // Simulate Obsidian modal creating close button and search clear button
                 modal.modalEl.createDiv({ cls: 'modal-close-button' });
+                const promptInputContainer = modal.modalEl.querySelector('.prompt-input-container') || modal.modalEl;
+                promptInputContainer.createDiv({ cls: 'search-input-clear-button' });
                 modal.open();
 
                 // Close button should be removed or hidden
                 const closeBtn = modal.modalEl.querySelector('.modal-close-button');
                 expect(!closeBtn || (closeBtn as HTMLElement).style.display === 'none').toBe(true);
 
-                // getFocusableControls must never include modal-close-button
+                // Search clear button should be removed or hidden
+                const searchClearBtn = modal.modalEl.querySelector('.search-input-clear-button');
+                expect(!searchClearBtn || (searchClearBtn as HTMLElement).style.display === 'none').toBe(true);
+
+                // inputEl type must be 'text' to prevent Chromium's native webkit search cancel button
+                expect(modal.inputEl.type).toBe('text');
+
+                // getFocusableControls must never include modal-close-button or search-input-clear-button
                 const controls = modal.getFocusableControls();
                 expect(controls.some(c => c.classList.contains('modal-close-button'))).toBe(false);
+                expect(controls.some(c => c.classList.contains('search-input-clear-button'))).toBe(false);
+
+                // styles.css must hide .search-input-clear-button and webkit-search-cancel-button
+                const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf-8');
+                expect(css).toMatch(/\.search-input-clear-button/);
+                expect(css).toMatch(/::-webkit-search-cancel-button/);
 
                 modal.close();
             });
