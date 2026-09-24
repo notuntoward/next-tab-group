@@ -7,10 +7,10 @@ import {
     Setting,
     WorkspaceLeaf,
 } from 'obsidian';
-import type { App, Workspace, WorkspaceParent } from 'obsidian';
+import type { App, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
 import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText } from './src/utils/modal';
-import { CollectTabsModal } from './src/ui/collect-tabs-modal';
+import { CollectTabsModal, describeWindow as formatWindowDescription } from './src/ui/collect-tabs-modal';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -51,10 +51,6 @@ interface WorkspaceContainerEl extends WorkspaceParent {
     containerEl: HTMLElement;
     direction?: string;
     children?: WorkspaceContainerEl[];
-}
-
-interface WorkspaceItemInternal {
-    workspace?: Workspace;
 }
 
 interface TabGroupInfo {
@@ -240,14 +236,15 @@ export default class NextTabGroupPlugin extends Plugin {
 
         this.registerEvent(
             this.app.workspace.on('active-leaf-change', (leaf) => {
-                if (!leaf) return;
+                if (!leaf || (leaf as any).detached || this.isSidebarLeaf(leaf)) return;
 
                 const internal = leaf as WorkspaceLeafInternal;
                 if (internal.id) {
                     this.leafLastActive.set(internal.id, Date.now());
+                    this.pruneLeafLastActive();
                 }
 
-                if (leaf.parent) {
+                if (leaf.parent && this.isLeafAttached(leaf)) {
                     this.tabGroupActiveLeaves.set(leaf.parent, leaf);
                 }
             })
@@ -255,12 +252,19 @@ export default class NextTabGroupPlugin extends Plugin {
 
         this.registerEvent(
             this.app.workspace.on('layout-change', () => {
-                for (const [parent, leaf] of this.tabGroupActiveLeaves.entries()) {
-                    if (!leaf.parent || leaf.parent !== parent) {
-                        this.tabGroupActiveLeaves.delete(parent);
-                    }
-                }
-                this.applyActiveTabColors();
+                this.pruneTabGroupActiveLeaves();
+            })
+        );
+
+        this.registerEvent(
+            this.app.workspace.on('window-open', (_workspaceWin, newWindow) => {
+                this.applyActiveTabColorsToWindow(newWindow);
+            })
+        );
+
+        this.registerEvent(
+            this.app.workspace.on('window-close', (_workspaceWin, closedWindow) => {
+                this.cleanUpWindow(closedWindow);
             })
         );
     }
@@ -271,17 +275,22 @@ export default class NextTabGroupPlugin extends Plugin {
 
     onunload(): void {
         const windows = new Set<Window>();
-        windows.add(window);
+        const mainWin = this.getMainWindow();
+        if (mainWin && !mainWin.closed) windows.add(mainWin);
         this.app.workspace.iterateAllLeaves((leaf) => {
             const win = this.getWindowForLeaf(leaf);
-            if (win) windows.add(win);
+            if (win && !win.closed) windows.add(win);
         });
         for (const win of windows) {
-            const body = win.document?.body;
-            if (!body) continue;
-            body.classList.remove("ntg-color-active-tab");
-            body.style.removeProperty("--ntg-active-tab-color-light");
-            body.style.removeProperty("--ntg-active-tab-color-dark");
+            try {
+                const body = win.document?.body;
+                if (!body) continue;
+                body.classList.remove("ntg-color-active-tab");
+                body.style.removeProperty("--ntg-active-tab-color-light");
+                body.style.removeProperty("--ntg-active-tab-color-dark");
+            } catch {
+                // Ignore closed/unloading window
+            }
         }
     }
 
@@ -294,18 +303,34 @@ export default class NextTabGroupPlugin extends Plugin {
         const { colorActiveTabEnabled, activeTabColorLight, activeTabColorDark } = this.settings;
 
         const windows = new Set<Window>();
-        windows.add(window);
+        const mainWin = this.getMainWindow();
+        if (mainWin && !mainWin.closed) windows.add(mainWin);
+
         this.app.workspace.iterateAllLeaves((leaf) => {
             const win = this.getWindowForLeaf(leaf);
-            if (win) windows.add(win);
+            if (win && !win.closed) windows.add(win);
         });
 
         for (const win of windows) {
+            this.applyActiveTabColorsToWindow(win, colorActiveTabEnabled, activeTabColorLight, activeTabColorDark);
+        }
+    }
+
+    private applyActiveTabColorsToWindow(
+        win: Window,
+        enabled: boolean = this.settings.colorActiveTabEnabled,
+        lightColor: string = this.settings.activeTabColorLight,
+        darkColor: string = this.settings.activeTabColorDark,
+    ): void {
+        if (!win || win.closed) return;
+        try {
             const body = win.document?.body;
-            if (!body) continue;
-            body.classList.toggle("ntg-color-active-tab", colorActiveTabEnabled);
-            body.style.setProperty("--ntg-active-tab-color-light", activeTabColorLight);
-            body.style.setProperty("--ntg-active-tab-color-dark", activeTabColorDark);
+            if (!body) return;
+            body.classList.toggle("ntg-color-active-tab", enabled);
+            body.style.setProperty("--ntg-active-tab-color-light", lightColor);
+            body.style.setProperty("--ntg-active-tab-color-dark", darkColor);
+        } catch {
+            // Window is navigating or closing
         }
     }
 
@@ -313,11 +338,70 @@ export default class NextTabGroupPlugin extends Plugin {
      * Activates a leaf and guarantees OS-level window focus.
      */
     private focusLeafAndWindow(leaf: WorkspaceLeaf): void {
+        if (!leaf || (leaf as any).detached) return;
         const targetWin = this.getWindowForLeaf(leaf);
         this.app.workspace.setActiveLeaf(leaf, { focus: true });
 
-        if (targetWin && targetWin !== activeWindow && typeof targetWin.focus === 'function') {
-            targetWin.focus();
+        if (
+            targetWin &&
+            !targetWin.closed &&
+            typeof activeWindow !== 'undefined' &&
+            targetWin !== activeWindow &&
+            typeof targetWin.focus === 'function'
+        ) {
+            try {
+                targetWin.focus();
+            } catch {
+                // Focus failed on closed or destroyed window
+            }
+        }
+    }
+
+    private isLeafAttached(leaf: WorkspaceLeaf): boolean {
+        if (!leaf || (leaf as any).detached || !leaf.parent) return false;
+        const win = this.getWindowForLeaf(leaf);
+        if (!win || win.closed) return false;
+        const children = (leaf.parent as any).children;
+        if (Array.isArray(children) && !children.includes(leaf)) {
+            return false;
+        }
+        return true;
+    }
+
+    private pruneTabGroupActiveLeaves(): void {
+        for (const [parent, leaf] of this.tabGroupActiveLeaves.entries()) {
+            if (
+                !leaf.parent ||
+                leaf.parent !== parent ||
+                (leaf as any).detached ||
+                !this.isLeafAttached(leaf)
+            ) {
+                this.tabGroupActiveLeaves.delete(parent);
+            }
+        }
+    }
+
+    private cleanUpWindow(closedWindow: Window | undefined): void {
+        if (!closedWindow) return;
+        for (const [parent, leaf] of this.tabGroupActiveLeaves.entries()) {
+            const win = this.getWindowForLeaf(leaf);
+            if (!win || win === closedWindow || win.closed) {
+                this.tabGroupActiveLeaves.delete(parent);
+            }
+        }
+    }
+
+    private pruneLeafLastActive(): void {
+        if (this.leafLastActive.size <= 200) return;
+        const liveLeafIds = new Set<string>();
+        this.app.workspace.iterateAllLeaves((l) => {
+            const id = this.getLeafId(l);
+            if (id) liveLeafIds.add(id);
+        });
+        for (const id of this.leafLastActive.keys()) {
+            if (!liveLeafIds.has(id)) {
+                this.leafLastActive.delete(id);
+            }
         }
     }
 
@@ -326,19 +410,27 @@ export default class NextTabGroupPlugin extends Plugin {
     // ------------------------------------------------------------------------
 
     private getMainWindow(): Window {
-        const root = (this.app.workspace as any).rootSplit;
-        return (
-            root?.win ??
-            this.app.workspace.containerEl?.ownerDocument?.defaultView ??
-            (typeof window !== 'undefined' ? window : ({} as Window))
-        );
+        try {
+            const root = (this.app.workspace as any).rootSplit;
+            if (root?.win && !root.win.closed) {
+                return root.win;
+            }
+            const doc = this.app.workspace.containerEl?.ownerDocument;
+            const win = doc?.defaultView ?? (typeof window !== 'undefined' ? window : ({} as Window));
+            if (win && !win.closed) {
+                return win;
+            }
+        } catch {
+            // fall through
+        }
+        return (typeof window !== 'undefined' ? window : ({} as Window));
     }
 
     private isMainLeaf(leaf: WorkspaceLeaf | null): boolean {
-        if (!leaf) return false;
+        if (!leaf || (leaf as any).detached) return false;
         if (typeof leaf.getRoot === 'function') {
             const root = leaf.getRoot();
-            if (root && root === this.app.workspace.rootSplit) {
+            if (root && root === (this.app.workspace as any).rootSplit) {
                 return true;
             }
         }
@@ -349,8 +441,9 @@ export default class NextTabGroupPlugin extends Plugin {
             }
         }
         const win = this.getWindowForLeaf(leaf);
+        if (!win || win.closed) return false;
         const mainWin = this.getMainWindow();
-        return win === mainWin || win === window || !win;
+        return win === mainWin;
     }
 
     /**
@@ -359,19 +452,27 @@ export default class NextTabGroupPlugin extends Plugin {
     private getWindowForLeaf(
         leaf: WorkspaceLeaf | null,
     ): Window | undefined {
-        if (!leaf) return undefined;
-        const container = leaf.getContainer?.() as any;
-        const leafAny = leaf as any;
-        return (
-            container?.win ??
-            container?.doc?.defaultView ??
-            container?.containerEl?.win ??
-            container?.containerEl?.ownerDocument?.defaultView ??
-            leafAny.containerEl?.win ??
-            leafAny.containerEl?.ownerDocument?.defaultView ??
-            leafAny.view?.containerEl?.win ??
-            leafAny.view?.containerEl?.ownerDocument?.defaultView
-        );
+        if (!leaf || (leaf as any).detached) return undefined;
+        try {
+            const container = leaf.getContainer?.() as any;
+            const leafAny = leaf as any;
+            const win: Window | undefined =
+                container?.win ??
+                container?.doc?.defaultView ??
+                container?.containerEl?.win ??
+                container?.containerEl?.ownerDocument?.defaultView ??
+                leafAny.containerEl?.win ??
+                leafAny.containerEl?.ownerDocument?.defaultView ??
+                leafAny.view?.containerEl?.win ??
+                leafAny.view?.containerEl?.ownerDocument?.defaultView;
+
+            if (win && !win.closed) {
+                return win;
+            }
+        } catch {
+            // Window or container in detached/closing state
+        }
+        return undefined;
     }
 
     /**
@@ -382,16 +483,22 @@ export default class NextTabGroupPlugin extends Plugin {
         const globalActive = this.app.workspace.activeLeaf;
 
         if (typeof activeWindow === 'undefined' || activeWindow === undefined) {
-            return globalActive && !this.isSidebarLeaf(globalActive) ? globalActive : null;
+            return globalActive && !this.isSidebarLeaf(globalActive) && !(globalActive as any).detached ? globalActive : null;
         }
 
-        if (globalActive && this.getWindowForLeaf(globalActive) === activeWindow && !this.isSidebarLeaf(globalActive)) {
+        if (
+            globalActive &&
+            !(globalActive as any).detached &&
+            this.getWindowForLeaf(globalActive) === activeWindow &&
+            !this.isSidebarLeaf(globalActive)
+        ) {
             return globalActive;
         }
 
         let leafInFocusedWindow: WorkspaceLeaf | null = null;
         this.app.workspace.iterateAllLeaves((leaf) => {
             if (leafInFocusedWindow) return;
+            if ((leaf as any).detached) return;
             if (this.isSidebarLeaf(leaf)) return;
             if (this.getWindowForLeaf(leaf) === activeWindow) {
                 leafInFocusedWindow = leaf;
@@ -402,7 +509,7 @@ export default class NextTabGroupPlugin extends Plugin {
             return leafInFocusedWindow;
         }
 
-        if (globalActive && !this.isSidebarLeaf(globalActive)) {
+        if (globalActive && !(globalActive as any).detached && !this.isSidebarLeaf(globalActive)) {
             return globalActive;
         }
 
@@ -490,11 +597,15 @@ export default class NextTabGroupPlugin extends Plugin {
         const locations: LeafLocation[] = [];
 
         this.app.workspace.iterateAllLeaves((leaf) => {
+            if (!leaf || (leaf as any).detached) return;
             if (this.isSidebarLeaf(leaf)) return;
+
+            const win = this.getWindowForLeaf(leaf);
+            if (!win || win.closed) return;
 
             locations.push({
                 leaf,
-                window: this.getWindowForLeaf(leaf),
+                window: win,
                 group: leaf.parent ?? null,
             });
         });
@@ -1045,7 +1156,7 @@ export default class NextTabGroupPlugin extends Plugin {
         const tabGroup = group.group;
         const storedLeaf = this.tabGroupActiveLeaves.get(tabGroup);
 
-        if (storedLeaf && storedLeaf.parent === tabGroup) {
+        if (storedLeaf && group.leaves.includes(storedLeaf) && this.isLeafAttached(storedLeaf)) {
             this.focusLeafAndWindow(storedLeaf);
             return;
         }
@@ -1063,18 +1174,14 @@ export default class NextTabGroupPlugin extends Plugin {
      */
     describeWindow(winOrInfo: WindowInfo | Window): string {
         if ('groups' in winOrInfo && 'representative' in winOrInfo) {
-            const repTitle = winOrInfo.representative.getDisplayText() || 'Untitled';
-            const totalTabs = winOrInfo.groups.reduce((acc, g) => acc + g.leaves.length, 0);
-            return totalTabs > 1 ? `${repTitle}, +${totalTabs - 1} more` : repTitle;
+            return formatWindowDescription(winOrInfo);
         }
 
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         const model = this.buildNavigationModel(activeLeaf);
         const winInfo = model.windows.find((w) => w.window === winOrInfo);
         if (!winInfo) return 'Empty window';
-        const repTitle = winInfo.representative.getDisplayText() || 'Untitled';
-        const totalTabs = winInfo.groups.reduce((acc, g) => acc + g.leaves.length, 0);
-        return totalTabs > 1 ? `${repTitle}, +${totalTabs - 1} more` : repTitle;
+        return formatWindowDescription(winInfo);
     }
 
     /**
@@ -1099,13 +1206,31 @@ export default class NextTabGroupPlugin extends Plugin {
             this.app,
             currentWinInfo,
             otherWindows,
-            (choice) => {
-                if (choice.kind === 'current') {
-                    void this.collectTabs('current');
-                } else if (choice.kind === 'all') {
-                    void this.collectTabs('all');
-                } else if (choice.kind === 'window') {
-                    void this.collectTabs('window', choice.winInfo);
+            (result) => {
+                if (Array.isArray(result)) {
+                    if (result.some((c) => c.kind === 'all')) {
+                        void this.collectTabs('all');
+                        return;
+                    }
+                    const checkedWins: WindowInfo[] = [];
+                    for (const c of result) {
+                        if (c.kind === 'current' || c.kind === 'window') {
+                            if (!checkedWins.some((w) => w.window === c.winInfo.window)) {
+                                checkedWins.push(c.winInfo);
+                            }
+                        }
+                    }
+                    if (checkedWins.length > 0) {
+                        void this.collectTabs('multi', checkedWins);
+                    }
+                } else {
+                    if (result.kind === 'current') {
+                        void this.collectTabs('current');
+                    } else if (result.kind === 'all') {
+                        void this.collectTabs('all');
+                    } else if (result.kind === 'window') {
+                        void this.collectTabs('window', result.winInfo);
+                    }
                 }
             },
         ).open();
@@ -1113,51 +1238,47 @@ export default class NextTabGroupPlugin extends Plugin {
 
     private closePopoutWindowIfEmpty(win: Window): void {
         const mainWindow = this.getMainWindow();
-        if (win === mainWindow || win === window) {
+        if (!win || win === mainWindow || win === window || win.closed) {
             return;
         }
 
-        const floating = (this.app.workspace as any).floatingSplit?.children ?? [];
-        let windowClosed = false;
+        let hasLeaves = false;
+        this.app.workspace.iterateAllLeaves((l) => {
+            if (hasLeaves) return;
+            if (this.getWindowForLeaf(l) === win && l.parent && !(l as any).detached) {
+                hasLeaves = true;
+            }
+        });
 
-        for (const child of floating) {
-            const childWin =
-                child?.win ??
-                child?.getContainer?.()?.win ??
-                child?.doc?.defaultView ??
-                child?.containerEl?.win ??
-                child?.containerEl?.ownerDocument?.defaultView;
+        if (hasLeaves) return;
 
-            if (childWin === win) {
-                let hasLeaves = false;
-                this.app.workspace.iterateAllLeaves((l) => {
-                    if (this.getWindowForLeaf(l) === win && l.parent && !(l as any).detached) {
-                        hasLeaves = true;
-                    }
-                });
-                if (!hasLeaves) {
+        try {
+            const floating = (this.app.workspace as any).floatingSplit?.children ?? [];
+            for (const child of floating) {
+                const childWin =
+                    child?.win ??
+                    child?.getContainer?.()?.win ??
+                    child?.doc?.defaultView ??
+                    child?.containerEl?.win ??
+                    child?.containerEl?.ownerDocument?.defaultView;
+
+                if (childWin === win) {
                     if (typeof child.close === 'function') {
                         child.close();
-                        windowClosed = true;
-                    }
-                    if (typeof child.win?.close === 'function') {
-                        child.win.close();
-                        windowClosed = true;
+                        return;
                     }
                 }
             }
+        } catch {
+            // private API access failed or unavailable
         }
 
-        if (!windowClosed) {
-            let hasLeaves = false;
-            this.app.workspace.iterateAllLeaves((l) => {
-                if (this.getWindowForLeaf(l) === win && l.parent && !(l as any).detached) {
-                    hasLeaves = true;
-                }
-            });
-            if (!hasLeaves && typeof win.close === 'function') {
+        try {
+            if (typeof win.close === 'function') {
                 win.close();
             }
+        } catch {
+            // ignore
         }
     }
 
@@ -1169,13 +1290,14 @@ export default class NextTabGroupPlugin extends Plugin {
      * - 'window': If collection includes the main window, moves tabs into the main window and
      *             deletes the popup window. If only popups, moves tabs into the focused popup
      *             and deletes the other popup.
+     * - 'multi': Handles arbitrary combination of checked windows per Section 7.
      */
     private async collectTabs(
-        scope: 'current' | 'all' | 'window' = 'current',
-        source?: WindowInfo | Window,
+        scope: 'current' | 'all' | 'window' | 'multi' = 'current',
+        source?: WindowInfo | Window | WindowInfo[],
     ) {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
-        if (!activeLeaf || this.isSidebarLeaf(activeLeaf)) return;
+        if (!activeLeaf || this.isSidebarLeaf(activeLeaf) || (activeLeaf as any).detached) return;
 
         const model = this.buildNavigationModel(activeLeaf);
         const currentWinInfo = model.windows.find((w) => w.isCurrentWindow) ?? model.windows[0];
@@ -1191,7 +1313,7 @@ export default class NextTabGroupPlugin extends Plugin {
 
             tabsToMigrate = this.getTabsInWindow(model, currentWinInfo.window)
                 .map((t) => t.leaf)
-                .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf));
+                .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
         } else if (scope === 'all') {
             // Rule 1: When windows to be collected include the main window, collected tabs
             // must go to the main window, and all collected popup windows must be deleted.
@@ -1200,14 +1322,14 @@ export default class NextTabGroupPlugin extends Plugin {
             if (!targetParent) return;
 
             for (const winInfo of model.windows) {
-                if (!winInfo.isMainWindow && winInfo.window) {
+                if (!winInfo.isMainWindow && winInfo.window && !winInfo.window.closed) {
                     evacuatedPopouts.add(winInfo.window);
                 }
             }
 
             tabsToMigrate = model.tabs
                 .map((t) => t.leaf)
-                .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf));
+                .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
         } else if (scope === 'window' && source) {
             const srcWinInfo = ('groups' in source) ? source : model.windows.find((w) => w.window === source);
             if (!srcWinInfo) return;
@@ -1223,13 +1345,13 @@ export default class NextTabGroupPlugin extends Plugin {
                 if (!targetParent) return;
 
                 const popupToEvacuate = currentWinInfo.isMainWindow ? srcWinInfo : currentWinInfo;
-                if (!popupToEvacuate.isMainWindow && popupToEvacuate.window) {
+                if (!popupToEvacuate.isMainWindow && popupToEvacuate.window && !popupToEvacuate.window.closed) {
                     evacuatedPopouts.add(popupToEvacuate.window);
                 }
 
                 tabsToMigrate = this.getTabsInWindow(model, popupToEvacuate.window)
                     .map((t) => t.leaf)
-                    .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf));
+                    .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
             } else {
                 // Rule 1: If only popup windows are selected for collection, collected tabs
                 // go to the popup that's currently in focus, and the other popup window is deleted.
@@ -1237,13 +1359,104 @@ export default class NextTabGroupPlugin extends Plugin {
                 const targetParent = destLeaf.parent as any;
                 if (!targetParent) return;
 
-                if (srcWinInfo.window) {
+                if (srcWinInfo.window && !srcWinInfo.window.closed) {
                     evacuatedPopouts.add(srcWinInfo.window);
                 }
 
                 tabsToMigrate = this.getTabsInWindow(model, srcWinInfo.window)
                     .map((t) => t.leaf)
-                    .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf));
+                    .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
+            }
+        } else if (scope === 'multi' && Array.isArray(source)) {
+            const checkedWindows = source as WindowInfo[];
+            if (checkedWindows.length === 0) return;
+
+            const allWindowsChecked = model.windows.every((w) =>
+                checkedWindows.some((cw) => cw.window === w.window)
+            );
+            const includesMain = checkedWindows.some(
+                (w) => w.isMainWindow || w.window === this.getMainWindow()
+            );
+
+            if (allWindowsChecked) {
+                // Collect everything into the Main Window, close every popout
+                destLeaf = mainWinInfo.representative;
+                const targetParent = destLeaf.parent as any;
+                if (!targetParent) return;
+
+                for (const winInfo of model.windows) {
+                    if (!winInfo.isMainWindow && winInfo.window && !winInfo.window.closed) {
+                        evacuatedPopouts.add(winInfo.window);
+                    }
+                }
+
+                tabsToMigrate = model.tabs
+                    .map((t) => t.leaf)
+                    .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
+            } else if (includesMain) {
+                // Main window + some (or 0) popout windows
+                destLeaf = mainWinInfo.representative;
+                const targetParent = destLeaf.parent as any;
+                if (!targetParent) return;
+
+                const popoutsToEvacuate = checkedWindows.filter(
+                    (w) => !w.isMainWindow && w.window !== this.getMainWindow()
+                );
+
+                for (const p of popoutsToEvacuate) {
+                    if (p.window && !p.window.closed) {
+                        evacuatedPopouts.add(p.window);
+                    }
+                }
+
+                if (popoutsToEvacuate.length > 0) {
+                    for (const p of popoutsToEvacuate) {
+                        const leaves = this.getTabsInWindow(model, p.window)
+                            .map((t) => t.leaf)
+                            .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
+                        tabsToMigrate.push(...leaves);
+                    }
+                } else {
+                    // Only Main Window was checked: consolidate tabs within Main Window
+                    tabsToMigrate = this.getTabsInWindow(model, mainWinInfo.window)
+                        .map((t) => t.leaf)
+                        .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
+                }
+            } else {
+                // Only popout windows, Main Window is NOT checked.
+                // Pick destination: whichever has focus, or first in checked set.
+                const focusedChecked = checkedWindows.find(
+                    (w) => w.isCurrentWindow || w.window === currentWinInfo.window
+                );
+                const destWinInfo = focusedChecked ?? checkedWindows[0];
+
+                destLeaf = destWinInfo.isCurrentWindow ? activeLeaf : destWinInfo.representative;
+                const targetParent = destLeaf.parent as any;
+                if (!targetParent) return;
+
+                const popoutsToEvacuate = checkedWindows.filter(
+                    (w) => w.window !== destWinInfo.window
+                );
+
+                for (const p of popoutsToEvacuate) {
+                    if (p.window && !p.window.closed) {
+                        evacuatedPopouts.add(p.window);
+                    }
+                }
+
+                if (popoutsToEvacuate.length > 0) {
+                    for (const p of popoutsToEvacuate) {
+                        const leaves = this.getTabsInWindow(model, p.window)
+                            .map((t) => t.leaf)
+                            .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
+                        tabsToMigrate.push(...leaves);
+                    }
+                } else {
+                    // Only 1 popout was checked: consolidate tabs within that popout
+                    tabsToMigrate = this.getTabsInWindow(model, destWinInfo.window)
+                        .map((t) => t.leaf)
+                        .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
+                }
             }
         }
 
@@ -1253,12 +1466,7 @@ export default class NextTabGroupPlugin extends Plugin {
         if (!targetParent) return;
 
         try {
-            const evacuatedParents = new Set<any>();
-
             for (const leaf of tabsToMigrate) {
-                if (leaf.parent) {
-                    evacuatedParents.add(leaf.parent);
-                }
                 const state = leaf.getViewState();
                 const ephemeralState = typeof (leaf as any).getEphemeralState === 'function'
                     ? (leaf as any).getEphemeralState()
@@ -1274,21 +1482,13 @@ export default class NextTabGroupPlugin extends Plugin {
                 leaf.detach();
             }
 
-            for (const parent of evacuatedParents) {
-                if (parent && (!parent.children || parent.children.length === 0)) {
-                    if (typeof parent.detach === 'function') {
-                        parent.detach();
-                    }
-                }
-            }
-
             for (const win of evacuatedPopouts) {
                 this.closePopoutWindowIfEmpty(win);
             }
         } catch (err) {
             console.error('Failed to collect tabs:', err);
         } finally {
-            if (destLeaf.parent) {
+            if (destLeaf.parent && this.isLeafAttached(destLeaf)) {
                 this.tabGroupActiveLeaves.set(destLeaf.parent, destLeaf);
             }
             this.focusLeafAndWindow(destLeaf);
@@ -1339,7 +1539,11 @@ export default class NextTabGroupPlugin extends Plugin {
         this.rotateSplitClockwise(highestSplit, activeWin);
 
         // Notify Obsidian to re-render layout bounds and tab header containers
-        (this.app.workspace as unknown as { onLayoutChange: () => void }).onLayoutChange();
+        if (typeof (this.app.workspace as any).trigger === 'function') {
+            (this.app.workspace as any).trigger('layout-change');
+        } else if (typeof (this.app.workspace as any).onLayoutChange === 'function') {
+            (this.app.workspace as any).onLayoutChange();
+        }
     }
 
     /**
@@ -1821,7 +2025,7 @@ export default class NextTabGroupPlugin extends Plugin {
     ): void {
         const storedLeaf = this.tabGroupActiveLeaves.get(group);
 
-        if (storedLeaf && storedLeaf.parent === group) {
+        if (storedLeaf && storedLeaf.parent === group && this.isLeafAttached(storedLeaf)) {
             this.focusLeafAndWindow(storedLeaf);
             return;
         }

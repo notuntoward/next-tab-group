@@ -410,5 +410,66 @@ describe('Command Guardrails: Multi-Window Isolation & Edge Cases', () => {
             expect(app.workspace.activeLeaf).toBe(bLeaf);
             expect(winB.focus).toHaveBeenCalled();
         });
+
+        it('focusLeafAndWindow does not attempt to focus closed or destroyed windows', () => {
+            const closedWin = { focus: vi.fn(), closed: true } as unknown as Window;
+            const closedContainer = new MockWorkspaceContainer('window', closedWin);
+            const groupClosed = new MockWorkspaceParent(closedContainer);
+            const closedLeaf = leaf('c', 'C.md', groupClosed, closedContainer);
+
+            plugin.focusLeafAndWindow(closedLeaf as unknown as WorkspaceLeaf);
+
+            expect(closedWin.focus).not.toHaveBeenCalled();
+        });
+
+        it('getActiveLeafInFocusedWindow ignores detached leaves in the focused window', () => {
+            const groupA = new MockWorkspaceParent(containerA);
+            const detachedLeaf = leaf('det', 'Detached.md', groupA, containerA);
+            detachedLeaf.detached = true;
+
+            const aliveLeaf = leaf('alive', 'Alive.md', groupA, containerA);
+
+            app.workspace.allLeaves = [detachedLeaf, aliveLeaf];
+            app.workspace.activeLeaf = detachedLeaf;
+            (globalThis as any).activeWindow = winA;
+
+            const result = plugin.getActiveLeafInFocusedWindow();
+
+            expect(result).toBe(aliveLeaf);
+        });
+
+        it('prunes detached leaves from tabGroupActiveLeaves on layout-change and window-close', async () => {
+            await plugin.onload();
+
+            const group = new MockWorkspaceParent(containerA);
+            const tab1 = leaf('t1', 'Tab1.md', group, containerA);
+            const tab2 = leaf('t2', 'Tab2.md', group, containerA);
+            group.children = [tab1, tab2];
+
+            // Tab 1 becomes active
+            app.workspace.trigger('active-leaf-change', tab1);
+            expect(plugin['tabGroupActiveLeaves'].get(group as unknown as WorkspaceParent)).toBe(tab1);
+
+            // Tab 1 is dragged or closed (detached)
+            tab1.detached = true;
+            group.children = [tab2];
+
+            // layout-change triggers cleanup
+            app.workspace.trigger('layout-change');
+
+            // Stale/detached tab1 removed from active group memory!
+            expect(plugin['tabGroupActiveLeaves'].has(group as unknown as WorkspaceParent)).toBe(false);
+
+            // Storing tab2 in group
+            app.workspace.trigger('active-leaf-change', tab2);
+            expect(plugin['tabGroupActiveLeaves'].get(group as unknown as WorkspaceParent)).toBe(tab2);
+
+            // window-close fires for containerA's window
+            app.workspace.trigger('window-close', null, winA);
+
+            // tabGroupActiveLeaves pruned for closed window
+            expect(plugin['tabGroupActiveLeaves'].has(group as unknown as WorkspaceParent)).toBe(false);
+        });
     });
 });
+

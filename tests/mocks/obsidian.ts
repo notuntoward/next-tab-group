@@ -76,16 +76,40 @@ if (typeof HTMLElement !== 'undefined') {
         };
     }
     if (!proto.createEl) {
-        proto.createEl = function (tag: string, opts?: { cls?: string; text?: string }) {
+        proto.createEl = function (tag: string, opts?: { cls?: string; text?: string; type?: string; attr?: Record<string, string> }) {
             const el = document.createElement(tag);
             if (opts?.cls) el.className = opts.cls;
             if (opts?.text) el.textContent = opts.text;
+            if (opts?.type && 'type' in el) (el as HTMLInputElement).type = opts.type;
+            if (opts?.attr) {
+                for (const [k, v] of Object.entries(opts.attr)) el.setAttribute(k, v);
+            }
+            this.appendChild(el);
             return el;
         };
     }
     if (!proto.setText) {
         proto.setText = function (text: string) {
             this.textContent = text;
+        };
+    }
+    if (!proto.addClass) {
+        proto.addClass = function (...classes: string[]) {
+            for (const c of classes) {
+                if (c) this.classList.add(c);
+            }
+        };
+    }
+    if (!proto.removeClass) {
+        proto.removeClass = function (...classes: string[]) {
+            for (const c of classes) {
+                if (c) this.classList.remove(c);
+            }
+        };
+    }
+    if (!proto.hasClass) {
+        proto.hasClass = function (cls: string) {
+            return this.classList.contains(cls);
         };
     }
 }
@@ -231,7 +255,14 @@ export class MockWorkspace {
     }
 
     onLayoutChange(): void {
-        // no-op for mock
+        this.trigger('layout-change');
+    }
+
+    trigger(name: string, ...args: unknown[]): void {
+        const handlers = this.eventHandlers.get(name) ?? [];
+        for (const handler of handlers) {
+            handler(...args);
+        }
     }
 
     iterateRootLeaves(callback: (leaf: MockWorkspaceLeaf) => void): void {
@@ -414,7 +445,22 @@ export class MockSuggestModal<T> {
     isOpen = false;
     contentEl: HTMLElement = document.createElement('div');
     resultContainerEl: HTMLElement = document.createElement('div');
-    scope = { register: () => ({}) };
+    inputEl: HTMLInputElement = document.createElement('input');
+    scope = {
+        registrations: [] as Array<{
+            modifiers: string[] | null;
+            key: string | null;
+            func: (evt: KeyboardEvent) => false | void;
+        }>,
+        register(
+            modifiers: string[] | null,
+            key: string | null,
+            func: (evt: KeyboardEvent) => false | void,
+        ) {
+            this.registrations.push({ modifiers, key, func });
+            return { unload: () => {} };
+        },
+    };
 
     constructor(app: MockApp) {
         this.app = app;

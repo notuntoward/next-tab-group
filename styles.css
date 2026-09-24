@@ -87,3 +87,52 @@ body.ntg-color-active-tab.theme-light .workspace-tab-header.is-active {
 body.ntg-color-active-tab.theme-dark .workspace-tab-header.is-active {
     background-color: var(--ntg-active-tab-color-dark) !important;
 }
+
+/* Collect tabs modal multi-select styling */
+.suggestion-item.ntg-checked,
+.ntg-nav-row.ntg-checked,
+.suggestion-item.is-checked,
+.ntg-nav-row.is-checked {
+    border-left: 3px solid var(--interactive-accent, #7c3aed);
+    background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.05));
+}
+
+.suggestion-item .ntg-collect-row {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    width: 100%;
+}
+
+.collect-tabs-row-checkbox,
+.ntg-checkbox {
+    appearance: auto;
+    -webkit-appearance: auto;
+    accent-color: var(--checkbox-color, var(--interactive-accent, #7c3aed));
+    margin-right: 0.65em;
+    cursor: default;
+    pointer-events: none; /* visual indicator only; space toggles row */
+    width: 14px;
+    height: 14px;
+    border-color: var(--checkbox-border-color, var(--interactive-accent, #7c3aed));
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.collect-tabs-row-checkbox:disabled,
+.ntg-checkbox:disabled {
+    opacity: 1; /* prevent browser dimming */
+    cursor: default;
+}
+
+.suggestion-item.ntg-control-separator,
+.ntg-nav-row.ntg-control-separator {
+    border-top: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.1));
+    margin-top: 4px;
+    padding-top: 4px;
+}
+
+.ntg-control-row .ntg-action-label {
+    color: var(--text-accent, var(--interactive-accent, #7c3aed));
+    font-weight: 500;
+}

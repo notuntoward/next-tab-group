@@ -76,6 +76,37 @@ describe('applyActiveTabColors', () => {
 
         expect(document.body.classList.contains('ntg-color-active-tab')).toBe(true);
     });
+
+    it('applies colors to newly opened windows via window-open event', async () => {
+        await plugin.onload();
+
+        const newBody = document.createElement('body');
+        const newWin = {
+            closed: false,
+            document: { body: newBody },
+        } as unknown as Window;
+
+        app.workspace.trigger('window-open', null, newWin);
+
+        expect(newBody.classList.contains('ntg-color-active-tab')).toBe(true);
+        expect(newBody.style.getPropertyValue('--ntg-active-tab-color-light')).toBe('#test-light');
+        expect(newBody.style.getPropertyValue('--ntg-active-tab-color-dark')).toBe('#test-dark');
+    });
+
+    it('safely skips closed windows and does not throw', () => {
+        const closedWin = {
+            closed: true,
+            get document(): any {
+                throw new Error('Access denied to closed window');
+            },
+        } as unknown as Window;
+
+        const leaf = new MockWorkspaceLeaf(null).setId('leaf_closed');
+        leaf.setContainer(new MockWorkspaceContainer('root', closedWin));
+        app.workspace.allLeaves = [leaf];
+
+        expect(() => plugin.applyActiveTabColors()).not.toThrow();
+    });
 });
 
 describe('onunload', () => {
