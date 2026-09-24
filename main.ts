@@ -1252,6 +1252,22 @@ export default class NextTabGroupPlugin extends Plugin {
 
         if (hasLeaves) return;
 
+        // Obsidian's Modal.open() (e.g. the Settings dialog, including the
+        // Community plugins tab) attaches to whatever window was active when it
+        // was opened -- not necessarily the main window. A modal is not a
+        // WorkspaceLeaf, so the hasLeaves check above cannot see it. Closing a
+        // popout window out from under an open modal tears down that window's
+        // document mid-render, which can leave the modal's renderer hung with a
+        // blank/frozen window. Skip closing if this window still has an open
+        // modal; it will naturally become eligible again once the modal closes.
+        try {
+            if (win.document?.body?.querySelector('.modal-container')) {
+                return;
+            }
+        } catch {
+            // window/document already torn down; fall through to the close attempts below
+        }
+
         try {
             const floating = (this.app.workspace as any).floatingSplit?.children ?? [];
             for (const child of floating) {

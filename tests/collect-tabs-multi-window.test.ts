@@ -1695,6 +1695,67 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             (globalThis as any).activeWindow = undefined;
         });
 
+        it('does not close a popout window that still has an open modal (e.g. Settings), even once it has no leaves left', async () => {
+            // Bug: Obsidian's Modal.open() (Settings, including Community
+            // plugins) attaches to whatever window was active when opened, which
+            // is not necessarily the main window. A modal is not a WorkspaceLeaf,
+            // so evacuating all real leaves from a popout can make it look
+            // "empty" while a modal is still open and rendering in it. Forcibly
+            // closing that window out from under the modal can tear down its
+            // document mid-render, leaving a blank, unresponsive window behind.
+            const mainGroup = new MockWorkspaceParent(rootContainer);
+            const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
+
+            const popGroup1 = new MockWorkspaceParent(popoutContainer1);
+            const p1 = leaf('p1', 'Pop1.md', popGroup1, popoutContainer1);
+
+            const popGroup2 = new MockWorkspaceParent(popoutContainer2);
+            const p2 = leaf('p2', 'Pop2.md', popGroup2, popoutContainer2);
+
+            app.workspace.allLeaves = [m1, p1, p2];
+            app.workspace.rootLeaves = [m1];
+
+            // Simulate the Settings modal (Community plugins tab) still being
+            // open in Popout 2's document.
+            (win2Obj as any).document = {
+                body: {
+                    querySelector: (sel: string) => (sel === '.modal-container' ? {} : null),
+                },
+            };
+
+            app.workspace.setActiveLeaf(m1);
+            (globalThis as any).activeWindow = globalThis.window;
+
+            const mainWinInfo: WindowInfo = {
+                window: globalThis.window,
+                representative: m1,
+                groups: [{ leaves: [m1] } as any],
+                lastActive: 200,
+                label: 'Main window',
+                isCurrentWindow: true,
+                isMainWindow: true,
+            };
+            const pop2Info: WindowInfo = {
+                window: win2Obj,
+                representative: p2,
+                groups: [{ leaves: [p2] } as any],
+                lastActive: 50,
+                label: 'Pop-out 2',
+                isCurrentWindow: false,
+                isMainWindow: false,
+            };
+
+            await plugin.collectTabs('multi', [mainWinInfo, pop2Info]);
+
+            // Popout 2's tab is still migrated out (it becomes leaf-empty)...
+            expect(p2.detached).toBe(true);
+            // ...but the window itself is NOT closed, because its open modal
+            // must not be torn down mid-render.
+            expect(popoutWin2.closed).toBe(false);
+
+            (globalThis as any).activeWindow = undefined;
+        });
+
         it('when only 1 popout is checked and focused, consolidates tabs within that popout without touching other windows', async () => {
             const mainGroup = new MockWorkspaceParent(rootContainer);
             const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
