@@ -47,6 +47,49 @@ export class MockContainerEl {
     addClass(): void { /* no-op */ }
 }
 
+// Polyfill Obsidian DOM extension methods on HTMLElement in the test jsdom environment
+if (typeof HTMLElement !== 'undefined') {
+    const proto = HTMLElement.prototype as any;
+    if (!proto.empty) {
+        proto.empty = function () {
+            while (this.firstChild) {
+                this.removeChild(this.firstChild);
+            }
+        };
+    }
+    if (!proto.createDiv) {
+        proto.createDiv = function (opts?: { cls?: string; text?: string }) {
+            const div = document.createElement('div');
+            if (opts?.cls) div.className = opts.cls;
+            if (opts?.text) div.textContent = opts.text;
+            this.appendChild(div);
+            return div;
+        };
+    }
+    if (!proto.createSpan) {
+        proto.createSpan = function (opts?: { cls?: string; text?: string }) {
+            const span = document.createElement('span');
+            if (opts?.cls) span.className = opts.cls;
+            if (opts?.text) span.textContent = opts.text;
+            this.appendChild(span);
+            return span;
+        };
+    }
+    if (!proto.createEl) {
+        proto.createEl = function (tag: string, opts?: { cls?: string; text?: string }) {
+            const el = document.createElement(tag);
+            if (opts?.cls) el.className = opts.cls;
+            if (opts?.text) el.textContent = opts.text;
+            return el;
+        };
+    }
+    if (!proto.setText) {
+        proto.setText = function (text: string) {
+            this.textContent = text;
+        };
+    }
+}
+
 export class MockWorkspaceContainer {
     id = 'container';
     win: Window;
@@ -68,7 +111,8 @@ export class MockWorkspaceParent {
 export class MockWorkspaceLeaf {
     id = '';
     parent: MockWorkspaceParent | null = null;
-    view: { file?: { path: string } | null } = { file: null };
+    view: { file?: { path: string } | null; containerEl?: HTMLElement } = { file: null, containerEl: document.createElement('div') };
+    containerEl: HTMLElement = document.createElement('div');
     private viewState: { type: string; state?: Record<string, unknown> } = { type: 'markdown' };
     private container: MockWorkspaceContainer | null = null;
     detached = false;
@@ -158,6 +202,18 @@ export class MockWorkspaceLeaf {
     }
 }
 
+export class MockWorkspaceWindow {
+    closed = false;
+    doc = globalThis.document;
+    constructor(public win: Window = {} as Window) {}
+    close(): void {
+        this.closed = true;
+    }
+    getContainer(): { win: Window } {
+        return { win: this.win };
+    }
+}
+
 export class MockWorkspace {
     activeLeaf: MockWorkspaceLeaf | null = null;
     rootLeaves: MockWorkspaceLeaf[] = [];
@@ -165,6 +221,9 @@ export class MockWorkspace {
     rootSplit = Symbol('rootSplit');
     leftSplit = Symbol('leftSplit');
     rightSplit = Symbol('rightSplit');
+    floatingSplit = {
+        children: [] as MockWorkspaceWindow[],
+    };
     private eventHandlers: Map<string, Array<(...args: unknown[]) => void>> = new Map();
 
     setActiveLeaf(leaf: MockWorkspaceLeaf, _opts?: { focus?: boolean }): void {
@@ -275,8 +334,10 @@ export class MockPlugin {
         this.settings = data;
     }
 
-    settingTab: unknown;
-    addCommand(): void { /* no-op */ }
+    commands: Array<Record<string, unknown>> = [];
+    addCommand(cmd: Record<string, unknown>): void {
+        this.commands.push(cmd);
+    }
     addSettingTab(tab: unknown): void {
         this.settingTab = tab;
     }
@@ -348,6 +409,12 @@ export class MockModal {
 export class MockSuggestModal<T> {
     app: MockApp;
     placeholder = '';
+    instructions: Array<{ command: string; purpose: string }> = [];
+    emptyStateText = '';
+    isOpen = false;
+    contentEl: HTMLElement = document.createElement('div');
+    resultContainerEl: HTMLElement = document.createElement('div');
+    scope = { register: () => ({}) };
 
     constructor(app: MockApp) {
         this.app = app;
@@ -357,9 +424,34 @@ export class MockSuggestModal<T> {
         this.placeholder = placeholder;
     }
 
+    setInstructions(instructions: Array<{ command: string; purpose: string }>): void {
+        this.instructions = instructions;
+    }
+
     setSelectedItem(_index?: number): void { /* no-op for mock */ }
-    open(): void { /* no-op */ }
-    close(): void { /* no-op */ }
+
+    open(): void {
+        this.isOpen = true;
+        this.onOpen();
+    }
+
+    onOpen(): void { /* can be overridden */ }
+
+    close(): void {
+        this.isOpen = false;
+        this.onClose();
+    }
+
+    onClose(): void { /* can be overridden */ }
+
+    getSuggestions(_query: string): T[] { return []; }
+    renderSuggestion(_item: T, _el: HTMLElement): void { /* no-op */ }
+    selectSuggestion(value: T, evt: MouseEvent | KeyboardEvent): void {
+        this.onChooseSuggestion(value, evt);
+        this.close();
+    }
+    onChooseSuggestion(_item: T, _evt?: MouseEvent | KeyboardEvent): void { /* no-op */ }
+
     getItems(): T[] { return []; }
     getItemText(_item: T): string { return String(_item); }
     onChooseItem(_item: T, _evt?: MouseEvent | KeyboardEvent): void { /* no-op */ }

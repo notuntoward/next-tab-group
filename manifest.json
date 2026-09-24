@@ -6,5 +6,5 @@
   "description": "Cycle between tab groups, collect tabs into one group, rotate the workspace layout, switch between tabs/groups/windows, and deduplicate tabs.",
   "author": "notuntoward",
   "authorUrl": "https://github.com/notuntoward",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }
