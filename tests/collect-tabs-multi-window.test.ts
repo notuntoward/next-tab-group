@@ -7,8 +7,11 @@ import {
     MockWorkspaceLeaf,
     MockWorkspaceParent,
     MockWorkspaceWindow,
+    MockNotice,
 } from './mocks/obsidian';
-import { CollectTabsModal, CollectChoice } from '../src/ui/collect-tabs-modal';
+import * as fs from 'fs';
+import * as path from 'path';
+import { CollectTabsModal, CollectChoice, resetSessionWindowIndices } from '../src/ui/collect-tabs-modal';
 import type { WindowInfo } from '../main';
 
 type TestPlugin = NextTabGroupPlugin & {
@@ -46,6 +49,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
     let win2Obj: Window;
 
     beforeEach(async () => {
+        resetSessionWindowIndices();
         app = new MockApp();
         rootContainer = new MockWorkspaceContainer('root', globalThis.window);
 
@@ -268,11 +272,12 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
 
                 expect(capturedModal).not.toBeNull();
                 const suggestions = capturedModal.getSuggestions('');
-                // N = 2: Exactly 3 options ("This window", "All windows", "Window - ...")
+                // N = 2: Exactly 3 options (Popout window as current, All windows, and Main window)
                 expect(suggestions).toHaveLength(3);
-                // "This window" must be the popout window where command was run!
+                // "This window" is the popout window where command was run!
                 expect(suggestions[0].kind).toBe('current');
-                expect(suggestions[0].label).toBe('This window - Pop1.md');
+                expect(suggestions[0].label).toBe('Pop1.md');
+                expect(suggestions[0].windowIndex).toBe(2);
                 expect(suggestions[0].winInfo.window).toBe(win1Obj);
                 expect(suggestions[0].winInfo.isCurrentWindow).toBe(true);
 
@@ -282,7 +287,8 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
 
                 // Option 3: Other window (Main window)
                 expect(suggestions[2].kind).toBe('window');
-                expect(suggestions[2].label).toBe('Window - Main.md');
+                expect(suggestions[2].label).toBe('Main.md');
+                expect(suggestions[2].windowIndex).toBe(1);
             } finally {
                 CollectTabsModal.prototype.open = originalOpen;
                 (globalThis as any).activeWindow = undefined;
@@ -302,7 +308,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             plugin['leafLastActive'].set('p3', 100);
 
             const desc = plugin.describeWindow(win1Obj);
-            expect(desc).toBe('Project Notes.md, +2 more');
+            expect(desc).toBe('Project Notes.md, Daily Log.md, +1');
 
             // With single tab
             app.workspace.allLeaves = [p1];
@@ -312,7 +318,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
     });
 
     describe('CollectTabsModal', () => {
-        it('constructs consistent rows when 2 windows exist (This window, All windows, Window - ...)', () => {
+        it('constructs consistent rows when 2 windows exist (This window, All windows, window row)', () => {
             const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Research.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
             const p2 = leaf('p2', 'Ref.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
@@ -343,8 +349,9 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             expect(suggestions[0]).toEqual({
                 kind: 'current',
                 winInfo: currentWin,
-                label: 'This window - Main Note.md',
+                label: 'Main Note.md',
                 checked: false,
+                windowIndex: 1,
             });
             expect(suggestions[1]).toEqual({
                 kind: 'all',
@@ -354,12 +361,13 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             expect(suggestions[2]).toEqual({
                 kind: 'window',
                 winInfo: otherWin,
-                label: 'Window - Research.md, +1 more',
+                label: 'Research.md, Ref.md',
                 checked: false,
+                windowIndex: 2,
             });
         });
 
-        it('constructs consistent rows when 3 windows exist (This window, All windows, then each other window, and Check all windows)', () => {
+        it('constructs consistent rows when 3 windows exist (This window, All windows, then each other window)', () => {
             const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
             const p2 = leaf('p2', 'Pop2.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
@@ -395,20 +403,21 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin1, otherWin2], () => {});
             const suggestions = modal.getSuggestions('');
 
-            expect(suggestions).toHaveLength(5);
-            expect(suggestions[0].label).toBe('This window - Main Note.md');
+            expect(suggestions).toHaveLength(4);
+            expect(suggestions[0].label).toBe('Main Note.md');
             expect(suggestions[0].kind).toBe('current');
+            expect(suggestions[0].windowIndex).toBe(1);
             expect(suggestions[1].label).toBe('All windows');
             expect(suggestions[1].kind).toBe('all');
-            expect(suggestions[2].label).toBe('Window - Pop1.md');
+            expect(suggestions[2].label).toBe('Pop1.md');
             expect(suggestions[2].kind).toBe('window');
-            expect(suggestions[3].label).toBe('Window - Pop2.md');
+            expect(suggestions[2].windowIndex).toBe(2);
+            expect(suggestions[3].label).toBe('Pop2.md');
             expect(suggestions[3].kind).toBe('window');
-            expect(suggestions[4].label).toBe('Check all windows');
-            expect(suggestions[4].kind).toBe('check-all');
+            expect(suggestions[3].windowIndex).toBe(3);
         });
 
-        it('filters suggestions by fuzzy match query including control rows', () => {
+        it('filters suggestions by fuzzy match query', () => {
             const m1 = leaf('m1', 'Alpha Note', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Beta Note', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
             const p2 = leaf('p2', 'Gamma Note', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
@@ -449,13 +458,8 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             expect(results[0].label).toContain('Beta Note');
 
             const allResults = modal.getSuggestions('all');
-            expect(allResults).toHaveLength(2);
+            expect(allResults).toHaveLength(1);
             expect(allResults[0].kind).toBe('all');
-            expect(allResults[1].kind).toBe('check-all');
-
-            const checkResults = modal.getSuggestions('check');
-            expect(checkResults).toHaveLength(1);
-            expect(checkResults[0].kind).toBe('check-all');
         });
 
         it('toggles row checked state with toggleRow or Space and maintains selection', () => {
@@ -490,7 +494,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             expect(suggestionsBefore[0].checked).toBe(false);
         });
 
-        it('dynamically displays and removes Clear selection row based on checked state', () => {
+        it('Clear selection toolbar button enables/disables based on checked state without altering list geometry', () => {
             const m1 = leaf('m1', 'Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Pop.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
 
@@ -512,23 +516,27 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
-            let suggestions = modal.getSuggestions('');
-            expect(suggestions.find((s) => s.kind === 'clear-selection')).toBeUndefined();
+            modal.open();
+
+            expect(modal.clearSelectionBtn?.disabled).toBe(true);
+            const suggestions = modal.getSuggestions('');
+            expect(suggestions).toHaveLength(3);
 
             // Check row 0
             modal.toggleRow(suggestions[0]);
-            suggestions = modal.getSuggestions('');
-            const clearRow = suggestions.find((s) => s.kind === 'clear-selection');
-            expect(clearRow).toBeDefined();
-            expect(clearRow?.label).toBe('Clear selection');
+            expect(modal.clearSelectionBtn?.disabled).toBe(false);
+            // Suggestions count is strictly unchanged
+            expect(modal.getSuggestions('')).toHaveLength(3);
 
-            // Uncheck row 0 -> clear-selection disappears
+            // Uncheck row 0 -> clear-selection disabled again
             modal.toggleRow(suggestions[0]);
-            suggestions = modal.getSuggestions('');
-            expect(suggestions.find((s) => s.kind === 'clear-selection')).toBeUndefined();
+            expect(modal.clearSelectionBtn?.disabled).toBe(true);
+            expect(modal.getSuggestions('')).toHaveLength(3);
+
+            modal.close();
         });
 
-        it('Check all windows marks all window rows checked and leaves modal open', () => {
+        it('Select all toolbar button marks all window rows checked and Clear selection clears them without changing geometry', () => {
             const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
             const p2 = leaf('p2', 'Pop2.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
@@ -562,28 +570,33 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin1, otherWin2], () => {});
-            modal.checkAll();
+            modal.open();
+            expect(modal.clearSelectionBtn?.disabled).toBe(true);
+
+            modal.selectAllBtn?.click();
 
             const suggestions = modal.getSuggestions('');
+            expect(suggestions).toHaveLength(4);
             expect(suggestions[0].checked).toBe(true);
             expect(suggestions[1].checked).toBe(true);
             expect(suggestions[2].checked).toBe(true);
             expect(suggestions[3].checked).toBe(true);
-
-            // Clear selection is now present
-            expect(suggestions[5].kind).toBe('clear-selection');
+            expect(modal.clearSelectionBtn?.disabled).toBe(false);
 
             // Clear selection unchecks all
-            modal.clearSelection();
+            modal.clearSelectionBtn?.click();
             const suggestionsAfterClear = modal.getSuggestions('');
+            expect(suggestionsAfterClear).toHaveLength(4);
             expect(suggestionsAfterClear[0].checked).toBe(false);
             expect(suggestionsAfterClear[1].checked).toBe(false);
             expect(suggestionsAfterClear[2].checked).toBe(false);
             expect(suggestionsAfterClear[3].checked).toBe(false);
-            expect(suggestionsAfterClear.find((s) => s.kind === 'clear-selection')).toBeUndefined();
+            expect(modal.clearSelectionBtn?.disabled).toBe(true);
+
+            modal.close();
         });
 
-        it('renderSuggestion renders disabled native checkbox inputs with accent classes for window rows and no checkbox for action rows', () => {
+        it('renderSuggestion renders disabled native checkbox inputs with accent classes for window rows', () => {
             const m1 = leaf('m1', 'Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const currentWin: WindowInfo = {
                 window: globalThis.window,
@@ -592,6 +605,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 lastActive: 200,
                 label: 'Main window',
                 isCurrentWindow: true,
+                isMainWindow: true,
             };
             const otherWin: WindowInfo = {
                 window: win1Obj,
@@ -600,23 +614,32 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 lastActive: 100,
                 label: 'Pop-out 1',
                 isCurrentWindow: false,
+                isMainWindow: false,
             };
 
             const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
 
-            // Unchecked window row
+            // Unchecked window row (current window, main window)
             const el1 = document.createElement('div');
-            modal.renderSuggestion({ kind: 'current', winInfo: currentWin, label: 'This window', checked: false }, el1);
+            modal.renderSuggestion({ kind: 'current', winInfo: currentWin, label: 'Note.md', checked: false, windowIndex: 1 }, el1);
             expect(el1.classList.contains('ntg-checked')).toBe(false);
             expect(el1.classList.contains('is-checked')).toBe(false);
+            expect(el1.classList.contains('ntg-grid-row')).toBe(true);
             const cb1 = el1.querySelector('input[type="checkbox"]') as HTMLInputElement;
             expect(cb1).not.toBeNull();
             expect(cb1.checked).toBe(false);
             expect(cb1.disabled).toBe(true);
             expect(cb1.classList.contains('collect-tabs-row-checkbox')).toBe(true);
-            expect(el1.textContent).toContain('This window');
+            const badge1 = el1.querySelector('.ntg-window-badge') as HTMLElement;
+            expect(badge1).not.toBeNull();
+            expect(badge1.textContent).toBe('1');
+            expect(badge1.classList.contains('ntg-badge-main')).toBe(false);
+            expect(badge1.classList.contains('ntg-badge-current')).toBe(false);
+            expect(el1.querySelector('.ntg-desc-primary')?.textContent).toBe('Note.md');
+            expect(el1.querySelector('.ntg-status-pill')?.textContent).toBe('HERE · MAIN');
+            expect(el1.querySelector('.ntg-pill-here-main')).not.toBeNull();
 
-            // Checked window row
+            // Checked window row (All windows)
             const el2 = document.createElement('div');
             modal.renderSuggestion({ kind: 'all', label: 'All windows', checked: true }, el2);
             expect(el2.classList.contains('ntg-checked')).toBe(true);
@@ -624,28 +647,12 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             const cb2 = el2.querySelector('input[type="checkbox"]') as HTMLInputElement;
             expect(cb2).not.toBeNull();
             expect(cb2.checked).toBe(true);
-            expect(cb2.disabled).toBe(true);
-            expect(cb2.classList.contains('collect-tabs-row-checkbox')).toBe(true);
-            expect(el2.textContent).toContain('All windows');
-
-            // Action row check-all
-            const el3 = document.createElement('div');
-            modal.renderSuggestion({ kind: 'check-all', label: 'Check all windows' }, el3);
-            expect(el3.querySelector('input[type="checkbox"]')).toBeNull();
-            expect(el3.classList.contains('ntg-checked')).toBe(false);
-            expect(el3.classList.contains('is-checked')).toBe(false);
-            expect(el3.classList.contains('ntg-control-row')).toBe(true);
-            expect(el3.classList.contains('ntg-control-separator')).toBe(true);
-            expect(el3.textContent).toBe('Check all windows');
-
-            // Action row clear-selection
-            const el4 = document.createElement('div');
-            modal.renderSuggestion({ kind: 'clear-selection', label: 'Clear selection' }, el4);
-            expect(el4.querySelector('input[type="checkbox"]')).toBeNull();
-            expect(el4.classList.contains('ntg-checked')).toBe(false);
-            expect(el4.classList.contains('is-checked')).toBe(false);
-            expect(el4.classList.contains('ntg-control-row')).toBe(true);
-            expect(el4.textContent).toBe('Clear selection');
+            const badge2 = el2.querySelector('.ntg-window-badge') as HTMLElement;
+            expect(badge2.classList.contains('ntg-badge-all')).toBe(true);
+            expect(badge2.textContent).toBe('⧉');
+            expect(el2.querySelector('.ntg-desc-primary')?.textContent).toBe('All windows');
+            expect(el2.querySelector('.ntg-status-pill')).toBeNull();
+            expect(el2.querySelector('.ntg-col-status')).not.toBeNull();
         });
 
         it('configures footer instructions correctly with space toggle and no Mod+A', () => {
@@ -740,10 +747,9 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             expect(picked[0].winInfo.window).toBe(win1Obj);
         });
 
-        it('selectSuggestion intercepts check-all and clear-selection without closing modal or calling onPick', () => {
+        it('selectSuggestion on MouseEvent toggles row without closing modal or calling onPick', () => {
             const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
-            const p2 = leaf('p2', 'Pop2.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
 
             const currentWin: WindowInfo = {
                 window: globalThis.window,
@@ -763,7 +769,528 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 isCurrentWindow: false,
                 isMainWindow: false,
             };
-            const otherWin2: WindowInfo = {
+
+            let pickedCalled = false;
+            const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin1], () => {
+                pickedCalled = true;
+            });
+            modal.open();
+            expect(modal.isOpen).toBe(true);
+
+            const rowChoice = modal.getSuggestions('')[2];
+            expect(rowChoice.checked).toBe(false);
+
+            modal.selectSuggestion(rowChoice, new MouseEvent('click'));
+
+            // Row is checked, modal remains open, onPick was not called
+            expect(rowChoice.checked).toBe(true);
+            expect(modal.isOpen).toBe(true);
+            expect(pickedCalled).toBe(false);
+            modal.close();
+        });
+
+        it('Fix 1: clicking anywhere on a window row toggles checkbox without calling onPick or closing modal', () => {
+            const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+            const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+            const currentWin: WindowInfo = {
+                window: globalThis.window,
+                representative: m1,
+                groups: [{ leaves: [m1] } as any],
+                lastActive: 200,
+                label: 'Main window',
+                isCurrentWindow: true,
+                isMainWindow: true,
+            };
+            const otherWin: WindowInfo = {
+                window: win1Obj,
+                representative: p1,
+                groups: [{ leaves: [p1] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: false,
+                isMainWindow: false,
+            };
+
+            let pickedCalled = false;
+            const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {
+                pickedCalled = true;
+            });
+            modal.open();
+
+            const suggestions = modal.getSuggestions('');
+            const targetChoice = suggestions[2]; // otherWin row
+            expect(targetChoice.checked).toBe(false);
+
+            const el = document.createElement('div');
+            modal.renderSuggestion(targetChoice, el);
+
+            // Simulate mouse click on the row container
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+            // Toggled to true, modal remains open, onPick was NOT called!
+            expect(targetChoice.checked).toBe(true);
+            expect(modal.isOpen).toBe(true);
+            expect(pickedCalled).toBe(false);
+
+            // Second click toggles back to false
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            expect(targetChoice.checked).toBe(false);
+            expect(modal.isOpen).toBe(true);
+            expect(pickedCalled).toBe(false);
+
+            modal.close();
+        });
+
+        describe('Section 7: 12 Interaction Requirements', () => {
+            it('1. Open modal with no rows checked: Clear selection is visible, disabled, and remains in place', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
+                modal.open();
+
+                expect(modal.clearSelectionBtn).not.toBeNull();
+                expect(modal.clearSelectionBtn?.textContent).toBe('Clear selection');
+                expect(modal.clearSelectionBtn?.disabled).toBe(true);
+                expect(modal.toolbarEl?.contains(modal.clearSelectionBtn!)).toBe(true);
+                modal.close();
+            });
+
+            it('2. Without checking anything, press Enter: collects highlighted default row', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                let picked: any = null;
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], (res) => {
+                    picked = res;
+                });
+                modal.open();
+
+                const defaultHighlighted = modal.getSuggestions('')[0];
+                modal.onChooseSuggestion(defaultHighlighted);
+
+                expect(picked).not.toBeNull();
+                expect(picked.kind).toBe('current');
+                expect(modal.isOpen).toBe(false);
+            });
+
+            it('3. Reopen modal with no rows checked and click Collect button: collects identical default row', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                let picked: any = null;
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], (res) => {
+                    picked = res;
+                });
+                modal.open();
+
+                expect(modal.collectBtn?.disabled).toBe(false);
+                expect(modal.collectBtn?.classList.contains('mod-cta')).toBe(true);
+                modal.collectBtn?.click();
+
+                expect(picked).not.toBeNull();
+                expect(picked.kind).toBe('current');
+                expect(modal.isOpen).toBe(false);
+            });
+
+            it('4. Click one window row: checks row, leaves modal open, does not collect or close', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                let picked = false;
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {
+                    picked = true;
+                });
+                modal.open();
+
+                const choice = modal.getSuggestions('')[2];
+                modal.selectSuggestion(choice, new MouseEvent('click'));
+
+                expect(choice.checked).toBe(true);
+                expect(modal.isOpen).toBe(true);
+                expect(picked).toBe(false);
+                modal.close();
+            });
+
+            it('5. Press Space on highlighted window: checks row and leaves modal open', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                let picked = false;
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {
+                    picked = true;
+                });
+                modal.open();
+
+                // Mock chooser selected item pointing to otherWin (index 2)
+                (modal as any).chooser = { selectedItem: 2 };
+                modal.handleSpace();
+
+                const suggestions = modal.getSuggestions('');
+                expect(suggestions[2].checked).toBe(true);
+                expect(modal.isOpen).toBe(true);
+                expect(picked).toBe(false);
+                modal.close();
+            });
+
+            it('6. Clear selection enables immediately after checking row without shifting list layout', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
+                modal.open();
+
+                const initialLength = modal.getSuggestions('').length;
+                expect(modal.clearSelectionBtn?.disabled).toBe(true);
+
+                modal.toggleRow(modal.getSuggestions('')[0]);
+
+                expect(modal.clearSelectionBtn?.disabled).toBe(false);
+                expect(modal.getSuggestions('').length).toBe(initialLength);
+                modal.close();
+            });
+
+            it('7. Click Clear selection: every check disappears, button disabled, list geometry unchanged', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
+                modal.open();
+
+                modal.checkAll();
+                expect(modal.hasAnyChecked()).toBe(true);
+                expect(modal.clearSelectionBtn?.disabled).toBe(false);
+
+                modal.clearSelectionBtn?.click();
+
+                expect(modal.hasAnyChecked()).toBe(false);
+                expect(modal.clearSelectionBtn?.disabled).toBe(true);
+                expect(modal.getSuggestions('')).toHaveLength(3);
+                modal.close();
+            });
+
+            it('8. Click Select all: every selectable row becomes checked, Clear selection enables, geometry unchanged', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
+                modal.open();
+
+                modal.selectAllBtn?.click();
+
+                const rows = modal.getSuggestions('');
+                expect(rows).toHaveLength(3);
+                expect(rows.every((r) => r.checked)).toBe(true);
+                expect(modal.clearSelectionBtn?.disabled).toBe(false);
+                modal.close();
+            });
+
+            it('9. Click Collect after selecting several windows: collects checked set matching Enter', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+                const p2 = leaf('p2', 'Pop2.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin1: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+                const otherWin2: WindowInfo = {
+                    window: win2Obj,
+                    representative: p2,
+                    groups: [{ leaves: [p2] } as any],
+                    lastActive: 50,
+                    label: 'Pop-out 2',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                let picked: any = null;
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin1, otherWin2], (res) => {
+                    picked = res;
+                });
+                modal.open();
+
+                const suggestions = modal.getSuggestions('');
+                modal.toggleRow(suggestions[2]); // otherWin1
+                modal.toggleRow(suggestions[3]); // otherWin2
+
+                modal.collectBtn?.click();
+
+                expect(Array.isArray(picked)).toBe(true);
+                expect(picked).toHaveLength(2);
+                expect(picked.map((p: any) => p.label)).toEqual(['Pop1.md', 'Pop2.md']);
+                expect(modal.isOpen).toBe(false);
+            });
+
+            it('10. Click Cancel after checking one or more windows: modal closes with no collection', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                let picked = false;
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {
+                    picked = true;
+                });
+                modal.open();
+
+                modal.toggleRow(modal.getSuggestions('')[0]);
+                expect(modal.hasAnyChecked()).toBe(true);
+
+                modal.cancelBtn?.click();
+
+                expect(modal.isOpen).toBe(false);
+                expect(picked).toBe(false);
+            });
+
+            it('11. Esc does exact same thing as clicking Cancel (closes without collection)', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                let picked = false;
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {
+                    picked = true;
+                });
+                modal.open();
+
+                modal.toggleRow(modal.getSuggestions('')[0]);
+                modal.close();
+
+                expect(modal.isOpen).toBe(false);
+                expect(picked).toBe(false);
+            });
+
+            it('12. Toolbar is placed in modal DOM with two distinct subgroups', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
+                modal.open();
+
+                const toolbar = modal.modalEl.querySelector('.collect-tabs-action-toolbar') as HTMLElement;
+                expect(toolbar).not.toBeNull();
+                expect(toolbar.querySelector('.ntg-toolbar-left')).not.toBeNull();
+                expect(toolbar.querySelector('.ntg-toolbar-right')).not.toBeNull();
+                expect(toolbar.querySelectorAll('button')).toHaveLength(4);
+                modal.close();
+            });
+        });
+
+        it('Section 3 & 5: main window is marked by accent badge and current window by badge cue without text prefixes', () => {
+            const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+            const p1 = leaf('p1', 'Weight Loss.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+            const mainWin: WindowInfo = {
+                window: globalThis.window,
+                representative: m1,
+                groups: [{ leaves: [m1] } as any],
+                lastActive: 200,
+                label: 'Main window',
+                isCurrentWindow: false,
+                isMainWindow: true,
+            };
+            const popWin: WindowInfo = {
+                window: win1Obj,
+                representative: p1,
+                groups: [{ leaves: [p1] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: true,
+                isMainWindow: false,
+            };
+
+            // Run from popWin: "This window" is popout, mainWin is in otherWindows
+            const modal = new CollectTabsModal(app as unknown as App, popWin, [mainWin], () => {});
+            const suggestions = modal.getSuggestions('');
+
+            // Popout as current row has clean label without "This window - " or "(main)"
+            expect(suggestions[0].label).toBe('Weight Loss.md');
+            expect(suggestions[0].windowIndex).toBe(2);
+
+            // "All windows" unchanged
+            expect(suggestions[1].label).toBe('All windows');
+
+            // Main window in list has clean label without "Window - " or "(main)"
+            expect(suggestions[2].label).toBe('Main Note.md');
+            expect(suggestions[2].windowIndex).toBe(1);
+
+            // Verify rendered badge cues and status pills
+            const elCurrent = document.createElement('div');
+            modal.renderSuggestion(suggestions[0], elCurrent);
+            const badgeCurrent = elCurrent.querySelector('.ntg-window-badge') as HTMLElement;
+            expect(badgeCurrent.textContent).toBe('2');
+            expect(badgeCurrent.classList.contains('ntg-badge-main')).toBe(false);
+            expect(badgeCurrent.classList.contains('ntg-badge-current')).toBe(false);
+            expect(elCurrent.querySelector('.ntg-desc-primary')?.textContent).toBe('Weight Loss.md');
+            expect(elCurrent.querySelector('.ntg-status-pill')?.textContent).toBe('HERE');
+            expect(elCurrent.querySelector('.ntg-pill-here')).not.toBeNull();
+
+            const elMain = document.createElement('div');
+            modal.renderSuggestion(suggestions[2], elMain);
+            const badgeMain = elMain.querySelector('.ntg-window-badge') as HTMLElement;
+            expect(badgeMain.textContent).toBe('1');
+            expect(badgeMain.classList.contains('ntg-badge-main')).toBe(false);
+            expect(badgeMain.classList.contains('ntg-badge-current')).toBe(false);
+            expect(elMain.querySelector('.ntg-desc-primary')?.textContent).toBe('Main Note.md');
+            expect(elMain.querySelector('.ntg-status-pill')?.textContent).toBe('MAIN');
+            expect(elMain.querySelector('.ntg-pill-main')).not.toBeNull();
+        });
+
+        it('Section 4: assigns stable session window index tags that persist across multiple invocations', () => {
+            const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+            const p1 = leaf('p1', 'Research.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+            const p2 = leaf('p2', 'Journal.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
+
+            const mainWin: WindowInfo = {
+                window: globalThis.window,
+                representative: m1,
+                groups: [{ leaves: [m1] } as any],
+                lastActive: 200,
+                label: 'Main window',
+                isCurrentWindow: true,
+                isMainWindow: true,
+            };
+            const pop1: WindowInfo = {
+                window: win1Obj,
+                representative: p1,
+                groups: [{ leaves: [p1] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: false,
+                isMainWindow: false,
+            };
+            const pop2: WindowInfo = {
                 window: win2Obj,
                 representative: p2,
                 groups: [{ leaves: [p2] } as any],
@@ -773,28 +1300,51 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 isMainWindow: false,
             };
 
-            let pickedCalled = false;
-            const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin1, otherWin2], () => {
-                pickedCalled = true;
-            });
-            modal.open();
-            expect(modal.isOpen).toBe(true);
+            // Modal opened 1st time
+            const modal1 = new CollectTabsModal(app as unknown as App, mainWin, [pop1, pop2], () => {});
+            const s1 = modal1.getSuggestions('');
+            expect(s1[0].windowIndex).toBe(1);
+            expect(s1[2].windowIndex).toBe(2);
+            expect(s1[3].windowIndex).toBe(3);
 
-            const checkAllChoice = modal.getSuggestions('').find((s) => s.kind === 'check-all')!;
-            modal.selectSuggestion(checkAllChoice, new KeyboardEvent('keydown', { key: 'Enter' }));
+            // Active tab in pop1 changes to a different note
+            const p1NewNote = leaf('p1-new', 'Changed Title.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+            const pop1Updated: WindowInfo = {
+                ...pop1,
+                representative: p1NewNote,
+                groups: [{ leaves: [p1NewNote] } as any],
+            };
 
-            // Modal remains open and picked was NOT called!
-            expect(modal.isOpen).toBe(true);
-            expect(pickedCalled).toBe(false);
-            expect(modal.hasAnyChecked()).toBe(true);
+            // Modal opened 2nd time: pop1 is still tagged 2, pop2 is still 3, main is still 1
+            const modal2 = new CollectTabsModal(app as unknown as App, mainWin, [pop1Updated, pop2], () => {});
+            const s2 = modal2.getSuggestions('');
+            expect(s2[0].windowIndex).toBe(1);
+            expect(s2[2].windowIndex).toBe(2);
+            expect(s2[2].label).toBe('Changed Title.md');
+            expect(s2[3].windowIndex).toBe(3);
+            expect(s2[3].label).toBe('Journal.md');
+        });
 
-            // Now select clear-selection
-            const clearChoice = modal.getSuggestions('').find((s) => s.kind === 'clear-selection')!;
-            modal.selectSuggestion(clearChoice, new KeyboardEvent('keydown', { key: 'Enter' }));
+        it('Fix 4: tab description shows up to 2 tab titles with compact remaining count and ellipsis truncation', () => {
+            const g1 = new MockWorkspaceParent(popoutContainer1);
+            const t1 = leaf('t1', 'First Long File Name That Exceeds 25 Characters.md', g1, popoutContainer1);
+            const t2 = leaf('t2', 'Second Tab.md', g1, popoutContainer1);
+            const t3 = leaf('t3', 'Third Tab.md', g1, popoutContainer1);
+            const t4 = leaf('t4', 'Fourth Tab.md', g1, popoutContainer1);
 
-            expect(modal.isOpen).toBe(true);
-            expect(pickedCalled).toBe(false);
-            expect(modal.hasAnyChecked()).toBe(false);
+            const win: WindowInfo = {
+                window: win1Obj,
+                representative: t1,
+                groups: [{ leaves: [t1, t2, t3, t4] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: false,
+                isMainWindow: false,
+            };
+
+            const desc = plugin.describeWindow(win);
+            // 4 tabs total: shows truncated 1st tab, 2nd tab, and +2 remaining
+            expect(desc).toBe('First Long File Name Tha…, Second Tab.md, +2');
         });
     });
 
@@ -1166,6 +1716,640 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             expect(popoutWin2.closed).toBe(false);
 
             (globalThis as any).activeWindow = undefined;
+        });
+
+        describe('Final Polish Specification Compliance', () => {
+            it('Section 1 & 2: maintains fixed 4-column layout and exact placeholder', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
+                expect(modal.placeholder).toBe('Filter windows…');
+
+                const el = document.createElement('div');
+                modal.renderSuggestion({ kind: 'current', winInfo: currentWin, label: 'Main Note.md', checked: false, windowIndex: 1 }, el);
+
+                expect(el.querySelector('.ntg-col-checkbox')).not.toBeNull();
+                expect(el.querySelector('.ntg-col-badge')).not.toBeNull();
+                expect(el.querySelector('.ntg-col-content')).not.toBeNull();
+                expect(el.querySelector('.ntg-col-status')).not.toBeNull();
+            });
+
+            it('Section 3: renders neutral identity tiles for all physical windows and glyph for all windows', () => {
+                const m1 = leaf('m1', 'Main.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const popWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, mainWin, [popWin], () => {});
+
+                // Main window identity tile: neutral numeral '1'
+                const elMain = document.createElement('div');
+                modal.renderSuggestion({ kind: 'current', winInfo: mainWin, label: 'Main.md', checked: false, windowIndex: 1 }, elMain);
+                const badgeMain = elMain.querySelector('.ntg-window-badge') as HTMLElement;
+                expect(badgeMain.textContent).toBe('1');
+                expect(badgeMain.classList.contains('ntg-badge-main')).toBe(false);
+                expect(badgeMain.classList.contains('ntg-badge-current')).toBe(false);
+
+                // Popout window identity tile: neutral numeral '2'
+                const elPop = document.createElement('div');
+                modal.renderSuggestion({ kind: 'window', winInfo: popWin, label: 'Pop.md', checked: false, windowIndex: 2 }, elPop);
+                const badgePop = elPop.querySelector('.ntg-window-badge') as HTMLElement;
+                expect(badgePop.textContent).toBe('2');
+                expect(badgePop.classList.contains('ntg-badge-main')).toBe(false);
+                expect(badgePop.classList.contains('ntg-badge-current')).toBe(false);
+
+                // All windows identity tile: neutral footprint with glyph '⧉'
+                const elAll = document.createElement('div');
+                modal.renderSuggestion({ kind: 'all', label: 'All windows', checked: false }, elAll);
+                const badgeAll = elAll.querySelector('.ntg-window-badge') as HTMLElement;
+                expect(badgeAll.textContent).toBe('⧉');
+                expect(badgeAll.classList.contains('ntg-badge-all')).toBe(true);
+            });
+
+            it('Section 4: renders exact status pills (HERE, MAIN, HERE · MAIN) and empty status for others', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Popout 1 Note.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+                const p2 = leaf('p2', 'Popout 2 Note.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
+
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: false,
+                    isMainWindow: true,
+                };
+                const popWin1: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: true,
+                    isMainWindow: false,
+                };
+                const popWin2: WindowInfo = {
+                    window: win2Obj,
+                    representative: p2,
+                    groups: [{ leaves: [p2] } as any],
+                    lastActive: 50,
+                    label: 'Pop-out 2',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                // Case 1: Opened from popWin1
+                const modalFromPopout = new CollectTabsModal(app as unknown as App, popWin1, [mainWin, popWin2], () => {});
+
+                // Current row (popout): shows 'HERE'
+                const elPopCurrent = document.createElement('div');
+                modalFromPopout.renderSuggestion({ kind: 'current', winInfo: popWin1, label: 'Popout 1 Note.md', checked: false, windowIndex: 2 }, elPopCurrent);
+                expect(elPopCurrent.querySelector('.ntg-status-pill')?.textContent).toBe('HERE');
+                expect(elPopCurrent.querySelector('.ntg-pill-here')).not.toBeNull();
+
+                // Main window row: shows 'MAIN'
+                const elMainFromPopout = document.createElement('div');
+                modalFromPopout.renderSuggestion({ kind: 'window', winInfo: mainWin, label: 'Main Note.md', checked: false, windowIndex: 1 }, elMainFromPopout);
+                expect(elMainFromPopout.querySelector('.ntg-status-pill')?.textContent).toBe('MAIN');
+                expect(elMainFromPopout.querySelector('.ntg-pill-main')).not.toBeNull();
+
+                // Another popout row: empty status column (no pill)
+                const elPop2 = document.createElement('div');
+                modalFromPopout.renderSuggestion({ kind: 'window', winInfo: popWin2, label: 'Popout 2 Note.md', checked: false, windowIndex: 3 }, elPop2);
+                expect(elPop2.querySelector('.ntg-col-status')).not.toBeNull();
+                expect(elPop2.querySelector('.ntg-status-pill')).toBeNull();
+
+                // All windows row: empty status column (no pill)
+                const elAll = document.createElement('div');
+                modalFromPopout.renderSuggestion({ kind: 'all', label: 'All windows', checked: false }, elAll);
+                expect(elAll.querySelector('.ntg-col-status')).not.toBeNull();
+                expect(elAll.querySelector('.ntg-status-pill')).toBeNull();
+
+                // Case 2: Opened from main window: shows single combined 'HERE · MAIN' pill
+                const modalFromMain = new CollectTabsModal(app as unknown as App, mainWin, [popWin1], () => {});
+                const elMainCurrent = document.createElement('div');
+                modalFromMain.renderSuggestion({ kind: 'current', winInfo: mainWin, label: 'Main Note.md', checked: false, windowIndex: 1 }, elMainCurrent);
+                expect(elMainCurrent.querySelector('.ntg-status-pill')?.textContent).toBe('HERE · MAIN');
+                expect(elMainCurrent.querySelector('.ntg-pill-here-main')).not.toBeNull();
+            });
+
+            it('Section 5: renders structured description typography', () => {
+                const g = new MockWorkspaceParent(popoutContainer1);
+                const t1 = leaf('t1', 'First Note.md', g, popoutContainer1);
+                const t2 = leaf('t2', 'Second Note.md', g, popoutContainer1);
+                const t3 = leaf('t3', 'Third Note.md', g, popoutContainer1);
+                const t4 = leaf('t4', 'Fourth Note.md', g, popoutContainer1);
+
+                const winMulti: WindowInfo = {
+                    window: win1Obj,
+                    representative: t1,
+                    groups: [{ leaves: [t1, t2, t3, t4] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, winMulti, [], () => {});
+                const el = document.createElement('div');
+                modal.renderSuggestion({ kind: 'window', winInfo: winMulti, label: 'First Note.md, Second Note.md, +2', checked: false, windowIndex: 2 }, el);
+
+                const primary = el.querySelector('.ntg-desc-primary');
+                const separator = el.querySelector('.ntg-desc-separator');
+                const secondary = el.querySelector('.ntg-desc-secondary');
+                const count = el.querySelector('.ntg-desc-count');
+
+                expect(primary?.textContent).toBe('First Note.md');
+                expect(separator?.textContent).toBe('·');
+                expect(secondary?.textContent).toBe('Second Note.md');
+                expect(count?.textContent).toBe('+2');
+            });
+        });
+
+        describe('Keyboard Focus, Row-State Clarity, and Status Emphasis Amendment', () => {
+            it('Section 1: Tab and Shift+Tab focus trap wraps between controls and skips disabled buttons', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
+                modal.open();
+
+                // When nothing is checked, Clear selection is disabled and skipped
+                let controls = modal.getFocusableControls();
+                expect(controls).toEqual([
+                    modal.inputEl,
+                    modal.selectAllBtn,
+                    modal.cancelBtn,
+                    modal.collectBtn,
+                ]);
+
+                // Check a row -> Clear selection becomes enabled and appears in Tab order
+                modal.toggleRow(modal.getSuggestions('')[0]);
+                controls = modal.getFocusableControls();
+                expect(controls).toEqual([
+                    modal.inputEl,
+                    modal.selectAllBtn,
+                    modal.clearSelectionBtn,
+                    modal.cancelBtn,
+                    modal.collectBtn,
+                ]);
+
+                // Test step-by-step forward Tab cycling through all controls
+                modal.inputEl.focus();
+                expect(document.activeElement).toBe(modal.inputEl);
+                modal.inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+                expect(document.activeElement).toBe(modal.selectAllBtn);
+
+                modal.selectAllBtn?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+                expect(document.activeElement).toBe(modal.clearSelectionBtn);
+
+                modal.clearSelectionBtn?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+                expect(document.activeElement).toBe(modal.cancelBtn);
+
+                modal.cancelBtn?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+                expect(document.activeElement).toBe(modal.collectBtn);
+
+                // Test Tab wrapping at final control (Collect -> Filter input)
+                const tabEvt = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+                modal.collectBtn?.dispatchEvent(tabEvt);
+                expect(document.activeElement).toBe(modal.inputEl);
+
+                // Test Shift+Tab wrapping at first control (Filter input -> Collect)
+                const shiftTabEvt = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+                modal.inputEl.dispatchEvent(shiftTabEvt);
+                expect(document.activeElement).toBe(modal.collectBtn);
+
+                modal.close();
+            });
+
+            it('Section 2 & 3: initializes HERE row as current on open, and cleanly distinguishes checked vs current', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+                const p2 = leaf('p2', 'Pop2.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
+
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const pop1: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+                const pop2: WindowInfo = {
+                    window: win2Obj,
+                    representative: p2,
+                    groups: [{ leaves: [p2] } as any],
+                    lastActive: 50,
+                    label: 'Pop-out 2',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, mainWin, [pop1, pop2], () => {});
+                modal.open();
+
+                // 1. On open, HERE row (index 0) has neutral full-row current highlight, no boxes checked
+                expect(modal.highlightedIndex).toBe(0);
+                const suggestions = modal.getSuggestions('');
+                expect(suggestions[0].checked).toBe(false);
+                expect(suggestions[1].checked).toBe(false);
+                expect(suggestions[2].checked).toBe(false);
+
+                const items = modal.modalEl.querySelectorAll('.suggestion-item');
+                expect(items[0].classList.contains('is-selected')).toBe(true);
+                expect(items[0].classList.contains('ntg-keyboard-current')).toBe(true);
+                expect(items[0].classList.contains('is-checked')).toBe(false);
+
+                // 2. Press Ctrl+N / moveHighlight(1) -> highlight moves to index 1 (All windows), HERE loses highlight
+                modal.moveHighlight(1);
+                expect(modal.highlightedIndex).toBe(1);
+                expect(items[0].classList.contains('is-selected')).toBe(false);
+                expect(items[0].classList.contains('ntg-keyboard-current')).toBe(false);
+                expect(items[1].classList.contains('is-selected')).toBe(true);
+                expect(items[1].classList.contains('ntg-keyboard-current')).toBe(true);
+
+                // 3. Check two rows (0 and 2), and move current to unchecked row (1)
+                modal.toggleRow(suggestions[0]);
+                modal.toggleRow(suggestions[2]);
+                modal.setHighlightedIndex(1);
+
+                // Rows 0 and 2 are checked (purple left accent) but NOT current (no current highlight)
+                const refreshedItems = modal.modalEl.querySelectorAll('.suggestion-item');
+                expect(refreshedItems[0].classList.contains('is-checked')).toBe(true);
+                expect(refreshedItems[0].classList.contains('is-selected')).toBe(false);
+
+                expect(refreshedItems[2].classList.contains('is-checked')).toBe(true);
+                expect(refreshedItems[2].classList.contains('is-selected')).toBe(false);
+
+                // Row 1 is unchecked and current (shows neutral current highlight, no purple accent)
+                expect(refreshedItems[1].classList.contains('is-checked')).toBe(false);
+                expect(refreshedItems[1].classList.contains('is-selected')).toBe(true);
+                expect(refreshedItems[1].classList.contains('ntg-keyboard-current')).toBe(true);
+
+                // 4. Move current to a checked row (index 2) -> shows BOTH checked state and current highlight
+                modal.setHighlightedIndex(2);
+                expect(refreshedItems[2].classList.contains('is-checked')).toBe(true);
+                expect(refreshedItems[2].classList.contains('is-selected')).toBe(true);
+                expect(refreshedItems[2].classList.contains('ntg-keyboard-current')).toBe(true);
+
+                // 5. Press Space on current row -> check state toggles while remaining current
+                modal.handleSpace();
+                expect(suggestions[2].checked).toBe(false);
+                expect(modal.highlightedIndex).toBe(2);
+                const afterSpaceItems = modal.modalEl.querySelectorAll('.suggestion-item');
+                expect(afterSpaceItems[2].classList.contains('is-checked')).toBe(false);
+                expect(afterSpaceItems[2].classList.contains('is-selected')).toBe(true);
+
+                modal.close();
+            });
+
+            it('Section 3 & 5: Bare Enter and Collect collect HERE window by default, or highlighted row, or checked set', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const pop1: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                // Case 1: Immediately after opening with no checks, Enter collects HERE window
+                let pickedChoice: any = null;
+                const modal1 = new CollectTabsModal(app as unknown as App, mainWin, [pop1], (choice) => {
+                    pickedChoice = choice;
+                });
+                modal1.open();
+                modal1.executeCollection();
+                expect(pickedChoice.kind).toBe('current');
+                expect(pickedChoice.winInfo).toBe(mainWin);
+                modal1.close();
+
+                // Case 2: Immediately after opening, clicking Collect button collects identical HERE window
+                pickedChoice = null;
+                const modal2 = new CollectTabsModal(app as unknown as App, mainWin, [pop1], (choice) => {
+                    pickedChoice = choice;
+                });
+                modal2.open();
+                modal2.collectBtn?.click();
+                expect(pickedChoice.kind).toBe('current');
+                expect(pickedChoice.winInfo).toBe(mainWin);
+                modal2.close();
+
+                // Case 3: Move highlight to another row without checking anything -> collects highlighted row
+                pickedChoice = null;
+                const modal3 = new CollectTabsModal(app as unknown as App, mainWin, [pop1], (choice) => {
+                    pickedChoice = choice;
+                });
+                modal3.open();
+                modal3.setHighlightedIndex(2); // pop1
+                modal3.executeCollection();
+                expect(pickedChoice.kind).toBe('window');
+                expect(pickedChoice.winInfo).toBe(pop1);
+                modal3.close();
+
+                // Case 4: With checked rows, collects checked set
+                let pickedSet: any = null;
+                const modal4 = new CollectTabsModal(app as unknown as App, mainWin, [pop1], (choice) => {
+                    pickedSet = choice;
+                });
+                modal4.open();
+                modal4.toggleRow(modal4.getSuggestions('')[2]);
+                modal4.collectBtn?.click();
+                expect(Array.isArray(pickedSet)).toBe(true);
+                expect(pickedSet).toHaveLength(1);
+                expect(pickedSet[0].winInfo).toBe(pop1);
+                modal4.close();
+            });
+
+            it('Section 4: assigns correct reversed visual emphasis classes to HERE, MAIN, and HERE · MAIN', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: false,
+                    isMainWindow: true,
+                };
+                const pop1: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: true,
+                    isMainWindow: false,
+                };
+
+                // Popout invocation: HERE on popout, MAIN on main
+                const modalPop = new CollectTabsModal(app as unknown as App, pop1, [mainWin], () => {});
+                const elHere = document.createElement('div');
+                modalPop.renderSuggestion({ kind: 'current', winInfo: pop1, label: 'Pop1.md', checked: false, windowIndex: 2 }, elHere);
+                const pillHere = elHere.querySelector('.ntg-status-pill') as HTMLElement;
+                expect(pillHere.classList.contains('ntg-pill-here')).toBe(true);
+                expect(pillHere.textContent).toBe('HERE');
+
+                const elMain = document.createElement('div');
+                modalPop.renderSuggestion({ kind: 'window', winInfo: mainWin, label: 'Main Note.md', checked: false, windowIndex: 1 }, elMain);
+                const pillMain = elMain.querySelector('.ntg-status-pill') as HTMLElement;
+                expect(pillMain.classList.contains('ntg-pill-main')).toBe(true);
+                expect(pillMain.textContent).toBe('MAIN');
+
+                // Main window invocation: single combined HERE · MAIN pill
+                const modalMain = new CollectTabsModal(app as unknown as App, mainWin, [pop1], () => {});
+                const elHereMain = document.createElement('div');
+                modalMain.renderSuggestion({ kind: 'current', winInfo: mainWin, label: 'Main Note.md', checked: false, windowIndex: 1 }, elHereMain);
+                const pillHereMain = elHereMain.querySelector('.ntg-status-pill') as HTMLElement;
+                expect(pillHereMain.classList.contains('ntg-pill-here-main')).toBe(true);
+                expect(pillHereMain.textContent).toBe('HERE · MAIN');
+            });
+        });
+
+        describe('Regression tests for collect-tabs usability and keyboard tweaks', () => {
+            beforeEach(() => {
+                MockNotice.notices = [];
+            });
+
+            it('1. Spacebar toggles current window selection without moving shaded region to top or typing into input', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+                const p2 = leaf('p2', 'Pop2.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
+
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const pop1: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+                const pop2: WindowInfo = {
+                    window: win2Obj,
+                    representative: p2,
+                    groups: [{ leaves: [p2] } as any],
+                    lastActive: 50,
+                    label: 'Pop-out 2',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, mainWin, [pop1, pop2], () => {});
+                modal.open();
+
+                // Move highlight to row 2
+                modal.setHighlightedIndex(2);
+                expect(modal.highlightedIndex).toBe(2);
+
+                // Focus is on inputEl, press Spacebar
+                modal.inputEl.focus();
+                const spaceEvt = new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true });
+                modal.inputEl.dispatchEvent(spaceEvt);
+
+                const suggestions = modal.getSuggestions('');
+                // Row 2 must now be checked
+                expect(suggestions[2].checked).toBe(true);
+                // Highlight must NOT move to top (must remain at index 2)
+                expect(modal.highlightedIndex).toBe(2);
+                // No space character entered into inputEl
+                expect(modal.inputEl.value).toBe('');
+
+                modal.close();
+            });
+
+            it('2. Clear button becomes visible when windows are selected, reachable via TAB, and activatable via Spacebar', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const pop1: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, mainWin, [pop1], () => {});
+                modal.open();
+
+                // On open, nothing selected -> Clear button must be hidden (display === 'none')
+                expect(modal.clearSelectionBtn?.style.display).toBe('none');
+                let controls = modal.getFocusableControls();
+                expect(controls.includes(modal.clearSelectionBtn!)).toBe(false);
+
+                // Select all windows -> Clear button becomes visible (display !== 'none')
+                modal.checkAll();
+                expect(modal.clearSelectionBtn?.style.display).not.toBe('none');
+                controls = modal.getFocusableControls();
+                expect(controls.includes(modal.clearSelectionBtn!)).toBe(true);
+
+                // Focus clear button and press Spacebar to activate
+                modal.clearSelectionBtn?.focus();
+                const spaceEvt = new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true });
+                modal.clearSelectionBtn?.dispatchEvent(spaceEvt);
+
+                // Selection is cleared
+                expect(modal.hasAnyChecked()).toBe(false);
+                // Clear button is hidden again
+                expect(modal.clearSelectionBtn?.style.display).toBe('none');
+
+                modal.close();
+            });
+
+            it('3. Only one collect-tabs modal can be active at a time; previous modal is cancelled and notice displayed', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const pop1: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal1 = new CollectTabsModal(app as unknown as App, mainWin, [pop1], () => {});
+                modal1.open();
+                expect(modal1.isOpen).toBe(true);
+
+                const modal2 = new CollectTabsModal(app as unknown as App, pop1, [mainWin], () => {});
+                modal2.open();
+
+                // modal1 must have been cancelled/closed
+                expect(modal1.isOpen).toBe(false);
+                expect(modal2.isOpen).toBe(true);
+
+                // Notice indicating cancellation must have been created
+                expect(MockNotice.notices.some(n => n.message.toLowerCase().includes('cancelled') || n.message.toLowerCase().includes('canceled'))).toBe(true);
+
+                modal2.close();
+            });
+
+            it('4. Vertical purple stripe on checked rows is removed from styles.css', () => {
+                const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf-8');
+
+                // Must not have border-left for checked row / suggestion-item
+                expect(css).not.toMatch(/\.suggestion-item\.(?:is|ntg)-checked[^{]*\{[^}]*border-left:\s*3px/);
+                expect(css).not.toMatch(/\.ntg-collect-row\.(?:is|ntg)-checked[^{]*\{[^}]*border-left:\s*3px/);
+            });
+
+            it('5. The redundant X cancel button is removed from modal and focusable controls', () => {
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const mainWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, mainWin, [], () => {});
+                // Simulate Obsidian modal creating a close button
+                modal.modalEl.createDiv({ cls: 'modal-close-button' });
+                modal.open();
+
+                // Close button should be removed or hidden
+                const closeBtn = modal.modalEl.querySelector('.modal-close-button');
+                expect(!closeBtn || (closeBtn as HTMLElement).style.display === 'none').toBe(true);
+
+                // getFocusableControls must never include modal-close-button
+                const controls = modal.getFocusableControls();
+                expect(controls.some(c => c.classList.contains('modal-close-button'))).toBe(false);
+
+                modal.close();
+            });
         });
     });
 });

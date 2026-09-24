@@ -88,20 +88,74 @@ body.ntg-color-active-tab.theme-dark .workspace-tab-header.is-active {
     background-color: var(--ntg-active-tab-color-dark) !important;
 }
 
-/* Collect tabs modal multi-select styling */
-.suggestion-item.ntg-checked,
-.ntg-nav-row.ntg-checked,
-.suggestion-item.is-checked,
-.ntg-nav-row.is-checked {
-    border-left: 3px solid var(--interactive-accent, #7c3aed);
-    background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.05));
+/* Section 2: Row styling for Collect tabs modal */
+.ntg-collect-row {
+    box-sizing: border-box;
 }
 
-.suggestion-item .ntg-collect-row {
+/* Checked rows: normal transparent background when not current. Checkbox is the indicator. */
+.suggestion-item.ntg-checked,
+.suggestion-item.is-checked,
+.ntg-nav-row.ntg-checked,
+.ntg-nav-row.is-checked,
+.ntg-collect-row.ntg-checked,
+.ntg-collect-row.is-checked {
+    background-color: transparent;
+}
+
+/* Keyboard-current / active selection highlight: soft neutral-gray full-row background */
+.suggestion-item.is-selected,
+.suggestion-item.ntg-keyboard-current,
+.ntg-nav-row.is-selected,
+.ntg-nav-row.ntg-keyboard-current,
+.ntg-collect-row.is-selected,
+.ntg-collect-row.ntg-keyboard-current,
+.suggestion-item.is-selected .ntg-nav-row,
+.suggestion-item.ntg-keyboard-current .ntg-nav-row {
+    background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.08)) !important;
+}
+
+/* Checked AND Keyboard-current row: soft neutral-gray background */
+.suggestion-item.is-selected.is-checked,
+.suggestion-item.is-selected.ntg-checked,
+.suggestion-item.ntg-keyboard-current.is-checked,
+.suggestion-item.ntg-keyboard-current.ntg-checked,
+.ntg-nav-row.is-selected.is-checked,
+.ntg-nav-row.is-selected.ntg-checked,
+.ntg-nav-row.ntg-keyboard-current.is-checked,
+.ntg-nav-row.ntg-keyboard-current.ntg-checked,
+.ntg-collect-row.is-selected.is-checked,
+.ntg-collect-row.is-selected.ntg-checked,
+.ntg-collect-row.ntg-keyboard-current.is-checked,
+.ntg-collect-row.ntg-keyboard-current.ntg-checked,
+.suggestion-item.is-selected.is-checked .ntg-nav-row,
+.suggestion-item.ntg-keyboard-current.ntg-checked .ntg-nav-row {
+    background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.08)) !important;
+}
+
+/* Remove redundant X close button in upper right */
+.ntg-collect-modal .modal-close-button {
+    display: none !important;
+}
+
+/* Section 2: Fixed-column grid layout for every row */
+.ntg-grid-row {
     display: flex;
-    justify-content: flex-start;
     align-items: center;
     width: 100%;
+    padding: 5px 8px;
+    box-sizing: border-box;
+}
+
+/* Column 1: Checkbox column */
+.ntg-col-checkbox {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-right: 6px;
 }
 
 .collect-tabs-row-checkbox,
@@ -109,14 +163,14 @@ body.ntg-color-active-tab.theme-dark .workspace-tab-header.is-active {
     appearance: auto;
     -webkit-appearance: auto;
     accent-color: var(--checkbox-color, var(--interactive-accent, #7c3aed));
-    margin-right: 0.65em;
     cursor: default;
-    pointer-events: none; /* visual indicator only; space toggles row */
+    pointer-events: none; /* visual indicator only; row click / space toggles row */
     width: 14px;
     height: 14px;
     border-color: var(--checkbox-border-color, var(--interactive-accent, #7c3aed));
     vertical-align: middle;
     flex-shrink: 0;
+    margin: 0;
 }
 
 .collect-tabs-row-checkbox:disabled,
@@ -125,14 +179,211 @@ body.ntg-color-active-tab.theme-dark .workspace-tab-header.is-active {
     cursor: default;
 }
 
-.suggestion-item.ntg-control-separator,
-.ntg-nav-row.ntg-control-separator {
-    border-top: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.1));
-    margin-top: 4px;
-    padding-top: 4px;
+/* Column 2: Graphical Tag Badge (Identity Tile) */
+.ntg-col-badge {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-right: 12px;
 }
 
-.ntg-control-row .ntg-action-label {
-    color: var(--text-accent, var(--interactive-accent, #7c3aed));
-    font-weight: 500;
+.ntg-col-spacer {
+    visibility: hidden;
 }
+
+/* Section 3: Neutral identity tile for all physical windows */
+.ntg-window-badge {
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-s, 4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: var(--font-semibold, 600);
+    line-height: 1;
+    user-select: none;
+    box-sizing: border-box;
+    font-family: inherit;
+    background-color: var(--background-modifier-form-field, rgba(255, 255, 255, 0.08));
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.15));
+}
+
+/* All windows glyph badge (identical container footprint) */
+.ntg-badge-all {
+    font-size: 11px;
+}
+
+/* Column 3: Description column with structured typography */
+.ntg-col-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+    margin-right: 12px;
+}
+
+.ntg-desc-primary {
+    color: var(--text-normal);
+    font-size: var(--font-ui-small, 13px);
+    font-weight: var(--font-medium, 500);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 1;
+}
+
+.ntg-desc-separator {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin: 0 6px;
+    flex-shrink: 0;
+    user-select: none;
+    opacity: 0.7;
+}
+
+.ntg-desc-secondary {
+    color: var(--text-muted);
+    font-size: var(--font-ui-small, 13px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 2;
+}
+
+.ntg-desc-count {
+    color: var(--text-faint, var(--text-muted));
+    font-size: var(--font-ui-smaller, 11px);
+    margin-left: 6px;
+    flex-shrink: 0;
+    user-select: none;
+    opacity: 0.8;
+}
+
+/* Column 4: Status Column (fixed width 84px, right-aligned) */
+.ntg-col-status {
+    width: 84px;
+    min-width: 84px;
+    max-width: 84px;
+    flex: 0 0 84px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    box-sizing: border-box;
+}
+
+/* Section 4: Reversed visual emphasis for HERE and MAIN status pills */
+.ntg-status-pill {
+    font-size: 10px;
+    font-weight: var(--font-semibold, 600);
+    letter-spacing: 0.04em;
+    padding: 1px 6px;
+    border-radius: var(--radius-s, 4px);
+    white-space: nowrap;
+    user-select: none;
+    line-height: 1.4;
+    box-sizing: border-box;
+}
+
+/* MAIN: lighter, neutral-outline/quiet status-pill treatment */
+.ntg-status-pill.ntg-pill-main {
+    background-color: var(--background-modifier-form-field, rgba(255, 255, 255, 0.04));
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.12));
+}
+
+/* HERE and HERE · MAIN: modestly stronger/tinted status-pill treatment */
+.ntg-status-pill.ntg-pill-here,
+.ntg-status-pill.ntg-pill-here-main {
+    background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.10));
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border-focus, var(--background-modifier-border, rgba(255, 255, 255, 0.22)));
+}
+
+/* Modal styling and quiet search input */
+.ntg-collect-modal {
+    position: relative;
+}
+
+.ntg-collect-modal input.prompt-input {
+    height: 30px;
+    padding: 4px 10px;
+    font-size: var(--font-ui-smaller, 12px);
+}
+
+/* Section 3 & 5: Persistent bottom action toolbar */
+.collect-tabs-action-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-top: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.1));
+    box-sizing: border-box;
+    gap: 8px;
+}
+
+.collect-tabs-action-toolbar .ntg-toolbar-left,
+.collect-tabs-action-toolbar .ntg-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.collect-tabs-action-toolbar button {
+    font-size: var(--font-ui-smaller, 12px);
+    padding: 4px 12px;
+    border-radius: var(--radius-s, 4px);
+    font-family: inherit;
+    cursor: pointer;
+    line-height: 1.4;
+    box-sizing: border-box;
+    transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+
+/* Secondary buttons: Select all, Clear selection, Cancel */
+.collect-tabs-action-toolbar button:not(.mod-cta) {
+    background-color: var(--background-modifier-form-field, var(--interactive-normal, rgba(255, 255, 255, 0.08)));
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.15));
+}
+
+.collect-tabs-action-toolbar button:not(.mod-cta):hover:not(:disabled) {
+    background-color: var(--background-modifier-hover, rgba(255, 255, 255, 0.12));
+}
+
+.collect-tabs-action-toolbar button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--text-muted);
+}
+
+/* Primary button: Collect */
+.collect-tabs-action-toolbar button.mod-cta {
+    background-color: var(--interactive-accent, #7c3aed);
+    color: var(--text-on-accent, #ffffff);
+    border: 1px solid var(--interactive-accent, #7c3aed);
+    font-weight: var(--font-semibold, 600);
+}
+
+.collect-tabs-action-toolbar button.mod-cta:hover {
+    background-color: var(--interactive-accent-hover, #6d28d9);
+}
+
+/* Remove excess blank space beneath controls */
+.ntg-collect-modal .prompt {
+    min-height: unset;
+    height: auto;
+}
+
+.ntg-collect-modal .prompt-results {
+    padding-bottom: 2px;
+    max-height: 60vh;
+}
+
+

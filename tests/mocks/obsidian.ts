@@ -444,6 +444,7 @@ export class MockSuggestModal<T> {
     emptyStateText = '';
     isOpen = false;
     contentEl: HTMLElement = document.createElement('div');
+    modalEl: HTMLElement = document.createElement('div');
     resultContainerEl: HTMLElement = document.createElement('div');
     inputEl: HTMLInputElement = document.createElement('input');
     scope = {
@@ -464,6 +465,13 @@ export class MockSuggestModal<T> {
 
     constructor(app: MockApp) {
         this.app = app;
+        const promptEl = this.modalEl.createDiv({ cls: 'prompt' });
+        const inputContainer = promptEl.createDiv({ cls: 'prompt-input-container' });
+        this.inputEl.addClass('prompt-input');
+        inputContainer.appendChild(this.inputEl);
+        promptEl.appendChild(this.resultContainerEl);
+        this.resultContainerEl.addClass('prompt-results');
+        promptEl.createDiv({ cls: 'prompt-instructions' });
     }
 
     setPlaceholder(placeholder: string): void {
@@ -472,12 +480,58 @@ export class MockSuggestModal<T> {
 
     setInstructions(instructions: Array<{ command: string; purpose: string }>): void {
         this.instructions = instructions;
+        const instContainer = this.modalEl.querySelector('.prompt-instructions');
+        if (instContainer) {
+            instContainer.empty();
+            for (const inst of instructions) {
+                const item = (instContainer as HTMLElement).createDiv({ cls: 'prompt-instruction' });
+                item.createSpan({ cls: 'prompt-instruction-command', text: inst.command });
+                item.createSpan({ text: inst.purpose });
+            }
+        }
     }
 
-    setSelectedItem(_index?: number): void { /* no-op for mock */ }
+    chooser: any = {
+        selectedItem: 0,
+        values: [] as any[],
+        suggestions: [] as HTMLElement[],
+        setSelectedItem: (index: number, _scroll?: boolean) => {
+            this.chooser.selectedItem = index;
+            if (this.chooser.suggestions) {
+                this.chooser.suggestions.forEach((el: HTMLElement, i: number) => {
+                    if (i === index) el.addClass('is-selected');
+                    else el.removeClass('is-selected');
+                });
+            }
+        },
+    };
+
+    updateSuggestions(): void {
+        this.chooser.values = this.getSuggestions(this.inputEl.value || '');
+        this.resultContainerEl.empty();
+        this.chooser.suggestions = this.chooser.values.map((val: any) => {
+            const itemEl = this.resultContainerEl.createDiv({ cls: 'suggestion-item' });
+            this.renderSuggestion(val, itemEl);
+            return itemEl;
+        });
+        const currentIdx = typeof this.chooser?.selectedItem === 'number' ? this.chooser.selectedItem : 0;
+        if (typeof this.chooser?.setSelectedItem === 'function') {
+            this.chooser.setSelectedItem(Math.max(0, Math.min(currentIdx, Math.max(0, (this.chooser.suggestions?.length || 1) - 1))));
+        }
+    }
+
+    setSelectedItem(index?: number): void {
+        if (typeof index === 'number' && typeof this.chooser?.setSelectedItem === 'function') {
+            this.chooser.setSelectedItem(index);
+        }
+    }
 
     open(): void {
         this.isOpen = true;
+        if (typeof document !== 'undefined' && document.body && !document.body.contains(this.modalEl)) {
+            document.body.appendChild(this.modalEl);
+        }
+        this.updateSuggestions();
         this.onOpen();
     }
 
@@ -485,6 +539,9 @@ export class MockSuggestModal<T> {
 
     close(): void {
         this.isOpen = false;
+        if (this.modalEl && this.modalEl.parentNode) {
+            this.modalEl.parentNode.removeChild(this.modalEl);
+        }
         this.onClose();
     }
 
@@ -504,7 +561,10 @@ export class MockSuggestModal<T> {
 }
 
 export class MockNotice {
-    constructor(public message: string, _timeout?: number) {}
+    static notices: MockNotice[] = [];
+    constructor(public message: string, _timeout?: number) {
+        MockNotice.notices.push(this);
+    }
 }
 export const Notice = MockNotice;
 
