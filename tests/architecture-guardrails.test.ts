@@ -90,6 +90,74 @@ describe('Architecture guardrails: workspace/leaf lifecycle safety', () => {
     });
 });
 
+describe('Architecture guardrails: private Obsidian API calls', () => {
+    it('never calls chooser.setSelectedItem with a boolean second argument, anywhere in the plugin', () => {
+        // History: chooser.setSelectedItem(index, true) crashed real Obsidian
+        // 1.13.7's internal forceSetSelectedItem with "t.instanceOf is not a
+        // function", since its real signature is (index, event?: Event), not
+        // (index, scrollIntoView: boolean). This exact pattern was found in
+        // THREE separate places (src/ui/collect-tabs-modal.ts, src/utils/modal.ts's
+        // Ctrl+N/Ctrl+P emacs motion keys, and main.ts's NavigationSuggestModal) --
+        // all copied from the same stale assumption about the API signature.
+        // Guard the whole plugin, not just one file.
+        const filesToCheck = [
+            path.resolve(__dirname, '../main.ts'),
+            path.resolve(__dirname, '../src/ui/collect-tabs-modal.ts'),
+            path.resolve(__dirname, '../src/utils/modal.ts'),
+        ];
+        for (const filePath of filesToCheck) {
+            const source = fs.readFileSync(filePath, 'utf-8');
+            expect(source).not.toMatch(/setSelectedItem\([^)]*,\s*true\)/);
+        }
+    });
+
+    it('collect-tabs-modal.ts wraps its chooser.setSelectedItem calls in try/catch', () => {
+        // The uncaught throw happened inside onOpen(), synchronously and early,
+        // skipping the ArrowUp/ArrowDown scope registrations set up afterward.
+        // Both call sites (the direct call in setHighlightedIndex, and the
+        // hooked wrapper's call to the original method) must be wrapped in
+        // try/catch, since this is an undocumented internal API that can change
+        // or fail in ways obsidian.d.ts cannot warn about.
+        const modalTsPath = path.resolve(__dirname, '../src/ui/collect-tabs-modal.ts');
+        const modalSource = fs.readFileSync(modalTsPath, 'utf-8');
+
+        const setSelectedItemCalls = [...modalSource.matchAll(/\bchooser\.setSelectedItem\(/g)];
+        expect(setSelectedItemCalls.length).toBeGreaterThan(0); // sanity: still present somewhere
+
+        // The direct call in setHighlightedIndex must be wrapped in try/catch.
+        const setHighlightedIndexMatch = modalSource.match(
+            /public setHighlightedIndex\(index: number\): void \{[\s\S]*?\n {4}\}/
+        );
+        expect(setHighlightedIndexMatch).not.toBeNull();
+        expect(setHighlightedIndexMatch![0]).toMatch(/try\s*\{[\s\S]*?chooser\.setSelectedItem\([\s\S]*?\}\s*catch/);
+    });
+});
+
+describe('Architecture guardrails: multi-window collection destination selection', () => {
+    it('collectTabs("multi", ...) picks the destination from the checked-windows snapshot, never from a freshly re-queried active leaf/window', () => {
+        // History: the destination for a multi-popout collection was picked by
+        // re-querying "the active window" (via a fresh activeLeaf/currentWinInfo
+        // computed at the moment collectTabs() runs) rather than using the
+        // isCurrentWindow flag already captured in the checked-windows snapshot
+        // when the modal opened. If live focus moved between modal-open and
+        // modal-close (e.g. because closing the modal returned focus to the Main
+        // Window), tabs landed in the wrong window, and a window that should
+        // have survived as the destination could be evacuated too. The fix
+        // derives destWinInfo purely from checkedWindows' own isCurrentWindow
+        // flags (or mainWinInfo when Main is checked), never from currentWinInfo
+        // or a bare activeLeaf fallback.
+        const multiMatch = mainTsSource.match(
+            /\} else if \(scope === 'multi' && Array\.isArray\(source\)\) \{[\s\S]*?\n {8}\}/
+        );
+        expect(multiMatch).not.toBeNull();
+        const multiBranch = multiMatch![0];
+
+        expect(multiBranch).toContain('checkedWindows.find((w) => w.isCurrentWindow)');
+        expect(multiBranch).not.toMatch(/currentWinInfo\.window/);
+        expect(multiBranch).not.toMatch(/destWinInfo\.isCurrentWindow\s*\?\s*activeLeaf/);
+    });
+});
+
 describe('Architecture guardrails: single-source-of-truth event handling', () => {
     it('collect-tabs-modal registers Space exactly once, never via Scope', () => {
         // History: Space was registered in THREE overlapping places (Scope ' ',

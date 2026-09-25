@@ -68,9 +68,23 @@ lesson from scratch.
    in `closePopoutWindowIfEmpty` was a real, shipped bug (fixed in
    `97bfc70`).
 
+5. **When a modal captures a snapshot of "which window this command was
+   invoked from," use that snapshot as the destination for the resulting
+   action — never re-derive "the current/active window" from scratch at the
+   moment the modal's callback actually runs.** Live focus can move between
+   modal-open and modal-close (e.g. because closing a modal in a popout
+   returns focus to the Main Window). Re-querying "active window" at that
+   later point can silently pick the wrong destination and misjudge which
+   window is safe to evacuate/close, corrupting the user's intended merge
+   target. When collecting/merging across multiple checked items, ALWAYS
+   include every checked window's own tabs in the merge (including the
+   destination window's other pre-existing tab groups) rather than treating
+   the destination as already-consolidated; only the *other* checked windows
+   should be short-circuited from the merge.
+
 ## Hard rules for modal keyboard/focus handling
 
-5. **Exactly one registration path per keyboard shortcut.** Either
+6. **Exactly one registration path per keyboard shortcut.** Either
    Obsidian's `Scope` API or a single DOM listener on a single element —
    never both, and never on more than one DOM element. Space was once
    registered in three overlapping places (`scope.register([], ' ')`,
@@ -81,7 +95,7 @@ lesson from scratch.
    to notice by inspection or casual testing than an outright crash, because
    the net *visible* effect can be zero.
 
-6. **Do not trust Obsidian's private/internal object fields** (e.g.
+7. **Do not trust Obsidian's private/internal object fields** (e.g.
    `chooser.selectedItem`) as the sole source of truth for this plugin's own
    tracked UI state. Obsidian can mutate them independently (e.g. during its
    own internal re-render), desyncing them from what your code set up
@@ -90,14 +104,14 @@ lesson from scratch.
    internals defensively through your own override hooks — never as the
    authoritative value for a decision.
 
-7. **One state, one field.** When two UI elements are meant to represent the
+8. **One state, one field.** When two UI elements are meant to represent the
    same underlying fact (e.g. a checkbox and a full-row highlight both
    meaning "this is what gets collected by default"), derive both from the
    same field. Two independently-mutable flags claiming to represent the
    same thing will drift, and the resulting inconsistency reads to a user as
    "the checkbox is lying about what will happen."
 
-8. **jsdom does not replicate real-browser focus/blur side effects that this
+9. **jsdom does not replicate real-browser focus/blur side effects that this
    plugin's tests need to reason about.** Concretely: `element.click()` does
    not auto-focus the element in jsdom (real Chromium does), and hiding the
    currently-focused element (`display: none`) does not auto-blur it in
@@ -112,6 +126,30 @@ lesson from scratch.
    possible, avoid depending on `document.activeElement` for control flow at
    all, since it makes this whole class of test-vs-reality mismatch
    possible in the first place.
+
+10. **Never call an Obsidian private/internal method with a guessed argument
+    and no `try`/`catch`.** This plugin called `chooser.setSelectedItem(index,
+    true)` intending "scroll into view", but real Obsidian's signature is
+    `setSelectedItem(index, event?: Event)` — passing a boolean made its
+    internal `forceSetSelectedItem` throw `TypeError: t.instanceOf is not a
+    function` on Obsidian 1.13.7. Because `onOpen()` calls this synchronously
+    and early, the uncaught throw skipped everything set up afterward,
+    including the ArrowUp/ArrowDown scope registrations — intermittently
+    breaking keyboard navigation depending on the chooser's internal state,
+    with no visible error to the user. The mock's `chooser.setSelectedItem`
+    never throws, so no test caught this until it crashed in real Obsidian.
+    **This exact stale-signature assumption was copy-pasted into three
+    separate places** (`src/ui/collect-tabs-modal.ts`, the shared Ctrl+N/Ctrl+P
+    emacs motion keys in `src/utils/modal.ts`, and `main.ts`'s
+    `NavigationSuggestModal`) — when fixing one call site of a private-API
+    misuse, grep the whole plugin for the same method name, since the same
+    wrong assumption is often duplicated elsewhere. Any call into an Obsidian
+    internal (undocumented, non-`obsidian.d.ts`) method must (a) pass argument
+    types matching what that method actually expects in the installed
+    Obsidian version, not an assumed/older signature, and (b) be wrapped in
+    `try`/`catch` regardless, since these APIs can change or fail in ways
+    `obsidian.d.ts` gives no warning about. Never let such a call's failure
+    abort the rest of the function it's in.
 
 ## Before considering a change to these areas complete
 

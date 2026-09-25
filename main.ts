@@ -1229,7 +1229,12 @@ export default class NextTabGroupPlugin extends Plugin {
                     } else if (result.kind === 'all') {
                         void this.collectTabs('all');
                     } else if (result.kind === 'window') {
-                        void this.collectTabs('window', result.winInfo);
+                        // Collecting between the initiating window and exactly one
+                        // other window is just a 2-element case of 'multi': share
+                        // that single destination/merge algorithm rather than a
+                        // separate implementation, using the same currentWinInfo
+                        // snapshot captured when the modal opened.
+                        void this.collectTabs('multi', [currentWinInfo, result.winInfo]);
                     }
                 }
             },
@@ -1303,14 +1308,13 @@ export default class NextTabGroupPlugin extends Plugin {
      * - 'current': Collects editor tabs in the focused window into its active group.
      * - 'all': Gathers all tabs from all popout windows into the main window's active group,
      *          deleting all evacuated popout windows.
-     * - 'window': If collection includes the main window, moves tabs into the main window and
-     *             deletes the popup window. If only popups, moves tabs into the focused popup
-     *             and deletes the other popup.
-     * - 'multi': Handles arbitrary combination of checked windows per Section 7.
+     * - 'multi': Handles an arbitrary combination of checked windows (including the common
+     *            2-window "collect this window and one other" case, which is just a
+     *            2-element instance of the same destination/merge algorithm).
      */
     private async collectTabs(
-        scope: 'current' | 'all' | 'window' | 'multi' = 'current',
-        source?: WindowInfo | Window | WindowInfo[],
+        scope: 'current' | 'all' | 'multi' = 'current',
+        source?: WindowInfo[],
     ) {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         if (!activeLeaf || this.isSidebarLeaf(activeLeaf) || (activeLeaf as any).detached) return;
@@ -1346,132 +1350,50 @@ export default class NextTabGroupPlugin extends Plugin {
             tabsToMigrate = model.tabs
                 .map((t) => t.leaf)
                 .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
-        } else if (scope === 'window' && source) {
-            const srcWinInfo = ('groups' in source) ? source : model.windows.find((w) => w.window === source);
-            if (!srcWinInfo) return;
-
-            const includesMain = currentWinInfo.isMainWindow || srcWinInfo.isMainWindow;
-
-            if (includesMain) {
-                // Rule 1: When collection includes the main window, collected tabs must go
-                // to the main window, and the popup window collected must be deleted.
-                // Popup windows should never empty the main window!
-                destLeaf = mainWinInfo.representative;
-                const targetParent = destLeaf.parent as any;
-                if (!targetParent) return;
-
-                const popupToEvacuate = currentWinInfo.isMainWindow ? srcWinInfo : currentWinInfo;
-                if (!popupToEvacuate.isMainWindow && popupToEvacuate.window && !popupToEvacuate.window.closed) {
-                    evacuatedPopouts.add(popupToEvacuate.window);
-                }
-
-                tabsToMigrate = this.getTabsInWindow(model, popupToEvacuate.window)
-                    .map((t) => t.leaf)
-                    .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
-            } else {
-                // Rule 1: If only popup windows are selected for collection, collected tabs
-                // go to the popup that's currently in focus, and the other popup window is deleted.
-                destLeaf = activeLeaf;
-                const targetParent = destLeaf.parent as any;
-                if (!targetParent) return;
-
-                if (srcWinInfo.window && !srcWinInfo.window.closed) {
-                    evacuatedPopouts.add(srcWinInfo.window);
-                }
-
-                tabsToMigrate = this.getTabsInWindow(model, srcWinInfo.window)
-                    .map((t) => t.leaf)
-                    .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
-            }
         } else if (scope === 'multi' && Array.isArray(source)) {
             const checkedWindows = source as WindowInfo[];
             if (checkedWindows.length === 0) return;
 
-            const allWindowsChecked = model.windows.every((w) =>
-                checkedWindows.some((cw) => cw.window === w.window)
-            );
             const includesMain = checkedWindows.some(
                 (w) => w.isMainWindow || w.window === this.getMainWindow()
             );
 
-            if (allWindowsChecked) {
-                // Collect everything into the Main Window, close every popout
-                destLeaf = mainWinInfo.representative;
-                const targetParent = destLeaf.parent as any;
-                if (!targetParent) return;
+            // Destination window:
+            // - If the Main Window is among the checked windows, it is always the
+            //   destination (popup windows never empty the Main Window).
+            // - Otherwise, the destination is the window the command was actually
+            //   invoked from (the modal's snapshot marks it isCurrentWindow at the
+            //   time it was opened). This must NOT be re-derived from a freshly
+            //   re-queried "active window" here: by the time this callback runs
+            //   (e.g. right as the modal closes), live focus can have moved to a
+            //   window that was never checked at all, which previously sent tabs
+            //   to the wrong destination and could misidentify which window is
+            //   safe to evacuate.
+            const destWinInfo = includesMain
+                ? mainWinInfo
+                : (checkedWindows.find((w) => w.isCurrentWindow) ?? checkedWindows[0]);
 
-                for (const winInfo of model.windows) {
-                    if (!winInfo.isMainWindow && winInfo.window && !winInfo.window.closed) {
-                        evacuatedPopouts.add(winInfo.window);
-                    }
-                }
+            destLeaf = destWinInfo.representative;
+            const targetParent = destLeaf.parent as any;
+            if (!targetParent) return;
 
-                tabsToMigrate = model.tabs
+            // Merge every tab group from every checked window -- including the
+            // destination window's OWN other tab groups -- into targetParent.
+            // Collecting across windows always merges into a single group; a
+            // window is never partially collected into just one of its own
+            // several groups while leaving another untouched.
+            for (const w of checkedWindows) {
+                const leaves = this.getTabsInWindow(model, w.window)
                     .map((t) => t.leaf)
                     .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
-            } else if (includesMain) {
-                // Main window + some (or 0) popout windows
-                destLeaf = mainWinInfo.representative;
-                const targetParent = destLeaf.parent as any;
-                if (!targetParent) return;
+                tabsToMigrate.push(...leaves);
+            }
 
-                const popoutsToEvacuate = checkedWindows.filter(
-                    (w) => !w.isMainWindow && w.window !== this.getMainWindow()
-                );
-
-                for (const p of popoutsToEvacuate) {
-                    if (p.window && !p.window.closed) {
-                        evacuatedPopouts.add(p.window);
-                    }
-                }
-
-                if (popoutsToEvacuate.length > 0) {
-                    for (const p of popoutsToEvacuate) {
-                        const leaves = this.getTabsInWindow(model, p.window)
-                            .map((t) => t.leaf)
-                            .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
-                        tabsToMigrate.push(...leaves);
-                    }
-                } else {
-                    // Only Main Window was checked: consolidate tabs within Main Window
-                    tabsToMigrate = this.getTabsInWindow(model, mainWinInfo.window)
-                        .map((t) => t.leaf)
-                        .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
-                }
-            } else {
-                // Only popout windows, Main Window is NOT checked.
-                // Pick destination: whichever has focus, or first in checked set.
-                const focusedChecked = checkedWindows.find(
-                    (w) => w.isCurrentWindow || w.window === currentWinInfo.window
-                );
-                const destWinInfo = focusedChecked ?? checkedWindows[0];
-
-                destLeaf = destWinInfo.isCurrentWindow ? activeLeaf : destWinInfo.representative;
-                const targetParent = destLeaf.parent as any;
-                if (!targetParent) return;
-
-                const popoutsToEvacuate = checkedWindows.filter(
-                    (w) => w.window !== destWinInfo.window
-                );
-
-                for (const p of popoutsToEvacuate) {
-                    if (p.window && !p.window.closed) {
-                        evacuatedPopouts.add(p.window);
-                    }
-                }
-
-                if (popoutsToEvacuate.length > 0) {
-                    for (const p of popoutsToEvacuate) {
-                        const leaves = this.getTabsInWindow(model, p.window)
-                            .map((t) => t.leaf)
-                            .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
-                        tabsToMigrate.push(...leaves);
-                    }
-                } else {
-                    // Only 1 popout was checked: consolidate tabs within that popout
-                    tabsToMigrate = this.getTabsInWindow(model, destWinInfo.window)
-                        .map((t) => t.leaf)
-                        .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !(leaf as any).detached);
+            // Evacuate every checked window other than the destination (the Main
+            // Window is never force-closed).
+            for (const w of checkedWindows) {
+                if (w.window !== destWinInfo.window && !w.isMainWindow && w.window && !w.window.closed) {
+                    evacuatedPopouts.add(w.window);
                 }
             }
         }
@@ -2308,9 +2230,18 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
                 // Access Obsidian's internal chooser object
                 const chooser = (this as any).chooser;
                 if (chooser && typeof chooser.setSelectedItem === 'function') {
-                    // Select the target index. The second argument (true) ensures
-                    // the list scrolls down to the item if it happens to be off-screen.
-                    chooser.setSelectedItem(this.initialIndex, true);
+                    // Real Obsidian's setSelectedItem(index, event?) expects an
+                    // Event (or undefined) as its second argument, not a boolean
+                    // "scroll into view" flag. Passing a boolean (confirmed on
+                    // 1.13.7) can throw internally ("t.instanceOf is not a
+                    // function") -- this is an undocumented private API, so call
+                    // it with no second argument and never let a failure here
+                    // propagate uncaught out of this deferred timer callback.
+                    try {
+                        chooser.setSelectedItem(this.initialIndex);
+                    } catch {
+                        chooser.selectedItem = this.initialIndex;
+                    }
                 }
             }, 0);
         }

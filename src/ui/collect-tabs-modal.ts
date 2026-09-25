@@ -237,8 +237,28 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         const chooser = (this as any).chooser;
         if (chooser) {
             chooser.selectedItem = target;
+            // Obsidian's real chooser.setSelectedItem(index, event?) expects an
+            // Event (or undefined) as its second argument -- NOT a boolean.
+            // Passing `true` (confirmed on Obsidian 1.13.7) makes its internal
+            // forceSetSelectedItem throw ("t.instanceOf is not a function") when
+            // it tries to type-check the "event". That throw is uncaught here
+            // and would otherwise unwind this entire function -- skipping our
+            // own updateHighlightVisuals() below, and (since onOpen() calls this
+            // synchronously) everything onOpen() sets up afterward, including
+            // the ArrowUp/ArrowDown scope registrations. Call with no second
+            // argument (we have no real event to give it) and keep the try/catch
+            // as defense-in-depth against future Obsidian internal changes. We
+            // already keep chooser.selectedItem and our own highlightedIndex in
+            // sync directly above/elsewhere, and render our own highlight via
+            // updateHighlightVisuals(), so this call is a best-effort nicety
+            // (Obsidian's own scroll-into-view) that must never be allowed to
+            // break the rest of modal setup if it fails.
             if (typeof chooser.setSelectedItem === 'function') {
-                chooser.setSelectedItem(target, true);
+                try {
+                    chooser.setSelectedItem(target);
+                } catch {
+                    // ignore: see comment above
+                }
             }
         }
 
@@ -433,8 +453,17 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         if (chooser) {
             const orig = chooser.setSelectedItem?.bind(chooser);
             chooser.setSelectedItem = (index: number, scroll?: boolean) => {
-                if (orig) orig(index, scroll);
-                else chooser.selectedItem = index;
+                // See the matching comment in setHighlightedIndex(): Obsidian's
+                // real setSelectedItem can throw internally depending on its
+                // internal state and the (mismatched) argument types plugins
+                // typically pass it. Never let that break our own bookkeeping
+                // below or whatever caller (ours or Obsidian's own) invoked this.
+                try {
+                    if (orig) orig(index, scroll);
+                    else chooser.selectedItem = index;
+                } catch {
+                    chooser.selectedItem = index;
+                }
                 this.highlightedIndex = index;
                 this.updateHighlightVisuals();
             };

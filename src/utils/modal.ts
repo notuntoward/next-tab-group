@@ -3,7 +3,25 @@ import type { SuggestModal } from 'obsidian';
 interface ChooserLike {
     selectedItem?: number;
     values?: unknown[];
-    setSelectedItem(index: number, scrollIntoView: boolean): void;
+    // Real Obsidian's signature is (index: number, event?: Event) -- not a
+    // boolean "scroll into view" flag. Callers must not pass a boolean here:
+    // see the try/catch usage below.
+    setSelectedItem(index: number, event?: unknown): void;
+}
+
+/**
+ * Calls chooser.setSelectedItem(index) defensively. Real Obsidian's internal
+ * forceSetSelectedItem can throw (confirmed on 1.13.7: "TypeError:
+ * t.instanceOf is not a function") depending on its internal state and the
+ * argument types passed to it. This is an undocumented, private API -- never
+ * let a failure here propagate out of a scope-registered key handler.
+ */
+function setSelectedItemSafely(chooser: ChooserLike, index: number): void {
+    try {
+        chooser.setSelectedItem(index);
+    } catch {
+        chooser.selectedItem = index;
+    }
 }
 
 function getChooser(modal: SuggestModal<unknown>): ChooserLike | undefined {
@@ -85,7 +103,7 @@ export function registerEmacsMotionKeys(modal: SuggestModal<unknown>): void {
         const next = current + 1;
 
         if (next >= 0 && next < count) {
-            chooser.setSelectedItem(next, true);
+            setSelectedItemSafely(chooser, next);
         }
         return false;
     });
@@ -101,7 +119,7 @@ export function registerEmacsMotionKeys(modal: SuggestModal<unknown>): void {
         const previous = current - 1;
 
         if (previous >= 0) {
-            chooser.setSelectedItem(previous, true);
+            setSelectedItemSafely(chooser, previous);
         }
         return false;
     });

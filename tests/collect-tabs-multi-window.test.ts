@@ -16,7 +16,7 @@ import type { WindowInfo } from '../main';
 
 type TestPlugin = NextTabGroupPlugin & {
     runCollectTabs: () => void;
-    collectTabs: (scope?: 'current' | 'all' | 'window' | 'multi', source?: WindowInfo | Window | WindowInfo[]) => Promise<void>;
+    collectTabs: (scope?: 'current' | 'all' | 'multi', source?: WindowInfo[]) => Promise<void>;
     describeWindow: (winOrInfo: WindowInfo | Window) => string;
     getActiveLeafInFocusedWindow: () => WorkspaceLeaf | null;
     buildNavigationModel: (activeLeaf: WorkspaceLeaf | null) => any;
@@ -314,6 +314,186 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.allLeaves = [p1];
             const singleDesc = plugin.describeWindow(win1Obj);
             expect(singleDesc).toBe('Project Notes.md');
+        });
+    });
+
+    describe('End-to-end: runCollectTabs() modal interaction -> collectTabs("multi")', () => {
+        // These tests drive the REAL modal (check/highlight rows, then trigger the
+        // real onPick callback wired by runCollectTabs()) rather than calling
+        // collectTabs('multi', ...) directly with hand-built arrays. This exercises
+        // the actual checkedWins construction logic in runCollectTabs()'s onPick,
+        // which the direct-call tests below bypass entirely.
+        it('checking HERE + Main (with a 3rd, unchecked popout present) leaves the unchecked popout completely untouched', async () => {
+            const mainGroup = new MockWorkspaceParent(rootContainer);
+            const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
+
+            const win3Obj = { name: 'popout3' } as unknown as Window;
+            const popoutWin3 = new MockWorkspaceWindow(win3Obj);
+            app.workspace.floatingSplit.children = [popoutWin1, popoutWin2, popoutWin3];
+            const popoutContainer3 = new MockWorkspaceContainer('window', win3Obj);
+
+            const popGroup1 = new MockWorkspaceParent(popoutContainer1);
+            const p1 = leaf('p1', 'Pop1.md', popGroup1, popoutContainer1);
+
+            const popGroup3 = new MockWorkspaceParent(popoutContainer3);
+            const p3 = leaf('p3', 'Pop3.md', popGroup3, popoutContainer3);
+
+            app.workspace.allLeaves = [m1, p1, p3];
+            app.workspace.rootLeaves = [m1];
+
+            // Command is invoked from Popout 1 (HERE).
+            app.workspace.setActiveLeaf(p1);
+            (globalThis as any).activeWindow = win1Obj;
+
+            let capturedModal: any = null;
+            const originalOpen = CollectTabsModal.prototype.open;
+            CollectTabsModal.prototype.open = function (this: any) {
+                capturedModal = this;
+            };
+
+            try {
+                await plugin.runCollectTabs();
+                expect(capturedModal).not.toBeNull();
+
+                const suggestions = capturedModal.getSuggestions('');
+                // Rows: [0]=HERE (Popout 1), [1]=All windows, [2]=Main, [3]=Popout 3
+                expect(suggestions[0].kind).toBe('current');
+                expect(suggestions[2].kind).toBe('window');
+                expect(suggestions[2].label).toBe('Main.md');
+                expect(suggestions[3].kind).toBe('window');
+                expect(suggestions[3].label).toBe('Pop3.md');
+
+                // HERE (Popout 1) is checked by default. Additionally check Main
+                // (row 2) and highlight it, exactly like a user checking two boxes
+                // and clicking Collect while Main is the last-highlighted row.
+                capturedModal.toggleRow(suggestions[2]);
+                capturedModal.setHighlightedIndex(2);
+
+                // Popout 3 (row 3) must remain unchecked.
+                expect(suggestions[3].checked).toBe(false);
+
+                capturedModal.executeCollection();
+                // executeCollection()'s onPick callback fires collectTabs() via a
+                // fire-and-forget `void` call (runCollectTabs() cannot await it
+                // synchronously from inside the modal's onPick), and collectTabs()
+                // itself awaits leaf.setViewState() per migrated leaf. Flush
+                // pending microtasks/macrotasks before asserting on its effects.
+                await new Promise((resolve) => setTimeout(resolve, 0));
+
+                // Popout 1's tab merges into Main (Main was checked -> Main is the
+                // destination), Popout 1 closes.
+                expect(p1.detached).toBe(true);
+                expect(popoutWin1.closed).toBe(true);
+
+                // Popout 3 must be completely untouched: it was never checked.
+                expect(p3.detached).toBe(false);
+                expect(popoutWin3.closed).toBe(false);
+                expect(popGroup3.children).toEqual([p3]);
+
+                // Main Window keeps its own tab plus the migrated one.
+                expect(m1.detached).toBe(false);
+                expect(mainGroup.children).toContain(m1);
+            } finally {
+                CollectTabsModal.prototype.open = originalOpen;
+                (globalThis as any).activeWindow = undefined;
+            }
+        });
+
+        it('with 4 total windows (Main, HERE, 2 other popouts), checking HERE + one popout leaves Main AND the other popout completely untouched', async () => {
+            // Precise reproduction of a real user report: Main, HERE (popout A),
+            // popout B, and popout C all open. HERE is checked by default; the
+            // user additionally checks popout B and leaves Main and popout C
+            // unchecked, highlight remaining on HERE (row 0). Only popout B's
+            // tabs should merge into HERE; Main and popout C must be completely
+            // untouched.
+            const mainGroup = new MockWorkspaceParent(rootContainer);
+            const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
+
+            const win3Obj = { name: 'popout3' } as unknown as Window;
+            const popoutWin3 = new MockWorkspaceWindow(win3Obj);
+            const popoutContainer3 = new MockWorkspaceContainer('window', win3Obj);
+
+            const win4Obj = { name: 'popout4' } as unknown as Window;
+            const popoutWin4 = new MockWorkspaceWindow(win4Obj);
+            const popoutContainer4 = new MockWorkspaceContainer('window', win4Obj);
+
+            app.workspace.floatingSplit.children = [popoutWin1, popoutWin3, popoutWin4];
+
+            // Popout A (HERE) = win1Obj/popoutContainer1
+            const popGroupA = new MockWorkspaceParent(popoutContainer1);
+            const pA = leaf('pA', 'PopA.md', popGroupA, popoutContainer1);
+
+            // Popout B = win3Obj (this is the one the user checks alongside HERE)
+            const popGroupB = new MockWorkspaceParent(popoutContainer3);
+            const pB = leaf('pB', 'PopB.md', popGroupB, popoutContainer3);
+
+            // Popout C = win4Obj (must remain completely untouched)
+            const popGroupC = new MockWorkspaceParent(popoutContainer4);
+            const pC = leaf('pC', 'PopC.md', popGroupC, popoutContainer4);
+
+            app.workspace.allLeaves = [m1, pA, pB, pC];
+            app.workspace.rootLeaves = [m1];
+
+            // Command invoked from Popout A (HERE).
+            app.workspace.setActiveLeaf(pA);
+            (globalThis as any).activeWindow = win1Obj;
+
+            let capturedModal: any = null;
+            const originalOpen = CollectTabsModal.prototype.open;
+            CollectTabsModal.prototype.open = function (this: any) {
+                capturedModal = this;
+            };
+
+            try {
+                await plugin.runCollectTabs();
+                expect(capturedModal).not.toBeNull();
+
+                const suggestions = capturedModal.getSuggestions('');
+                // Rows: [0]=HERE (Popout A), [1]=All windows, [2..]=Main, Popout B, Popout C in recency order
+                expect(suggestions).toHaveLength(5);
+                expect(suggestions[0].kind).toBe('current');
+                expect(suggestions[0].checked).toBe(true); // HERE checked by default
+
+                // Find Popout B's row (win3Obj) and check it, WITHOUT moving the
+                // highlight off of HERE (row 0) -- exactly like pressing Space on
+                // a row reached via arrow keys, then pressing Enter/Collect while
+                // still parked on HERE, or simply clicking Collect without
+                // touching the highlight at all.
+                const rowB = suggestions.find((s: any) => s.winInfo?.window === win3Obj);
+                expect(rowB).toBeTruthy();
+                capturedModal.toggleRow(rowB);
+
+                // Confirm Main and Popout C are NOT checked.
+                const rowMain = suggestions.find((s: any) => s.kind === 'window' && s.winInfo?.isMainWindow);
+                const rowC = suggestions.find((s: any) => s.winInfo?.window === win4Obj);
+                expect(rowMain.checked).toBe(false);
+                expect(rowC.checked).toBe(false);
+
+                capturedModal.executeCollection();
+                await new Promise((resolve) => setTimeout(resolve, 0));
+
+                // Popout B merged into HERE (Popout A), Popout B closes.
+                expect(pB.detached).toBe(true);
+                expect(popoutWin3.closed).toBe(true);
+                expect(popGroupA.children).toContain(pA);
+                expect(popGroupA.children.length).toBe(2); // pA + migrated pB
+
+                // Popout A (HERE, the destination) survives.
+                expect(pA.detached).toBe(false);
+                expect(popoutWin1.closed).toBe(false);
+
+                // Main Window must be completely untouched: it was never checked.
+                expect(m1.detached).toBe(false);
+                expect(mainGroup.children).toEqual([m1]);
+
+                // Popout C must be completely untouched: it was never checked.
+                expect(pC.detached).toBe(false);
+                expect(popoutWin4.closed).toBe(false);
+                expect(popGroupC.children).toEqual([pC]);
+            } finally {
+                CollectTabsModal.prototype.open = originalOpen;
+                (globalThis as any).activeWindow = undefined;
+            }
         });
     });
 
@@ -1446,7 +1626,12 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
         });
     });
 
-    describe('collectTabs("window", targetWin)', () => {
+    describe('2-window collect (delegates to collectTabs("multi", [current, target]))', () => {
+        // The single-choice "collect this window + one other window" case (what a
+        // 2-total-window setup typically produces) is not a separate code path: it
+        // is exactly a 2-element instance of the same 'multi' destination/merge
+        // algorithm exercised in the block below. These tests confirm the
+        // 2-window scenarios still behave correctly through that shared path.
         it('gathers only tabs from target window into active group and closes target window, leaving other popouts untouched', async () => {
             const mainGroup = new MockWorkspaceParent(rootContainer);
             const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
@@ -1461,8 +1646,27 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.rootLeaves = [m1];
             app.workspace.setActiveLeaf(m1);
 
-            // Gather only from Popout 1
-            await plugin.collectTabs('window', win1Obj);
+            const mainWinInfo: WindowInfo = {
+                window: globalThis.window,
+                representative: m1,
+                groups: [{ leaves: [m1] } as any],
+                lastActive: 200,
+                label: 'Main window',
+                isCurrentWindow: true,
+                isMainWindow: true,
+            };
+            const pop1Info: WindowInfo = {
+                window: win1Obj,
+                representative: p1,
+                groups: [{ leaves: [p1] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: false,
+                isMainWindow: false,
+            };
+
+            // Gather only from Popout 1 (invoked from Main Window)
+            await plugin.collectTabs('multi', [mainWinInfo, pop1Info]);
 
             // Popout 1 tab migrated and Popout 1 window closed
             expect(p1.detached).toBe(true);
@@ -1490,8 +1694,27 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.setActiveLeaf(p1);
             (globalThis as any).activeWindow = win1Obj;
 
-            // Collect Popout 2 into Popout 1
-            await plugin.collectTabs('window', win2Obj);
+            const pop1Info: WindowInfo = {
+                window: win1Obj,
+                representative: p1,
+                groups: [{ leaves: [p1] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: true,
+                isMainWindow: false,
+            };
+            const pop2Info: WindowInfo = {
+                window: win2Obj,
+                representative: p2,
+                groups: [{ leaves: [p2] } as any],
+                lastActive: 50,
+                label: 'Pop-out 2',
+                isCurrentWindow: false,
+                isMainWindow: false,
+            };
+
+            // Collect Popout 2 into Popout 1 (invoked from Popout 1)
+            await plugin.collectTabs('multi', [pop1Info, pop2Info]);
 
             // Popout 2 tab migrated, Popout 2 closed
             expect(p2.detached).toBe(true);
@@ -1524,8 +1747,27 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.setActiveLeaf(p1);
             (globalThis as any).activeWindow = win1Obj;
 
-            // Collect Main Window (includes Main Window)
-            await plugin.collectTabs('window', globalThis.window);
+            const pop1Info: WindowInfo = {
+                window: win1Obj,
+                representative: p1,
+                groups: [{ leaves: [p1] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: true,
+                isMainWindow: false,
+            };
+            const mainWinInfo: WindowInfo = {
+                window: globalThis.window,
+                representative: m1,
+                groups: [{ leaves: [m1] } as any],
+                lastActive: 200,
+                label: 'Main window',
+                isCurrentWindow: false,
+                isMainWindow: true,
+            };
+
+            // Collect Main Window (invoked from Popout 1; includes Main Window)
+            await plugin.collectTabs('multi', [pop1Info, mainWinInfo]);
 
             // Popout 1 tab migrated to Main Window, Popout 1 closed
             expect(p1.detached).toBe(true);
@@ -1798,6 +2040,136 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             expect(m1.detached).toBe(false);
             expect(p2.detached).toBe(false);
             expect(popoutWin2.closed).toBe(false);
+
+            (globalThis as any).activeWindow = undefined;
+        });
+
+        it('merges the destination popout\'s OTHER tab group too, not just the incoming window (side-by-side groups bug)', async () => {
+            // Bug: when the destination popout had two side-by-side tab groups,
+            // only the group containing the active/representative leaf received
+            // the incoming window's tabs; the destination's OTHER pre-existing
+            // group was left untouched. The spec is: ALL tab groups across ALL
+            // collected windows merge into a single group in the destination.
+            const mainGroup = new MockWorkspaceParent(rootContainer);
+            const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
+
+            // Popout 1 (destination) has TWO side-by-side tab groups.
+            const popGroup1a = new MockWorkspaceParent(popoutContainer1);
+            const p1a = leaf('p1a', 'Pop1a.md', popGroup1a, popoutContainer1);
+            const popGroup1b = new MockWorkspaceParent(popoutContainer1);
+            const p1b = leaf('p1b', 'Pop1b.md', popGroup1b, popoutContainer1);
+
+            const popGroup2 = new MockWorkspaceParent(popoutContainer2);
+            const p2 = leaf('p2', 'Pop2.md', popGroup2, popoutContainer2);
+
+            app.workspace.allLeaves = [m1, p1a, p1b, p2];
+            app.workspace.rootLeaves = [m1];
+
+            // Focused on Popout 1, in its first group (p1a).
+            app.workspace.setActiveLeaf(p1a);
+            (globalThis as any).activeWindow = win1Obj;
+
+            const pop1Info: WindowInfo = {
+                window: win1Obj,
+                representative: p1a,
+                groups: [{ leaves: [p1a] } as any, { leaves: [p1b] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: true,
+                isMainWindow: false,
+            };
+            const pop2Info: WindowInfo = {
+                window: win2Obj,
+                representative: p2,
+                groups: [{ leaves: [p2] } as any],
+                lastActive: 50,
+                label: 'Pop-out 2',
+                isCurrentWindow: false,
+                isMainWindow: false,
+            };
+
+            // Collect Popout 1 (destination, initiated from here) + Popout 2.
+            await plugin.collectTabs('multi', [pop1Info, pop2Info]);
+
+            // Popout 2's tab migrated in, and Popout 1's OWN second group (p1b)
+            // must also be merged into the same destination group as p1a.
+            expect(p2.detached).toBe(true);
+            expect(p1b.detached).toBe(true);
+            expect(p1a.detached).toBe(false);
+            expect(popoutWin2.closed).toBe(true);
+            expect(popoutWin1.closed).toBe(false);
+
+            (globalThis as any).activeWindow = undefined;
+        });
+
+        it('collects into the window the command was invoked from, even if live focus has since moved elsewhere (e.g. because the modal closed)', async () => {
+            // Bug: the destination for a multi-popout collection was picked using
+            // a freshly re-queried "active window" at the moment collectTabs()
+            // actually runs, rather than the window the collect-tabs command was
+            // originally invoked from (captured when the modal opened). If focus
+            // has moved elsewhere in the interim -- e.g. because closing the
+            // modal returned focus to the Main Window rather than the popout that
+            // opened it -- tabs would land in the wrong window, and the popout
+            // that should have survived as the destination could be evacuated too.
+            const mainGroup = new MockWorkspaceParent(rootContainer);
+            const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
+
+            const popGroup1 = new MockWorkspaceParent(popoutContainer1);
+            const p1 = leaf('p1', 'Pop1.md', popGroup1, popoutContainer1);
+
+            const popGroup2 = new MockWorkspaceParent(popoutContainer2);
+            const p2 = leaf('p2', 'Pop2.md', popGroup2, popoutContainer2);
+
+            app.workspace.allLeaves = [m1, p1, p2];
+            app.workspace.rootLeaves = [m1];
+
+            // Collect-tabs was invoked from Popout 1 (isCurrentWindow: true in the
+            // snapshot taken when the modal opened)...
+            const pop1Info: WindowInfo = {
+                window: win1Obj,
+                representative: p1,
+                groups: [{ leaves: [p1] } as any],
+                lastActive: 100,
+                label: 'Pop-out 1',
+                isCurrentWindow: true,
+                isMainWindow: false,
+            };
+            const pop2Info: WindowInfo = {
+                window: win2Obj,
+                representative: p2,
+                groups: [{ leaves: [p2] } as any],
+                lastActive: 50,
+                label: 'Pop-out 2',
+                isCurrentWindow: false,
+                isMainWindow: false,
+            };
+
+            // ...but by the time collectTabs() actually executes (e.g. right as
+            // the modal closes), live focus has moved to the Main Window, which
+            // was never checked at all.
+            app.workspace.setActiveLeaf(m1);
+            (globalThis as any).activeWindow = globalThis.window;
+
+            await plugin.collectTabs('multi', [pop1Info, pop2Info]);
+
+            // Popout 2 merges into Popout 1 (the window the command was actually
+            // invoked from), NOT into the Main Window. Migration creates a NEW
+            // leaf in the destination parent (via createLeafInParent) and detaches
+            // the original, so the meaningful check is which parent actually
+            // gained a child, not just whether the old leaf was detached.
+            expect(p2.detached).toBe(true);
+            expect(popoutWin2.closed).toBe(true);
+            expect(popGroup1.children.length).toBe(2); // p1 (untouched) + migrated Pop2 leaf
+            expect(popGroup1.children).toContain(p1);
+
+            // Popout 1 is the destination: it must survive, untouched-but-for-the-merge.
+            expect(p1.detached).toBe(false);
+            expect(popoutWin1.closed).toBe(false);
+
+            // Main Window must be completely untouched: it was never checked, and
+            // must NOT have gained the migrated leaf.
+            expect(m1.detached).toBe(false);
+            expect(mainGroup.children).toEqual([m1]);
 
             (globalThis as any).activeWindow = undefined;
         });
@@ -2732,6 +3104,77 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal.inputEl.dispatchEvent(spaceEvt);
 
                 expect(suggestions[0].checked).toBe(true);
+
+                modal.close();
+            });
+
+            it('13. A throwing chooser.setSelectedItem() (real Obsidian internal failure) does not abort the rest of onOpen()', () => {
+                // Bug: real Obsidian's chooser.setSelectedItem(index, event?)
+                // expects an Event (or undefined) as its second argument. This
+                // plugin called it with a boolean (`true`), which crashed inside
+                // Obsidian's own forceSetSelectedItem with
+                // "TypeError: t.instanceOf is not a function" on Obsidian 1.13.7.
+                // Since onOpen() calls setHighlightedIndex(0) synchronously and
+                // early, an uncaught throw there skipped everything set up
+                // afterward -- including the ArrowUp/ArrowDown scope
+                // registrations -- intermittently breaking keyboard navigation
+                // depending on the chooser's internal state. This test simulates
+                // that real-Obsidian throw (the mock's chooser.setSelectedItem
+                // never throws, so it cannot otherwise catch this) and asserts
+                // the rest of modal setup still completes.
+                const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
+                const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+
+                const currentWin: WindowInfo = {
+                    window: globalThis.window,
+                    representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200,
+                    label: 'Main window',
+                    isCurrentWindow: true,
+                    isMainWindow: true,
+                };
+                const otherWin: WindowInfo = {
+                    window: win1Obj,
+                    representative: p1,
+                    groups: [{ leaves: [p1] } as any],
+                    lastActive: 100,
+                    label: 'Pop-out 1',
+                    isCurrentWindow: false,
+                    isMainWindow: false,
+                };
+
+                const modal = new CollectTabsModal(app as unknown as App, currentWin, [otherWin], () => {});
+                // Simulate real Obsidian's internal failure mode precisely: only
+                // a boolean second argument (what this plugin used to pass)
+                // triggers the crash, matching forceSetSelectedItem's internal
+                // type-check on the "event" parameter. Obsidian's own internal
+                // calls (e.g. its initial render via updateSuggestions(), called
+                // from the base Modal.open() before our onOpen() even runs) pass
+                // no second argument or a real event, and must keep working.
+                const originalSetSelectedItem = (modal as any).chooser.setSelectedItem;
+                (modal as any).chooser.setSelectedItem = (index: number, event?: unknown) => {
+                    if (typeof event === 'boolean') {
+                        throw new TypeError('t.instanceOf is not a function');
+                    }
+                    return originalSetSelectedItem(index, event);
+                };
+
+                expect(() => modal.open()).not.toThrow();
+
+                // Everything onOpen() sets up AFTER the chooser.setSelectedItem
+                // call must still have run: ArrowDown/ArrowUp scope registrations...
+                const registeredKeys = (modal.scope as any).registrations.map((r: any) => r.key);
+                expect(registeredKeys).toContain('ArrowDown');
+                expect(registeredKeys).toContain('ArrowUp');
+
+                // ...and our own highlight bookkeeping/rendering still works.
+                expect(modal.highlightedIndex).toBe(0);
+                const items = modal.modalEl.querySelectorAll('.suggestion-item');
+                expect(items[0].classList.contains('is-selected')).toBe(true);
+
+                modal.moveHighlight(1);
+                expect(modal.highlightedIndex).toBe(1);
 
                 modal.close();
             });
