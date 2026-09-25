@@ -46,7 +46,11 @@ The command remembers which tab was active in each group, so switching between g
 
 **Command ID:** `collect-tabs`
 
-Gathers **all tabs from all other tab groups** into the currently active tab group, then closes all the now-empty tab groups. This is similar to the Emacs `delete-other-windows` command.
+Gathers tabs into a single tab group. Behavior depends on how many windows are open.
+
+### Single window
+
+With only one window open, gathers **all tabs from all other tab groups** into the currently active tab group, then closes all the now-empty tab groups. This is similar to the Emacs `delete-other-windows` command.
 
 **Before**:
 ```
@@ -64,6 +68,33 @@ Gathers **all tabs from all other tab groups** into the currently active tab gro
 ```
 
 All files remain open; the layout is simplified into a single focused group. Your cursor stays on the tab you started with. Use this when you're done comparing notes across panes and want to consolidate everything into one group.
+
+### Multiple windows
+
+With two or more windows open (main window plus pop-outs), the command opens a **window-selection modal** instead of collecting immediately.
+
+The modal lists one row per window, plus an **All windows** row:
+
+- Each window row shows a numbered badge (the main window is always **1**; pop-out numbers stay stable for the Obsidian session), the window's first two tab titles with a `+N` count for the rest, and status pills: **HERE** marks the window you invoked the command from, **MAIN** marks the main window.
+- Every row has a checkbox. The **HERE** row starts checked, since it is the default collect target.
+- Type in the filter box to narrow rows by tab title or window number.
+
+**Selecting windows**
+
+- **↑ / ↓** move the highlight; **Space** toggles the checkbox on the highlighted row.
+- Clicking anywhere on a row toggles its checkbox without closing the modal.
+- A footer toolbar offers **Select all** and **Clear selection** (shown only while something is checked), plus **Cancel** and **Collect** buttons. **Tab / Shift+Tab** cycle through the filter box and toolbar buttons.
+- The Emacs motion keys shared by all of this plugin's modals work here too: **Ctrl+F** / **Ctrl+B** move the input cursor, **Ctrl+N** / **Ctrl+P** move the selection.
+
+**What gets collected**
+
+Pressing **Enter** or clicking **Collect** collects the highlighted row *plus* every checked row — checking rows only adds to the collection and never discards the row you explicitly chose. Collecting a single window behaves like the single-window case above; collecting several windows merges them:
+
+- The destination is the **main window** if it is checked; otherwise it is the window the command was invoked from, as captured when the modal opened (so moving focus while the modal is up cannot redirect your tabs to the wrong window).
+- **Every tab group** of every selected window — including the destination's own other pre-existing groups — merges into one single tab group in the destination.
+- Each other selected pop-out window is closed after its tabs are migrated. The main window is never closed, and a pop-out with a dialog open in it (e.g. Settings) is left open rather than force-closed.
+
+The **All windows** row is a shortcut for selecting everything, which always merges into the main window. Use multi-window collect when you've spread related notes across pop-outs and want to fold them back into one window and one group.
 
 ## Rotate Tab Groups
 
