@@ -79,12 +79,14 @@
     color: var(--page-color, inherit);
 }
 
-/* Active tab coloring, controlled by the plugin's on/off toggle */
-body.ntg-color-active-tab.theme-light .workspace-tab-header.is-active {
+/* Active tab coloring, controlled by the plugin's on/off toggle.
+ * Every tab group has its own .is-active header; only the focused group
+ * carries .mod-active, so scope to that to highlight a single tab. */
+body.ntg-color-active-tab.theme-light .workspace-tabs.mod-active .workspace-tab-header.is-active {
     background-color: var(--ntg-active-tab-color-light) !important;
 }
 
-body.ntg-color-active-tab.theme-dark .workspace-tab-header.is-active {
+body.ntg-color-active-tab.theme-dark .workspace-tabs.mod-active .workspace-tab-header.is-active {
     background-color: var(--ntg-active-tab-color-dark) !important;
 }
 
