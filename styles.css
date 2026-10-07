@@ -84,10 +84,12 @@
  * carries .mod-active, so scope to that to highlight a single tab. */
 body.ntg-color-active-tab.theme-light .workspace-tabs.mod-active .workspace-tab-header.is-active {
     background-color: var(--ntg-active-tab-color-light) !important;
+    --tab-background-active: var(--ntg-active-tab-color-light);
 }
 
 body.ntg-color-active-tab.theme-dark .workspace-tabs.mod-active .workspace-tab-header.is-active {
     background-color: var(--ntg-active-tab-color-dark) !important;
+    --tab-background-active: var(--ntg-active-tab-color-dark);
 }
 
 /* Tab that ENTER will switch to in a Switch-to-tab modal: a subtle inset
@@ -95,7 +97,17 @@ body.ntg-color-active-tab.theme-dark .workspace-tabs.mod-active .workspace-tab-h
 .workspace-tab-header.ntg-switch-target {
     outline: 2px solid var(--interactive-accent, #7c3aed) !important;
     outline-offset: -2px !important;
-    border-radius: var(--radius-s, 4px);
+    /* Paint above a neighboring active tab's overhanging shoulder. */
+    position: relative;
+    z-index: 2;
+}
+
+/* An active tab draws curved "shoulders" in ::before/::after outside its
+ * box; the rectangular outline would clash with them, so drop them while the
+ * active tab is also the switch target. */
+.workspace-tab-header.is-active.ntg-switch-target::before,
+.workspace-tab-header.is-active.ntg-switch-target::after {
+    display: none !important;
 }
 
 /* Section 2: Row styling for Collect tabs modal */
