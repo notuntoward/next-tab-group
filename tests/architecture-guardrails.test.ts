@@ -208,3 +208,62 @@ describe('Architecture guardrails: single-source-of-truth event handling', () =>
         expect(modalSource).not.toMatch(/inputEl\.addEventListener\(['"]keydown['"]/);
     });
 });
+
+describe('Architecture guardrails: active-tab color scoping', () => {
+    // History: the rule targeted bare `.workspace-tab-header.is-active`.
+    // Obsidian puts `.is-active` on the selected tab of EVERY tab group (and
+    // every popout window), so several tabs were highlighted at once. Only the
+    // focused group carries `.workspace-tabs.mod-active`.
+    const css = fs.readFileSync(path.resolve(__dirname, '../styles.css'), 'utf-8')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+    const colorSelectors = [...css.matchAll(/([^{}]+)\{[^{}]*--ntg-active-tab-color[^{}]*\}/g)]
+        .map((m) => m[1].trim())
+        .filter((s) => s.includes('.workspace-tab-header'));
+
+    function group(parent: HTMLElement, name: string, focused: boolean) {
+        const tabs = document.createElement('div');
+        tabs.className = 'workspace-tabs' + (focused ? ' mod-active' : '');
+        const container = document.createElement('div');
+        container.className = 'workspace-tab-header-container';
+        const selected = document.createElement('div');
+        selected.className = 'workspace-tab-header is-active';
+        selected.dataset.name = `${name}-selected`;
+        const other = document.createElement('div');
+        other.className = 'workspace-tab-header';
+        other.dataset.name = `${name}-other`;
+        container.append(selected, other);
+        tabs.append(container);
+        parent.append(tabs);
+        return [selected, other];
+    }
+
+    function highlighted(theme: 'theme-light' | 'theme-dark'): string[] {
+        document.body.className = `ntg-color-active-tab ${theme}`;
+        const main = document.createElement('div');
+        const popout = document.createElement('div');
+        document.body.append(main, popout);
+        // Mirrors the reported layout: main window has two groups (top focused,
+        // bottom not), plus a popout window group that is not focused.
+        const headers = [
+            ...group(main, 'main-top', true),
+            ...group(main, 'main-bottom', false),
+            ...group(popout, 'popout', false),
+        ];
+        const result = headers
+            .filter((h) => colorSelectors.some((s) => h.matches(s)))
+            .map((h) => h.dataset.name as string);
+        main.remove();
+        popout.remove();
+        return result;
+    }
+
+    it('finds the light and dark active-tab color rules', () => {
+        expect(colorSelectors.length).toBeGreaterThanOrEqual(2);
+    });
+
+    for (const theme of ['theme-light', 'theme-dark'] as const) {
+        it(`highlights only the focused group's active tab (${theme})`, () => {
+            expect(highlighted(theme)).toEqual(['main-top-selected']);
+        });
+    }
+});
