@@ -245,7 +245,9 @@ Each confirmation dialog lists every tab to be closed, grouped by note with coun
 
 - **Group results by tab group and window** — When on (default), the "Switch to any tab" and "Switch to tab group" modals cluster results by window and then tab group, with the freshest contexts first. When off, every result is listed in a single pure recency order, newest at the top.
 
-## Active tab color
+## Tab highlighting
+
+- **Highlight the tab you will switch to** � While a Switch-to-tab modal is open, outlines the tab header that ENTER will switch to. On by default.
 
 - **Color the active tab** — Highlight the active tab with a custom background color in both light and dark mode. Off by default.
 - **Active tab color (light mode)** — Background color for the active tab when Obsidian is in light mode.

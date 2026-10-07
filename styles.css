@@ -90,6 +90,14 @@ body.ntg-color-active-tab.theme-dark .workspace-tabs.mod-active .workspace-tab-h
     background-color: var(--ntg-active-tab-color-dark) !important;
 }
 
+/* Tab that ENTER will switch to in a Switch-to-tab modal: a subtle inset
+ * outline, distinct from the active tab's background fill. */
+.workspace-tab-header.ntg-switch-target {
+    outline: 2px solid var(--interactive-accent, #7c3aed) !important;
+    outline-offset: -2px !important;
+    border-radius: var(--radius-s, 4px);
+}
+
 /* Section 2: Row styling for Collect tabs modal */
 .ntg-collect-row {
     box-sizing: border-box;

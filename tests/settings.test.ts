@@ -15,7 +15,7 @@ describe('NextTabGroupSettingTab getSettingDefinitions', () => {
         expect(definitions).toHaveLength(3);
         expect(definitions[0].heading).toBe('Deduplicate tabs');
         expect(definitions[1].heading).toBe('Switch tabs');
-        expect(definitions[2].heading).toBe('Active tab color');
+        expect(definitions[2].heading).toBe('Tab highlighting');
     });
 
     it('defines expected controls for deduplicate and switch tabs sections', () => {
@@ -49,7 +49,7 @@ describe('NextTabGroupSettingTab getSettingDefinitions', () => {
 
         const colorGroup = definitions[2];
         const colorItems = colorGroup.items;
-        expect(colorItems).toHaveLength(3);
+        expect(colorItems).toHaveLength(4);
 
         const enableToggle = colorItems[0];
         const lightPicker = colorItems[1];
