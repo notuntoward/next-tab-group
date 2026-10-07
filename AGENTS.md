@@ -166,11 +166,12 @@ lesson from scratch.
     abort the rest of the function it's in.
 
 11. **Never set a field on a Modal subclass that collides with Obsidian's own
-    internal state before calling super.open().** Obsidian's Modal.open()`n    silently does nothing (no onOpen, no DOM, no error) when the instance's
-    isOpen flag is already truthy. CollectTabsModal.open() set
-    	his.isOpen = true first, so the Collect tabs command appeared to do
+    internal state before calling `super.open()`.** Obsidian's `Modal.open()`
+    silently does nothing (no `onOpen`, no DOM, no error) when the instance's
+    `isOpen` flag is already truthy. `CollectTabsModal.open()` set
+    `this.isOpen = true` first, so the Collect tabs command appeared to do
     nothing at all in real Obsidian. The mock modal now mirrors this guard and
-    	ests/architecture-guardrails.test.ts checks the ordering.
+    `tests/architecture-guardrails.test.ts` checks the ordering.
 
 ## Before considering a change to these areas complete
 
