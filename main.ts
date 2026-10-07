@@ -1225,7 +1225,16 @@ export default class NextTabGroupPlugin extends Plugin {
                     }
                 } else {
                     if (result.kind === 'current') {
-                        void this.collectTabs('current');
+                        // Collect the window the modal was opened for, NOT a
+                        // freshly re-queried "active window": live focus can move
+                        // while the modal is up (e.g. the user clicks another
+                        // window, or closing the modal restores focus elsewhere).
+                        // Re-deriving here previously sent the collection to the
+                        // wrong window and left the intended window untouched --
+                        // the exact hazard AGENTS.md hard rule 5 warns about. A
+                        // single checked/HERE window is a one-element instance of
+                        // the same 'multi' algorithm the other branches use.
+                        void this.collectTabs('multi', [currentWinInfo]);
                     } else if (result.kind === 'all') {
                         void this.collectTabs('all');
                     } else if (result.kind === 'window') {
@@ -1359,8 +1368,13 @@ export default class NextTabGroupPlugin extends Plugin {
             );
 
             // Destination window:
-            // - If the Main Window is among the checked windows, it is always the
-            //   destination (popup windows never empty the Main Window).
+            // - Collecting a single window (the "This window" / HERE choice, or
+            //   the one window the command was invoked from) always keeps that
+            //   window's own snapshot -- and therefore its own representative
+            //   group -- as the destination. Re-deriving it from a freshly
+            //   rebuilt model can pick a different group after live focus moves.
+            // - If the Main Window is among several checked windows, it is always
+            //   the destination (popup windows never empty the Main Window).
             // - Otherwise, the destination is the window the command was actually
             //   invoked from (the modal's snapshot marks it isCurrentWindow at the
             //   time it was opened). This must NOT be re-derived from a freshly
@@ -1369,9 +1383,11 @@ export default class NextTabGroupPlugin extends Plugin {
             //   window that was never checked at all, which previously sent tabs
             //   to the wrong destination and could misidentify which window is
             //   safe to evacuate.
-            const destWinInfo = includesMain
-                ? mainWinInfo
-                : (checkedWindows.find((w) => w.isCurrentWindow) ?? checkedWindows[0]);
+            const destWinInfo = checkedWindows.length === 1
+                ? checkedWindows[0]
+                : (includesMain
+                    ? mainWinInfo
+                    : (checkedWindows.find((w) => w.isCurrentWindow) ?? checkedWindows[0]));
 
             destLeaf = destWinInfo.representative;
             const targetParent = destLeaf.parent as any;

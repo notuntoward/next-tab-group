@@ -82,6 +82,20 @@ lesson from scratch.
    the destination as already-consolidated; only the *other* checked windows
    should be short-circuited from the merge.
 
+   This applies to the single "This window" / HERE choice too, not just
+   multi-window selections: it must reuse the captured `currentWinInfo`
+   snapshot (`collectTabs('multi', [currentWinInfo])`), never call
+   `collectTabs('current')`, which re-queries the active leaf/window at
+   execution time. Calling `collectTabs('current')` here was a real shipped
+   bug: with focus in the Main Window and a pop-out open, if focus moved to
+   the pop-out before the choice executed, the Main Window's tab groups were
+   left uncollected and the command appeared to "do nothing" — the exact
+   regression `tests/collect-tabs-multi-window.test.ts` and the
+   architecture-guardrails check now lock down. Likewise, a single checked
+   window must keep its own snapshot representative group as the
+   destination rather than re-deriving the destination group from a rebuilt
+   model.
+
 ## Hard rules for modal keyboard/focus handling
 
 6. **Exactly one registration path per keyboard shortcut.** Either
@@ -150,6 +164,13 @@ lesson from scratch.
     `try`/`catch` regardless, since these APIs can change or fail in ways
     `obsidian.d.ts` gives no warning about. Never let such a call's failure
     abort the rest of the function it's in.
+
+11. **Never set a field on a Modal subclass that collides with Obsidian's own
+    internal state before calling super.open().** Obsidian's Modal.open()`n    silently does nothing (no onOpen, no DOM, no error) when the instance's
+    isOpen flag is already truthy. CollectTabsModal.open() set
+    	his.isOpen = true first, so the Collect tabs command appeared to do
+    nothing at all in real Obsidian. The mock modal now mirrors this guard and
+    	ests/architecture-guardrails.test.ts checks the ordering.
 
 ## Before considering a change to these areas complete
 

@@ -528,6 +528,10 @@ export class MockSuggestModal<T> {
     }
 
     open(): void {
+        // Real Obsidian's Modal.open() is a silent no-op when the instance's
+        // isOpen flag is already truthy; mirror that so tests catch subclasses
+        // that pre-set it.
+        if (this.isOpen) return;
         this.isOpen = true;
         if (typeof document !== 'undefined' && document.body && !document.body.contains(this.modalEl)) {
             document.body.appendChild(this.modalEl);

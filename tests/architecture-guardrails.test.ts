@@ -156,8 +156,42 @@ describe('Architecture guardrails: multi-window collection destination selection
         expect(multiBranch).not.toMatch(/currentWinInfo\.window/);
         expect(multiBranch).not.toMatch(/destWinInfo\.isCurrentWindow\s*\?\s*activeLeaf/);
     });
+
+    it('the modal\'s single-window choice uses the captured snapshot, never collectTabs("current") which re-queries the active window', () => {
+        // History: the CollectTabsModal's single-result onPick branch called
+        // collectTabs('current'), which re-derives the active leaf/window via
+        // getActiveLeafInFocusedWindow() at the moment the callback runs. If live
+        // focus moved while the modal was up (e.g. the user clicked another
+        // window, or closing the modal restored focus elsewhere), the collection
+        // targeted the wrong window, so the intended window's tab groups were
+        // left untouched -- appearing to the user as "collect tabs did nothing".
+        // The single-window choice must instead reuse the currentWinInfo snapshot
+        // captured when the modal opened, i.e. collectTabs('multi', [currentWinInfo]).
+        const modalCall = mainTsSource.match(/new CollectTabsModal\([\s\S]*?\.open\(\);/);
+        expect(modalCall).not.toBeNull();
+        const callbackRegion = modalCall![0];
+
+        expect(callbackRegion).toContain("collectTabs('multi', [currentWinInfo])");
+        expect(callbackRegion).not.toMatch(/collectTabs\('current'\)/);
+    });
 });
 
+describe('Architecture guardrails: modal open() contract', () => {
+    it('CollectTabsModal never sets this.isOpen = true before super.open()', () => {
+        // History: open() set `this.isOpen = true` and then called super.open().
+        // Real Obsidian's Modal.open() silently no-ops when the instance's own
+        // isOpen flag is already truthy (no onOpen, no DOM, no error), so the
+        // Collect tabs command appeared to do nothing at all. The mocks did not
+        // model this guard, so every test passed.
+        const src = fs.readFileSync(path.resolve(__dirname, '../src/ui/collect-tabs-modal.ts'), 'utf-8');
+        const openStart = src.indexOf('    open(): void {');
+        const superCall = src.indexOf('super.open()', openStart);
+        expect(openStart).toBeGreaterThan(-1);
+        expect(superCall).toBeGreaterThan(openStart);
+        const before = src.slice(openStart, superCall).replace(/\/\/.*$/gm, '');
+        expect(before).not.toMatch(/this\.isOpen\s*=\s*true/);
+    });
+});
 describe('Architecture guardrails: single-source-of-truth event handling', () => {
     it('collect-tabs-modal registers Space exactly once, never via Scope', () => {
         // History: Space was registered in THREE overlapping places (Scope ' ',

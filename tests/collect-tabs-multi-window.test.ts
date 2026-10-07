@@ -295,6 +295,108 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             }
         });
 
+        it('collects the main window\'s own tab groups when run from the main window, even if live focus moves to the popout after the modal opens (AGENTS.md rule 5)', async () => {
+            MockNotice.notices = [];
+            // Main window has 2 tab groups (e.g. 2 vertical split groups)
+            const mainG1 = new MockWorkspaceParent(rootContainer);
+            const mainG2 = new MockWorkspaceParent(rootContainer);
+            const m1 = leaf('m1', 'Combo Workout Revised Short.md', mainG1, rootContainer);
+            const m2 = leaf('m2', 'Second Main Tab.md', mainG1, rootContainer);
+            const m3 = leaf('m3', 'Lara26resistTrainGuidelineACSM.md', mainG2, rootContainer);
+
+            // Popout 1 has 1 tab group with 1 tab
+            const popG1 = new MockWorkspaceParent(popoutContainer1);
+            const p1 = leaf('p1', 'spacekeys.md', popG1, popoutContainer1);
+
+            app.workspace.allLeaves = [m1, m2, m3, p1];
+            app.workspace.rootLeaves = [m1, m2, m3];
+
+            // Focus is in the main window (upper tab group)
+            app.workspace.setActiveLeaf(m1);
+            (globalThis as any).activeWindow = globalThis.window;
+
+            // Capture the real modal while still letting its real onOpen() run.
+            let capturedModal: any = null;
+            const originalOpen = CollectTabsModal.prototype.open;
+            CollectTabsModal.prototype.open = function (this: any) {
+                capturedModal = this;
+                return originalOpen.call(this);
+            };
+
+            try {
+                await plugin.runCollectTabs();
+
+                // Modal should be open and active
+                expect(CollectTabsModal.activeModal).not.toBeNull();
+                expect(CollectTabsModal.activeModal?.isOpen).toBe(true);
+
+                // No false cancellation notice should be shown
+                const cancelNotice = MockNotice.notices.find((n) => n.message.includes('cancelled'));
+                expect(cancelNotice).toBeUndefined();
+
+                // Modal suggestions should properly identify the main window as current
+                expect(capturedModal).not.toBeNull();
+                const suggestions = capturedModal.getSuggestions('');
+                expect(suggestions.length).toBeGreaterThanOrEqual(3);
+                expect(suggestions[0].kind).toBe('current');
+                expect(suggestions[0].winInfo.isMainWindow).toBe(true);
+                expect(suggestions[0].winInfo.isCurrentWindow).toBe(true);
+
+                // Live focus moves to the popout after the modal opened (e.g. the
+                // user clicked the other window, or closing the modal restored
+                // focus somewhere other than where the command was invoked). The
+                // destination must still be the window captured when the modal
+                // opened, not a freshly re-queried active window.
+                app.workspace.setActiveLeaf(p1);
+                (globalThis as any).activeWindow = win1Obj;
+
+                // The HERE row is checked by default; executing collects it.
+                capturedModal.executeCollection();
+                await new Promise((r) => setTimeout(r, 0));
+
+                // The main window's second group merged into its active group...
+                expect(m3.detached, 'main window\'s other group must be collected').toBe(true);
+                expect(m1.detached).toBe(false);
+                expect(m2.detached).toBe(false);
+                expect(mainG1.children).toContain(m1);
+                expect(mainG1.children).toContain(m2);
+
+                // ...and the newly-focused popout was never touched.
+                expect(p1.detached, 'popout must be untouched').toBe(false);
+                expect(popG1.children).toContain(p1);
+                expect(popoutWin1.closed).toBe(false);
+            } finally {
+                CollectTabsModal.prototype.open = originalOpen;
+                if (CollectTabsModal.activeModal) {
+                    CollectTabsModal.activeModal.close();
+                    CollectTabsModal.activeModal = null;
+                }
+                (globalThis as any).activeWindow = undefined;
+            }
+        });
+
+        it('onOpen handles nested instructionsEl without throwing DOMException when instructions are nested inside a wrapper', () => {
+            const currentWin: WindowInfo = {
+                window: globalThis.window,
+                groups: [],
+                representative: leaf('m1', 'Main.md', new MockWorkspaceParent(rootContainer), rootContainer),
+                lastActive: 100,
+                label: 'Main window',
+                isCurrentWindow: true,
+                isMainWindow: true,
+            };
+            const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
+            // In real Obsidian, the modal element itself is the .prompt, and .prompt-instructions is inside a wrapper
+            modal.modalEl.className = 'modal prompt';
+            // Clear existing mock prompt child to simulate real Obsidian where modalEl itself is .prompt
+            modal.modalEl.empty();
+            const wrapper = modal.modalEl.createDiv({ cls: 'prompt-footer-wrapper' });
+            wrapper.createDiv({ cls: 'prompt-instructions' });
+
+            expect(() => modal.open()).not.toThrow();
+            expect(modal.isOpen).toBe(true);
+        });
+
         it('describeWindow formats active tab title and tab count correctly', () => {
             const g1 = new MockWorkspaceParent(popoutContainer1);
             const p1 = leaf('p1', 'Project Notes.md', g1, popoutContainer1);

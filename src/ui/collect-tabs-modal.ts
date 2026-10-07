@@ -300,7 +300,8 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         if (
             CollectTabsModal.activeModal &&
             CollectTabsModal.activeModal !== this &&
-            CollectTabsModal.activeModal.isOpen
+            CollectTabsModal.activeModal.isOpen &&
+            CollectTabsModal.activeModal.modalEl?.isConnected
         ) {
             try {
                 CollectTabsModal.activeModal.close();
@@ -309,9 +310,21 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             }
             new Notice('Existing collect-tabs command cancelled');
         }
-        this.isOpen = true;
         CollectTabsModal.activeModal = this;
-        super.open();
+        try {
+            // Obsidian's Modal.open() silently does nothing (no onOpen, no DOM, no
+            // error) if the instance's own 'isOpen' flag is already truthy. Never
+            // set this.isOpen before super.open(); doing so shipped a command that
+            // appeared to do nothing at all on real Obsidian.
+            super.open();
+            this.isOpen = true;
+        } catch (err) {
+            this.isOpen = false;
+            if (CollectTabsModal.activeModal === this) {
+                CollectTabsModal.activeModal = null;
+            }
+            throw err;
+        }
     }
 
     onOpen(): void {
@@ -418,8 +431,8 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
                 this.executeCollection();
             });
 
-            if (instructionsEl) {
-                promptEl.insertBefore(this.toolbarEl, instructionsEl);
+            if (instructionsEl && instructionsEl.parentElement) {
+                instructionsEl.parentElement.insertBefore(this.toolbarEl, instructionsEl);
             } else {
                 promptEl.appendChild(this.toolbarEl);
             }
