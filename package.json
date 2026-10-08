@@ -38,5 +38,8 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.60.1",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "moment": "^2.31.0"
   }
 }
