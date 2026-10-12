@@ -92,10 +92,22 @@ body.ntg-color-active-tab.theme-dark .workspace-tabs.mod-active .workspace-tab-h
     --tab-background-active: var(--ntg-active-tab-color-dark);
 }
 
+/* Colors for the "what ENTER will switch to" markers. The default dark
+ * theme's --interactive-accent is a dark purple that nearly vanishes against
+ * dark panes, so dark themes use the lighter --text-accent and a stronger tint. */
+body {
+    --ntg-target-color: var(--interactive-accent, #7c3aed);
+    --ntg-target-tint: 8%;
+}
+
+body.theme-dark {
+    --ntg-target-color: var(--text-accent, #a78bfa);
+    --ntg-target-tint: 16%;
+}
 /* Tab that ENTER will switch to in a Switch-to-tab modal: a subtle inset
  * outline, distinct from the active tab's background fill. */
 .workspace-tab-header.ntg-switch-target {
-    outline: 2px solid var(--interactive-accent, #7c3aed) !important;
+    outline: 2px solid var(--ntg-target-color) !important;
     outline-offset: -2px !important;
     /* Paint above a neighboring active tab's overhanging shoulder. */
     position: relative;
@@ -123,8 +135,8 @@ body.ntg-color-active-tab.theme-dark .workspace-tabs.mod-active .workspace-tab-h
     inset: 0;
     z-index: 5;
     pointer-events: none;
-    box-shadow: inset 0 0 0 2px var(--interactive-accent, #7c3aed);
-    background: color-mix(in srgb, var(--interactive-accent, #7c3aed) 8%, transparent);
+    box-shadow: inset 0 0 0 3px var(--ntg-target-color);
+    background: color-mix(in srgb, var(--ntg-target-color) var(--ntg-target-tint), transparent);
 }
 
 /* Section 2: Row styling for Collect tabs modal */
