@@ -34,9 +34,11 @@ describe('NextTabGroupSettingTab getSettingDefinitions', () => {
         expect(dedupeItems[2].control.type).toBe('toggle');
 
         const switchItems = definitions[1].items;
-        expect(switchItems).toHaveLength(1);
+        expect(switchItems).toHaveLength(2);
         expect(switchItems[0].control.key).toBe('groupSwitchByContext');
         expect(switchItems[0].control.type).toBe('toggle');
+        expect(switchItems[1].control.key).toBe('switchLeftRightNavigation');
+        expect(switchItems[1].control.type).toBe('toggle');
     });
 
     it('handles active tab color visibility predicate and onChange callbacks', () => {

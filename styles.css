@@ -458,3 +458,32 @@ body.theme-dark {
 }
 
 
+
+/* Compact pickers: Obsidian's default prompt is 700px wide (80vw max) with
+ * roomy rows. Shrink the width, height cap, and row padding so the picker
+ * leaves the workspace behind it visible. */
+.ntg-compact-prompt,
+.ntg-collect-modal {
+    --prompt-width: 480px;
+    --prompt-max-width: 90vw;
+    --prompt-max-height: 55vh;
+    --prompt-top: 60px;
+}
+
+.ntg-compact-prompt .prompt-input {
+    height: 32px;
+    font-size: var(--font-ui-small);
+}
+
+.ntg-compact-prompt .suggestion-item {
+    padding-top: 3px;
+    padding-bottom: 3px;
+    font-size: var(--font-ui-small);
+}
+
+/* Confirmation dialog: size to its content instead of the 540px default. */
+.ntg-compact-dialog {
+    width: auto;
+    min-width: 0;
+    max-width: min(440px, 90vw);
+}

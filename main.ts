@@ -27,6 +27,7 @@ interface NextTabGroupSettings {
     activeTabColorLight: string;
     activeTabColorDark: string;
     highlightSwitchTarget: boolean;
+    switchLeftRightNavigation: boolean;
 }
 
 const DEFAULT_SETTINGS: NextTabGroupSettings = {
@@ -41,7 +42,32 @@ const DEFAULT_SETTINGS: NextTabGroupSettings = {
     activeTabColorLight: "#e0edff",
     activeTabColorDark: "#33415c",
     highlightSwitchTarget: true,
+    // When true, Left/Right (and Ctrl+B/Ctrl+F) in the tab pickers select the
+    // tab beside the highlighted one in its tab strip, while the search box
+    // is empty.
+    switchLeftRightNavigation: true,
 };
+
+/**
+ * Returns the item whose leaf sits immediately left (-1) or right (+1) of the
+ * given item's leaf in the same tab group's tab strip, or null at an edge or
+ * when the neighbor is not among the picker's items.
+ */
+export function neighborInTabStrip<T>(
+    items: T[],
+    getLeaf: (item: T) => WorkspaceLeaf,
+    item: T,
+    direction: -1 | 1,
+): T | null {
+    const leaf = getLeaf(item);
+    const siblings = (leaf.parent as unknown as { children?: unknown[] } | null)?.children;
+    if (!Array.isArray(siblings)) return null;
+    const at = siblings.indexOf(leaf);
+    if (at < 0) return null;
+    const neighborLeaf = siblings[at + direction];
+    if (!neighborLeaf) return null;
+    return items.find((candidate) => getLeaf(candidate) === neighborLeaf) ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // Internal Obsidian structures not exposed in the public API
@@ -2100,6 +2126,10 @@ export default class NextTabGroupPlugin extends Plugin {
             ),
             (leaf) => this.getLeafFileKey(leaf),
             this.settings.highlightSwitchTarget ? (leaf) => leafHeaderEl(leaf) : undefined,
+            'ntg-switch-target',
+            this.settings.switchLeftRightNavigation
+                ? (leaf, direction) => neighborInTabStrip(leaves, (l) => l, leaf, direction)
+                : undefined,
         ).open();
     }
 
@@ -2141,6 +2171,10 @@ export default class NextTabGroupPlugin extends Plugin {
             ),
             (tab) => this.getLeafFileKey(tab.leaf),
             this.settings.highlightSwitchTarget ? (tab) => leafHeaderEl(tab.leaf) : undefined,
+            'ntg-switch-target',
+            this.settings.switchLeftRightNavigation
+                ? (tab, direction) => neighborInTabStrip(tabs, (t) => t.leaf, tab, direction)
+                : undefined,
         ).open();
     }
 
@@ -2384,6 +2418,7 @@ class DedupeConfirmModal extends Modal {
         this.titleEl.setText(this.title);
         this.contentEl.empty();
         this.contentEl.classList.add('ntg-dedupe-modal');
+        this.modalEl.classList.add('ntg-compact-dialog');
         this.contentEl.appendChild(this.body);
 
         const finish = (ok: boolean) => {
@@ -2428,6 +2463,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         private readonly getFilePath?: (item: T) => string | null,
         private readonly getTargetEl?: (item: T) => HTMLElement | null,
         private readonly targetClass = 'ntg-switch-target',
+        private readonly getNeighbor?: (item: T, direction: -1 | 1) => T | null,
     ) {
         super(app);
         this.setPlaceholder(placeholder);
@@ -2470,7 +2506,14 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     onOpen() {
         super.onOpen();
 
-        registerEmacsMotionKeys(this);
+        this.modalEl?.classList.add('ntg-compact-prompt');
+
+        registerEmacsMotionKeys(
+            this,
+            this.getNeighbor
+                ? { neighbor: (item, direction) => this.getNeighbor!(item as T, direction) }
+                : {},
+        );
 
         if (this.getTargetEl && this.resultContainerEl && typeof MutationObserver !== 'undefined') {
             this.selectionObserver = new MutationObserver(() => this.syncTargetHighlight());
@@ -2601,6 +2644,14 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
                         control: {
                             type: 'toggle',
                             key: 'groupSwitchByContext',
+                        },
+                    },
+                    {
+                        name: 'Left/Right keys move to adjacent tabs',
+                        desc: 'In "Switch to any tab" and "Switch to tab in group", the Left/Right arrows and Ctrl+B/Ctrl+F select the tab beside the highlighted one in its tab group, while the search box is empty. Once you type, they move the text cursor as usual.',
+                        control: {
+                            type: 'toggle',
+                            key: 'switchLeftRightNavigation',
                         },
                     },
                 ],

@@ -56,17 +56,88 @@ export function mapFuzzyMatchesToDisplayText(
         .filter((m): m is number[] => m !== null);
 }
 
+export interface EmacsMotionOptions {
+    /**
+     * Returns the item to the left (-1) or right (+1) of the given item, or
+     * null when there is none. When provided, Left/Right and Ctrl+B/Ctrl+F
+     * select that item while the search box is empty.
+     */
+    neighbor?: (item: unknown, direction: -1 | 1) => unknown | null;
+}
+
+/**
+ * Selects the neighbor of the highlighted suggestion. Returns true when the
+ * key was consumed (even at an edge with no neighbor), false when the
+ * highlighted item cannot be determined.
+ */
+function selectNeighbor(
+    modal: SuggestModal<unknown>,
+    neighbor: NonNullable<EmacsMotionOptions['neighbor']>,
+    direction: -1 | 1,
+): boolean {
+    const chooser = getChooser(modal);
+    if (!chooser || typeof chooser.setSelectedItem !== 'function' || !Array.isArray(chooser.values)) {
+        return false;
+    }
+    const current = typeof chooser.selectedItem === 'number' ? chooser.selectedItem : 0;
+    const values = chooser.values as Array<{ item?: unknown }>;
+    const currentItem = values[current]?.item;
+    if (currentItem === undefined) {
+        return false;
+    }
+    const target = neighbor(currentItem, direction);
+    if (target === null || target === undefined) {
+        return true;
+    }
+    const index = values.findIndex((v) => v?.item === target);
+    if (index >= 0) {
+        setSelectedItemSafely(chooser, index);
+    }
+    return true;
+}
+
 /**
  * Registers Emacs-style motion keys on a SuggestModal/FuzzySuggestModal.
  *
  * Ctrl+F / Ctrl+B move the input cursor right/left (mirroring the arrow keys),
  * and Ctrl+N / Ctrl+P move the suggestion selection down/up.
  */
-export function registerEmacsMotionKeys(modal: SuggestModal<unknown>): void {
+export function registerEmacsMotionKeys(
+    modal: SuggestModal<unknown>,
+    options: EmacsMotionOptions = {},
+): void {
     const { inputEl, scope } = modal;
+
+    // Left/Right (and Ctrl+B/Ctrl+F) select the neighboring tab only while
+    // the search box is empty; otherwise they keep moving the text cursor.
+    // Every key has exactly one registration, here.
+    const tryNeighbor = (direction: -1 | 1): boolean => {
+        if (!options.neighbor || inputEl.value !== '') {
+            return false;
+        }
+        try {
+            return selectNeighbor(modal, options.neighbor, direction);
+        } catch {
+            return false;
+        }
+    };
+
+    if (options.neighbor) {
+        scope.register([], 'ArrowRight', (evt) => {
+            if (!tryNeighbor(1)) return true;
+            evt.preventDefault();
+            return false;
+        });
+        scope.register([], 'ArrowLeft', (evt) => {
+            if (!tryNeighbor(-1)) return true;
+            evt.preventDefault();
+            return false;
+        });
+    }
 
     scope.register(['Ctrl'], 'F', (evt) => {
         evt.preventDefault();
+        if (tryNeighbor(1)) return false;
         const start = inputEl.selectionStart ?? 0;
         const end = inputEl.selectionEnd ?? 0;
 
@@ -80,6 +151,7 @@ export function registerEmacsMotionKeys(modal: SuggestModal<unknown>): void {
 
     scope.register(['Ctrl'], 'B', (evt) => {
         evt.preventDefault();
+        if (tryNeighbor(-1)) return false;
         const start = inputEl.selectionStart ?? 0;
         const end = inputEl.selectionEnd ?? 0;
 

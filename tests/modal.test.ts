@@ -165,6 +165,70 @@ describe('registerEmacsMotionKeys', () => {
         expect(chooser.selectedItem).toBe(0);
     });
 
+    describe('left/right neighbor navigation', () => {
+        // Chooser values mimic Obsidian's FuzzyMatch wrappers ({ item }).
+        // Strip order is x < y < z; list (display) order is y, z, x.
+        const strip = ['x', 'y', 'z'];
+        const neighbor = (item: unknown, direction: -1 | 1) =>
+            strip[strip.indexOf(item as string) + direction] ?? null;
+
+        function setup() {
+            const ctx = createMockModal();
+            ctx.chooser.values = ['y', 'z', 'x'].map((item) => ({ item })) as unknown as string[];
+            ctx.chooser.selectedItem = 0; // y
+            registerEmacsMotionKeys(ctx.modal, { neighbor });
+            return ctx;
+        }
+        const press = (ctx: ReturnType<typeof setup>, key: string, mods: string[]) =>
+            triggerKey(ctx.modal.scope as unknown as MockScope, key, mods);
+
+        it('selects the strip neighbor, not the next row, with arrows and Ctrl+B/F', () => {
+            const ctx = setup();
+            press(ctx, 'ArrowRight', []);
+            expect(ctx.chooser.selectedItem).toBe(1); // z
+            press(ctx, 'ArrowLeft', []);
+            press(ctx, 'ArrowLeft', []);
+            expect(ctx.chooser.selectedItem).toBe(2); // x
+            press(ctx, 'F', ['Ctrl']);
+            expect(ctx.chooser.selectedItem).toBe(0); // y
+            press(ctx, 'B', ['Ctrl']);
+            expect(ctx.chooser.selectedItem).toBe(2); // x
+        });
+
+        it('stays put at the edge of the strip', () => {
+            const ctx = setup();
+            ctx.chooser.selectedItem = 2; // x, leftmost
+            press(ctx, 'ArrowLeft', []);
+            expect(ctx.chooser.selectedItem).toBe(2);
+        });
+
+        it('leaves keys to the text cursor when the query is not empty', () => {
+            const ctx = setup();
+            ctx.inputEl.value = 'hello';
+            ctx.inputEl.setSelectionRange(1, 1);
+            press(ctx, 'ArrowRight', []);
+            press(ctx, 'F', ['Ctrl']);
+            expect(ctx.chooser.selectedItem).toBe(0);
+            expect(ctx.inputEl.selectionStart).toBe(2);
+        });
+
+        it('registers no arrow keys and keeps cursor motion without the option', () => {
+            const { modal, scope, inputEl, chooser } = createMockModal();
+            registerEmacsMotionKeys(modal);
+            expect(scope.registrations.map((r) => r.key)).not.toContain('ArrowLeft');
+            expect(scope.registrations.map((r) => r.key)).not.toContain('ArrowRight');
+            inputEl.value = '';
+            triggerKey(scope, 'F');
+            expect(chooser.selectedItem).toBe(0);
+        });
+
+        it('registers each key exactly once', () => {
+            const { scope } = setup();
+            const keys = scope.registrations.map((r) => `${r.modifiers?.join('+')}|${r.key}`);
+            expect(new Set(keys).size).toBe(keys.length);
+        });
+    });
+
     it('handles a missing chooser gracefully', () => {
         const { modal, inputEl } = createMockModal();
         (modal as unknown as { chooser?: unknown }).chooser = undefined;
