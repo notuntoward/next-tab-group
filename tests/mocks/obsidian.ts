@@ -588,3 +588,7 @@ export const FuzzySuggestModal = MockFuzzySuggestModal;
 export type App = MockApp;
 export type WorkspaceParent = MockWorkspaceParent;
 export type WorkspaceContainer = MockWorkspaceContainer;
+
+export function setIcon(el: HTMLElement, iconId: string): void {
+    el.setAttribute('data-icon', iconId);
+}

@@ -9,8 +9,10 @@ import {
 } from 'obsidian';
 import type { App, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
-import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText } from './src/utils/modal';
+import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, addPickerHeader, type PickerHeader } from './src/utils/modal';
+import type { CollectChoice } from './src/ui/collect-tabs-modal';
 import { CollectTabsModal, describeWindow as formatWindowDescription, getSessionWindowIndex } from './src/ui/collect-tabs-modal';
+import { TargetHighlighter, type HighlightTarget } from './src/utils/target-highlight';
 import type { ScopeChoice } from './src/ui/collect-tabs-modal';
 import { DiagLog, FreezeWatchdog, summarizeLayout } from './src/utils/diagnostics';
 import { dirname, join } from 'path';
@@ -28,6 +30,13 @@ interface NextTabGroupSettings {
     activeTabColorLight: string;
     activeTabColorDark: string;
     highlightSwitchTarget: boolean;
+    highlightCollectWindows: boolean;
+    highlightCollectGroups: boolean;
+    highlightSwitchGroup: boolean;
+    highlightSwitchWindow: boolean;
+    highlightDedupeTabs: boolean;
+    highlightDedupeGroups: boolean;
+    highlightDedupeSurvivors: boolean;
     switchLeftRightNavigation: boolean;
 }
 
@@ -43,6 +52,13 @@ const DEFAULT_SETTINGS: NextTabGroupSettings = {
     activeTabColorLight: "#e0edff",
     activeTabColorDark: "#33415c",
     highlightSwitchTarget: true,
+    highlightCollectWindows: true,
+    highlightCollectGroups: true,
+    highlightSwitchGroup: true,
+    highlightSwitchWindow: true,
+    highlightDedupeTabs: true,
+    highlightDedupeGroups: true,
+    highlightDedupeSurvivors: true,
     // When true, Left/Right (and Ctrl+B/Ctrl+F) in the tab pickers select the
     // tab beside the highlighted one in its tab strip, while the search box
     // is empty.
@@ -111,7 +127,7 @@ interface DedupeScope {
     kind: 'group' | 'window' | 'other-window' | 'all';
     label: string;
     badge: string;
-    status?: string;
+    winInfo?: WindowInfo;
     leaves: WorkspaceLeaf[];
     confirmKey: 'confirmDedupeGroup' | 'confirmDedupeAllGroups' | 'confirmDedupeAllWindows';
     title: string;
@@ -1237,27 +1253,55 @@ export default class NextTabGroupPlugin extends Plugin {
         const groupCount =
             `${item.groups.length} ` +
             `group${item.groups.length === 1 ? "" : "s"}`;
-
         const recent = item.representative.getDisplayText() || "Untitled tab";
+        const role = item.label.split(" — ")[0];
 
         el.empty();
         el.addClass("ntg-nav-row");
+        // Same column layout as the Collect/Dedupe rows: badge | text | pill.
+        el.addClass("ntg-grid-row");
 
-        const primaryContainer = el.createDiv({ cls: "ntg-nav-primary" });
-        const searchText = `${item.label} ${recent}`;
+        const filePath = this.getLeafFileKey(item.representative);
+        if (filePath) {
+            updateElementPathDatasets(el, filePath);
+        }
+
+        const colBadge = el.createSpan({ cls: "ntg-col-badge" });
+        colBadge.createSpan({
+            cls: "ntg-window-badge",
+            text: String(getSessionWindowIndex(item)),
+        });
+
+        const colContent = el.createSpan({ cls: "ntg-col-content" });
+        const primaryContainer = colContent.createSpan({
+            cls: "ntg-desc-primary ntg-nav-primary data-link-text",
+        });
         const matches = mapFuzzyMatchesToDisplayText(
-            searchText,
-            item.label,
-            0,
+            `${item.label} ${recent}`,
+            recent,
+            item.label.length + 1,
             match?.match.matches ?? [],
         );
+        renderHighlightedText(primaryContainer, recent, matches);
 
-        renderHighlightedText(primaryContainer, item.label, matches);
+        const parts = [role, groupCount];
+        if (item.isCurrentWindow) parts.push("Current window");
+        colContent.createSpan({ cls: "ntg-desc-separator", text: "·" });
+        colContent
+            .createSpan({ cls: "ntg-desc-secondary ntg-nav-secondary" })
+            .setText(parts.join(" · "));
 
-        const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
-        secondaryContainer.setText(`Most recent: ${recent} · ${groupCount}`);
+        // HERE / MAIN pills, as in the Collect/Dedupe pickers.
+        const colStatus = el.createSpan({ cls: "ntg-col-status" });
+        const isMain = Boolean(item.isMainWindow || item.window === window);
+        const status = item.isCurrentWindow
+            ? (isMain ? "HERE · MAIN" : "HERE")
+            : (isMain ? "MAIN" : "");
+        if (status) {
+            const cls = status === "HERE · MAIN" ? "ntg-pill-here-main" : status === "MAIN" ? "ntg-pill-main" : "ntg-pill-here";
+            colStatus.createSpan({ cls: `ntg-status-pill ${cls}`, text: status });
+        }
     }
-
     private renderInGroupTabSuggestion(
         leaf: WorkspaceLeaf,
         el: HTMLElement,
@@ -1420,7 +1464,47 @@ export default class NextTabGroupPlugin extends Plugin {
                     }
                 }
             },
+            {
+                getTargets: (chosen) => this.collectHighlightTargets(chosen, currentWinInfo, model.windows),
+            },
         ).open();
+    }
+
+    /**
+     * Outlines for the Collect tabs picker: every window whose tabs the
+     * current selection would gather (frame around the window) and the tab
+     * groups inside it. Mirrors the picker's execution: "All windows" means
+     * every window; a single "other window" row means that window plus the
+     * window the command was opened from; otherwise just the checked windows.
+     */
+    private collectHighlightTargets(
+        chosen: CollectChoice[],
+        currentWinInfo: WindowInfo,
+        allWindows: WindowInfo[],
+    ): HighlightTarget[] {
+        let wins: WindowInfo[];
+        if (chosen.some((c) => c.kind === 'all')) {
+            wins = allWindows;
+        } else {
+            wins = [];
+            for (const c of chosen) {
+                if ((c.kind === 'current' || c.kind === 'window') && !wins.includes(c.winInfo)) wins.push(c.winInfo);
+            }
+            if (chosen.length === 1 && chosen[0].kind === 'window') wins.unshift(currentWinInfo);
+        }
+        const targets: HighlightTarget[] = [];
+        for (const winInfo of wins) {
+            if (this.settings.highlightCollectWindows) {
+                const container = winInfo.representative.getContainer?.() as unknown as { containerEl?: HTMLElement } | undefined;
+                targets.push({ el: container?.containerEl, cls: 'ntg-switch-target-window' });
+            }
+            if (this.settings.highlightCollectGroups) {
+                for (const g of winInfo.groups) {
+                    targets.push({ el: (g.group as WorkspaceContainerEl).containerEl, cls: 'ntg-switch-target-group' });
+                }
+            }
+        }
+        return targets;
     }
 
     private closePopoutWindowIfEmpty(win: Window): void {
@@ -1853,14 +1937,16 @@ export default class NextTabGroupPlugin extends Plugin {
     private planDedupe(
         scope: WorkspaceLeaf[],
         activeLeaf: WorkspaceLeaf | null
-    ): { toRemove: WorkspaceLeaf[]; notesAffected: number } | null {
+    ): { toRemove: WorkspaceLeaf[]; survivors: WorkspaceLeaf[]; notesAffected: number } | null {
         const groups = this.groupLeavesByFile(scope);
         const toRemove: WorkspaceLeaf[] = [];
+        const survivors: WorkspaceLeaf[] = [];
         let notesAffected = 0;
         for (const [, leaves] of groups) {
             if (leaves.length <= 1) continue;
             notesAffected++;
             const survivor = this.pickSurvivor(leaves, activeLeaf);
+            survivors.push(survivor);
             for (const leaf of leaves) {
                 if (leaf !== survivor) {
                     toRemove.push(leaf);
@@ -1868,7 +1954,7 @@ export default class NextTabGroupPlugin extends Plugin {
             }
         }
         if (toRemove.length === 0) return null;
-        return { toRemove, notesAffected };
+        return { toRemove, survivors, notesAffected };
     }
 
     /**
@@ -2018,10 +2104,10 @@ export default class NextTabGroupPlugin extends Plugin {
 
     /**
      * Build every deduplication scope that could apply to the current
-     * workspace, narrowest first: the active tab group, the active window (all
-     * of its groups), each other window, and all windows. Each scope carries
-     * the exact leaves it covers, captured now, so a later modal callback never
-     * re-derives "the active window" (AGENTS.md hard rule 5).
+     * workspace: the active tab group, each window individually (the active
+     * one first), and all windows. Each scope carries the exact leaves it
+     * covers, captured now, so a later modal callback never re-derives "the
+     * active window" (AGENTS.md hard rule 5).
      */
     private buildDedupeScopes(
         activeLeaf: WorkspaceLeaf | null,
@@ -2040,17 +2126,17 @@ export default class NextTabGroupPlugin extends Plugin {
                 kind: 'group',
                 label: 'This tab group',
                 badge: 'G',
-                status: 'HERE',
                 leaves: [...activeGroup.leaves],
                 confirmKey: 'confirmDedupeGroup',
                 title: 'Deduplicate tabs in group',
             });
         }
 
-        // "This window" means every editor group in the active leaf's actual
+        // The active window: every editor group in the active leaf's actual
         // window. With no active leaf to identify a window, fall back to the
         // main layout's root leaves so scope never silently expands to all
         // windows.
+        const currentWin = activeWindow ? model.windows.find((w) => w.window === activeWindow) : undefined;
         const windowLeaves: WorkspaceLeaf[] = [];
         if (activeWindow) {
             for (const tab of this.getTabsInWindow(model, activeWindow)) {
@@ -2064,22 +2150,24 @@ export default class NextTabGroupPlugin extends Plugin {
         scopes.push({
             id: 'window',
             kind: 'window',
-            label: 'This window',
-            badge: 'W',
+            label: currentWin ? `Inside window ${getSessionWindowIndex(currentWin)}` : 'This window',
+            badge: currentWin ? String(getSessionWindowIndex(currentWin)) : 'W',
+            winInfo: currentWin,
             leaves: windowLeaves,
             confirmKey: 'confirmDedupeAllGroups',
             title: 'Deduplicate tabs in all groups',
         });
 
         // Other windows, each individually (like the Collect tabs modal).
-        const currentWin = model.windows.find((w) => w.window === activeWindow);
         for (const winInfo of model.windows) {
             if (winInfo === currentWin || (activeWindow && winInfo.window === activeWindow)) continue;
+            const n = getSessionWindowIndex(winInfo);
             scopes.push({
-                id: `window:${getSessionWindowIndex(winInfo)}`,
+                id: `window:${n}`,
                 kind: 'other-window',
-                label: formatWindowDescription(winInfo),
-                badge: String(getSessionWindowIndex(winInfo)),
+                label: `Inside window ${n}`,
+                badge: String(n),
+                winInfo,
                 leaves: this.getTabsInWindow(model, winInfo.window).map((t) => t.leaf),
                 confirmKey: 'confirmDedupeAllGroups',
                 title: 'Deduplicate tabs in window',
@@ -2091,7 +2179,7 @@ export default class NextTabGroupPlugin extends Plugin {
         scopes.push({
             id: 'all',
             kind: 'all',
-            label: 'All windows',
+            label: 'Across all windows',
             badge: '⧉',
             leaves: model.tabs.map((tab) => tab.leaf),
             confirmKey: 'confirmDedupeAllWindows',
@@ -2101,6 +2189,37 @@ export default class NextTabGroupPlugin extends Plugin {
         return scopes;
     }
 
+    /**
+     * Rows for the picker. Unlike the direct-run decision this keeps window
+     * rows that have nothing to close on their own (checking several windows
+     * dedupes across them), but drops rows that add no choice: "All windows"
+     * with a single window, a tab-group row equal to its window, and any row
+     * whose non-empty outcome is identical to an earlier row's.
+     */
+    private pickerDedupeScopes(
+        scopes: DedupeScope[],
+        activeLeaf: WorkspaceLeaf | null,
+    ): Array<DedupeScope & { removeCount: number; removed: WorkspaceLeaf[]; kept: WorkspaceLeaf[] }> {
+        const windowScopes = scopes.filter((s) => s.kind === 'window' || s.kind === 'other-window');
+        const seen = new Set<string>();
+        const rows: Array<DedupeScope & { removeCount: number; removed: WorkspaceLeaf[]; kept: WorkspaceLeaf[] }> = [];
+        for (const scope of scopes) {
+            if (scope.kind === 'all' && windowScopes.length <= 1) continue;
+            const plan = this.planDedupe(scope.leaves, activeLeaf);
+            const removed = plan?.toRemove ?? [];
+            if (scope.kind === 'group') {
+                const win = scopes.find((s) => s.kind === 'window');
+                if (win && win.leaves.length === scope.leaves.length) continue;
+            }
+            if (removed.length > 0) {
+                const key = removed.map((l) => this.getLeafId(l)).sort().join('|');
+                if (seen.has(key)) continue;
+                seen.add(key);
+            }
+            rows.push({ ...scope, removeCount: removed.length, removed, kept: plan?.survivors ?? [] });
+        }
+        return rows;
+    }
     /**
      * Keep only scopes that would actually close something, and drop any scope
      * whose outcome is identical to a narrower one already kept (e.g. "This
@@ -2147,17 +2266,35 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const rows: ScopeChoice[] = scopes.map((scope, i) => ({
-            kind: 'scope' as const,
-            id: scope.id,
-            label: scope.label,
-            // The narrowest scope is what Enter acts on by default, so it
-            // starts checked.
-            checked: i === 0,
-            badge: scope.badge,
-            status: scope.status,
-            detail: `${scope.removeCount} to close`,
-        }));
+        const pickerScopes = this.pickerDedupeScopes(this.buildDedupeScopes(activeLeaf, model), activeLeaf);
+        const spansWindows = (s: DedupeScope) => s.kind === 'all';
+        const leafName = (leaf: WorkspaceLeaf, withWindow: boolean) => {
+            const title = leaf.getDisplayText() || 'Untitled';
+            if (!withWindow) return title;
+            const win = this.getWindowForLeaf(leaf);
+            const info = model.windows.find((w) => w.window === win);
+            return info ? `${title} (window ${getSessionWindowIndex(info)})` : title;
+        };
+        const firstNonEmpty = pickerScopes.findIndex((s) => s.removeCount > 0);
+        const rows: ScopeChoice[] = pickerScopes.map((scope, i) => {
+            const isMain = Boolean(scope.winInfo?.isMainWindow || (scope.winInfo?.window && scope.winInfo.window === window));
+            const isHere = scope.kind === 'window' && Boolean(scope.winInfo);
+            const status = isHere && isMain ? 'HERE · MAIN' : isHere ? 'HERE' : isMain ? 'MAIN' : undefined;
+            return {
+                kind: 'scope' as const,
+                id: scope.id,
+                label: scope.label,
+                // Enter acts on the first row that would close something.
+                checked: i === Math.max(0, firstNonEmpty),
+                badge: scope.badge,
+                status,
+                detail: scope.removeCount > 0 ? `${scope.removeCount} to close` : 'no duplicates inside',
+                items: [
+                    ...scope.removed.map((l) => ({ kind: 'close' as const, text: leafName(l, spansWindows(scope)) })),
+                    ...scope.kept.map((l) => ({ kind: 'keep' as const, text: leafName(l, model.windows.length > 1) })),
+                ],
+            };
+        });
 
         new CollectTabsModal(
             this.app,
@@ -2165,24 +2302,88 @@ export default class NextTabGroupPlugin extends Plugin {
             [],
             (result) => {
                 const picked = new Set((Array.isArray(result) ? result : [result]).map((c) => (c.kind === 'scope' ? c.id : '')));
-                const chosen = scopes.filter((s) => picked.has(s.id));
+                const chosen = pickerScopes.filter((s) => picked.has(s.id));
                 if (chosen.length === 0) return;
-                const leaves: WorkspaceLeaf[] = [];
-                for (const scope of chosen) {
-                    for (const leaf of scope.leaves) {
-                        if (!leaves.includes(leaf) && !(leaf as any).detached) leaves.push(leaf);
-                    }
-                }
+                const leaves = this.mergeScopeLeaves(chosen);
                 // The picker rows already show what will be closed.
                 void this.runDedupe(leaves, activeLeaf, false, 'Deduplicate tabs');
             },
             {
                 scopeRows: rows,
+                getSummary: (chosen) => this.dedupeSummary(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
+                getTargets: (chosen) => this.dedupeHighlightTargets(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
                 placeholder: 'Filter scopes…',
                 actionLabel: 'Deduplicate',
                 commandName: 'deduplicate-tabs',
+                header: {
+                    kind: 'dedupe',
+                    title: 'Deduplicate tabs',
+                    hint: 'Check where to close duplicates. Red outline = closed, green = kept.',
+                    icon: 'copy-minus',
+                },
             },
         ).open();
+    }
+
+    /**
+     * Elements to mark for the picker's current selection: the headers of the
+     * tabs the selection would close, the one tab kept for each note
+     * (different color), and the tab groups holding the closing tabs. The
+     * plan is the same one the action runs, so the preview cannot drift from
+     * what is actually closed. Checking several windows merges their leaves,
+     * so duplicates across those windows are previewed too.
+     */
+    private dedupeHighlightTargets(
+        scopes: DedupeScope[],
+        chosen: Array<{ id: string }>,
+        activeLeaf: WorkspaceLeaf | null,
+    ): HighlightTarget[] {
+        const ids = new Set(chosen.map((c) => c.id));
+        const plan = this.planDedupe(this.mergeScopeLeaves(scopes.filter((s) => ids.has(s.id))), activeLeaf);
+        const targets: HighlightTarget[] = [];
+        for (const leaf of plan?.toRemove ?? []) {
+            if (this.settings.highlightDedupeTabs) {
+                targets.push({ el: leafHeaderEl(leaf), cls: 'ntg-dedupe-close' });
+            }
+            if (this.settings.highlightDedupeGroups) {
+                targets.push({ el: (leaf.parent as WorkspaceContainerEl | null)?.containerEl, cls: 'ntg-dedupe-close-group' });
+            }
+        }
+        if (this.settings.highlightDedupeSurvivors) {
+            for (const leaf of plan?.survivors ?? []) {
+                targets.push({ el: leafHeaderEl(leaf), cls: 'ntg-dedupe-keep' });
+            }
+        }
+        return targets;
+    }
+    /**
+     * One-line statement of what Enter would do right now, so the picker never
+     * leaves it ambiguous: Enter acts on every checked row plus the
+     * highlighted one.
+     */
+    private dedupeSummary(
+        scopes: Array<DedupeScope & { removeCount: number }>,
+        chosen: Array<{ id: string }>,
+        activeLeaf: WorkspaceLeaf | null,
+    ): string {
+        const ids = new Set(chosen.map((c) => c.id));
+        const picked = scopes.filter((s) => ids.has(s.id));
+        const plan = this.planDedupe(this.mergeScopeLeaves(picked), activeLeaf);
+        const where = picked.map((s) => s.label).join(' + ');
+        if (!plan) return `Nothing to close in: ${where}.`;
+        const n = plan.toRemove.length;
+        const k = plan.survivors.length;
+        return `Enter closes ${n} tab${n === 1 ? '' : 's'} (red) and keeps ${k} (green) in: ${where}.`;
+    }
+
+    private mergeScopeLeaves(chosen: DedupeScope[]): WorkspaceLeaf[] {
+        const leaves: WorkspaceLeaf[] = [];
+        for (const scope of chosen) {
+            for (const leaf of scope.leaves) {
+                if (!leaves.includes(leaf) && !(leaf as any).detached) leaves.push(leaf);
+            }
+        }
+        return leaves;
     }
 
     private async runDedupeScope(scope: DedupeScope, activeLeaf: WorkspaceLeaf | null): Promise<void> {
@@ -2268,12 +2469,37 @@ export default class NextTabGroupPlugin extends Plugin {
                 (leaf) => this.getLeafLastActive(leaf),
             ),
             (leaf) => this.getLeafFileKey(leaf),
-            this.settings.highlightSwitchTarget ? (leaf) => leafHeaderEl(leaf) : undefined,
-            'ntg-switch-target',
+            (leaf) => this.switchTargets(leaf, false, false),
             this.settings.switchLeftRightNavigation
                 ? (leaf, direction) => neighborInTabStrip(leaves, (l) => l, leaf, direction)
                 : undefined,
-        ).open();
+        ).withHeader({ kind: 'tab-in-group', title: 'Switch to tab in group', hint: 'Pick a tab in this tab group.', icon: 'layout-list' }).open();
+    }
+
+    /**
+     * Workspace elements to outline for the row a switch picker will activate:
+     * the tab header, the tab group holding it and the window holding it.
+     * Group and window outlines are only worth drawing when there is more than
+     * one of them (otherwise the outline would just frame everything).
+     */
+    private switchTargets(
+        leaf: WorkspaceLeaf,
+        withGroup: boolean,
+        withWindow: boolean,
+        withTab = true,
+    ): HighlightTarget[] {
+        const targets: HighlightTarget[] = [];
+        if (withTab && this.settings.highlightSwitchTarget) {
+            targets.push({ el: leafHeaderEl(leaf), cls: 'ntg-switch-target' });
+        }
+        if (withGroup && this.settings.highlightSwitchGroup) {
+            targets.push({ el: (leaf.parent as WorkspaceContainerEl | null)?.containerEl, cls: 'ntg-switch-target-group' });
+        }
+        if (withWindow && this.settings.highlightSwitchWindow) {
+            const container = leaf.getContainer?.() as unknown as { containerEl?: HTMLElement } | undefined;
+            targets.push({ el: container?.containerEl, cls: 'ntg-switch-target-window' });
+        }
+        return targets;
     }
 
     private switchToAnyTab(): void {
@@ -2313,12 +2539,11 @@ export default class NextTabGroupPlugin extends Plugin {
                 (tab) => tab.lastActive,
             ),
             (tab) => this.getLeafFileKey(tab.leaf),
-            this.settings.highlightSwitchTarget ? (tab) => leafHeaderEl(tab.leaf) : undefined,
-            'ntg-switch-target',
+            (tab) => this.switchTargets(tab.leaf, showGroup, multipleWindows),
             this.settings.switchLeftRightNavigation
                 ? (tab, direction) => neighborInTabStrip(tabs, (t) => t.leaf, tab, direction)
                 : undefined,
-        ).open();
+        ).withHeader({ kind: 'any-tab', title: 'Switch to any tab', hint: 'Pick any tab in any window.', icon: 'files' }).open();
     }
 
     private activateTabGroup(
@@ -2391,11 +2616,15 @@ export default class NextTabGroupPlugin extends Plugin {
                 (group) => group.lastActive,
             ),
             (group) => this.getLeafFileKey(group.representative),
-            this.settings.highlightSwitchTarget
-                ? (group) => ((group.group as WorkspaceContainerEl).containerEl ?? null)
-                : undefined,
-            'ntg-switch-target-group',
-        ).open();
+            (group) => [
+                // The tab-group picker's own outline stays under the original
+                // "highlight the tab you will switch to" setting.
+                ...(this.settings.highlightSwitchTarget
+                    ? [{ el: (group.group as WorkspaceContainerEl).containerEl, cls: 'ntg-switch-target-group' }]
+                    : []),
+                ...this.switchTargets(group.representative, false, multipleWindows, false),
+            ],
+        ).withHeader({ kind: 'tab-group', title: 'Switch to tab group', hint: 'Pick a tab group to jump to.', icon: 'layout-panel-left' }).open();
     }
 
     private formatWindowLabel(
@@ -2536,7 +2765,8 @@ export default class NextTabGroupPlugin extends Plugin {
                 (item) => item.lastActive,
             ),
             (item) => this.getLeafFileKey(item.representative),
-        ).open();
+            (item) => this.switchTargets(item.representative, false, true, false),
+        ).withHeader({ kind: 'window', title: 'Switch to window', hint: 'Pick a window to bring forward.', icon: 'app-window' }).open();
     }
 
 }
@@ -2604,8 +2834,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         private readonly renderItem?: SuggestionRenderer<T>,
         private readonly initialIndex = 0,
         private readonly getFilePath?: (item: T) => string | null,
-        private readonly getTargetEl?: (item: T) => HTMLElement | null,
-        private readonly targetClass = 'ntg-switch-target',
+        private readonly getTargets?: (item: T) => HighlightTarget[],
         private readonly getNeighbor?: (item: T, direction: -1 | 1) => T | null,
     ) {
         super(app);
@@ -2613,7 +2842,14 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     }
 
     private readonly rowItems = new WeakMap<HTMLElement, T>();
-    private highlightedHeader: HTMLElement | null = null;
+    private readonly highlighter = new TargetHighlighter();
+    private header?: PickerHeader;
+
+    /** Gives this picker a title/icon/accent so it is distinguishable from the others. */
+    withHeader(header: PickerHeader): this {
+        this.header = header;
+        return this;
+    }
     private selectionObserver: MutationObserver | null = null;
 
     /**
@@ -2622,27 +2858,22 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
      * Obsidian's private chooser fields.
      */
     private syncTargetHighlight(): void {
-        let header: HTMLElement | null = null;
+        let targets: HighlightTarget[] = [];
         try {
             const row = this.resultContainerEl?.querySelector<HTMLElement>('.suggestion-item.is-selected');
             if (row && this.rowItems.has(row)) {
-                const el = this.getTargetEl?.(this.rowItems.get(row) as T) ?? null;
-                header = el && el.isConnected ? el : null;
+                targets = this.getTargets?.(this.rowItems.get(row) as T) ?? [];
             }
         } catch {
-            header = null;
+            targets = [];
         }
-        if (header === this.highlightedHeader) return;
-        this.highlightedHeader?.classList.remove(this.targetClass);
-        header?.classList.add(this.targetClass);
-        this.highlightedHeader = header;
+        this.highlighter.set(targets);
     }
 
     onClose() {
         this.selectionObserver?.disconnect();
         this.selectionObserver = null;
-        this.highlightedHeader?.classList.remove(this.targetClass);
-        this.highlightedHeader = null;
+        this.highlighter.clear();
         super.onClose();
     }
 
@@ -2650,6 +2881,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         super.onOpen();
 
         this.modalEl?.classList.add('ntg-compact-prompt');
+        if (this.header) addPickerHeader(this.modalEl, this.header);
 
         registerEmacsMotionKeys(
             this,
@@ -2658,7 +2890,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
                 : {},
         );
 
-        if (this.getTargetEl && this.resultContainerEl && typeof MutationObserver !== 'undefined') {
+        if (this.getTargets && this.resultContainerEl && typeof MutationObserver !== 'undefined') {
             this.selectionObserver = new MutationObserver(() => this.syncTargetHighlight());
             this.selectionObserver.observe(this.resultContainerEl, {
                 subtree: true,
@@ -2713,7 +2945,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
             updateElementPathDatasets(el, null);
         }
 
-        if (this.getTargetEl) this.rowItems.set(el, match.item);
+        if (this.getTargets) this.rowItems.set(el, match.item);
 
         if (this.renderItem) {
             el.empty();
@@ -2842,6 +3074,62 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
                         control: {
                             type: 'toggle',
                             key: 'highlightSwitchTarget',
+                        },
+                    },
+                    {
+                        name: 'Also outline the tab group you will switch to',
+                        desc: 'In "Switch to any tab", outline the tab group of the tab ENTER will switch to (only when there is more than one tab group).',
+                        control: {
+                            type: 'toggle',
+                            key: 'highlightSwitchGroup',
+                        },
+                    },
+                    {
+                        name: 'Also outline the window you will switch to',
+                        desc: 'In "Switch to any tab" and "Switch to tab group", outline the window that ENTER will switch to (only when there is more than one window).',
+                        control: {
+                            type: 'toggle',
+                            key: 'highlightSwitchWindow',
+                        },
+                    },
+                    {
+                        name: 'Highlight the windows Collect tabs will gather',
+                        desc: 'While the "Collect tabs" picker is open, outline each window whose tabs the selection will collect.',
+                        control: {
+                            type: 'toggle',
+                            key: 'highlightCollectWindows',
+                        },
+                    },
+                    {
+                        name: 'Highlight the tab groups Collect tabs will gather',
+                        desc: 'While the "Collect tabs" picker is open, outline each tab group inside the windows the selection will collect.',
+                        control: {
+                            type: 'toggle',
+                            key: 'highlightCollectGroups',
+                        },
+                    },
+                    {
+                        name: 'Highlight the tabs Deduplicate tabs will close',
+                        desc: 'While the "Deduplicate tabs" picker is open, outline the duplicate tabs that the selected option(s) will close.',
+                        control: {
+                            type: 'toggle',
+                            key: 'highlightDedupeTabs',
+                        },
+                    },
+                    {
+                        name: 'Highlight the tab Deduplicate tabs will keep',
+                        desc: 'While the "Deduplicate tabs" picker is open, outline the one tab that is kept for each duplicated note, in a different color from the tabs that will be closed.',
+                        control: {
+                            type: 'toggle',
+                            key: 'highlightDedupeSurvivors',
+                        },
+                    },
+                    {
+                        name: 'Highlight the tab groups Deduplicate tabs will clean',
+                        desc: 'While the "Deduplicate tabs" picker is open, outline each tab group that contains tabs the selected option(s) will close.',
+                        control: {
+                            type: 'toggle',
+                            key: 'highlightDedupeGroups',
                         },
                     },
                 ],

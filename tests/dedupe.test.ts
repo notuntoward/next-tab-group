@@ -418,6 +418,79 @@ describe('deduplication commands', () => {
             expect(x2.detached).toBe(false);
         });
 
+        it('outlines the tabs and groups the selection will close, and clears them on close', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(rootContainer);
+            const keep = leaf('a', 'Note-A.md', g1, rootContainer);
+            const groupDup = leaf('b', 'Note-A.md', g1, rootContainer);
+            const x1 = leaf('c', 'Note-X.md', g1, rootContainer);
+            const x2 = leaf('d', 'Note-X.md', g2, rootContainer);
+            const headers = [keep, groupDup, x1, x2].map((l) => {
+                const el = document.createElement('div');
+                document.body.appendChild(el);
+                (l as unknown as { tabHeaderEl: HTMLElement }).tabHeaderEl = el;
+                return el;
+            });
+            const g1El = document.createElement('div');
+            (g1 as unknown as { containerEl: HTMLElement }).containerEl = g1El;
+            document.body.appendChild(g1El);
+            setup([keep, groupDup, x1, x2], keep);
+
+            await plugin.runDedupeTabs();
+            const modal = modals[0];
+            modal.syncTargetHighlight();
+
+            // Default selection: this tab group only -> just groupDup.
+            expect(headers[1].classList.contains('ntg-dedupe-close')).toBe(true);
+            expect(headers[0].classList.contains('ntg-dedupe-close')).toBe(false);
+            expect(g1El.classList.contains('ntg-dedupe-close-group')).toBe(true);
+
+            modal.checkAll();
+            expect(headers.filter((h) => h.classList.contains('ntg-dedupe-close'))).toHaveLength(2);
+
+            plugin.settings.highlightDedupeTabs = false;
+            modal.syncTargetHighlight();
+            expect(headers.some((h) => h.classList.contains('ntg-dedupe-close'))).toBe(false);
+
+            modal.clearSelection();
+            modal.onClose();
+            expect(g1El.classList.contains('ntg-dedupe-close-group')).toBe(false);
+        });
+        it('lists every window as a row, lists closing tabs under rows, and previews cross-window duplicates when windows are checked', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(windowContainer);
+            const active = leaf('a', 'Note-A.md', g1, rootContainer);
+            const b1 = leaf('b', 'Note-B.md', g1, rootContainer);
+            const b2 = leaf('c', 'Note-B.md', g1, rootContainer);
+            const crossDup = leaf('d', 'Note-A.md', g2, windowContainer);
+            setup([active, b1, b2, crossDup], active, [active, b1, b2]);
+
+            await plugin.runDedupeTabs();
+            expect(modals).toHaveLength(1);
+            const rows = modals[0].getSuggestions('').filter((r) => r.kind === 'scope');
+            const byId = (id: string) => rows.find((r) => r.id === id || r.id.startsWith(id))!;
+
+            expect(rows.map((r) => r.label)).toEqual(
+                expect.arrayContaining(['Across all windows']),
+            );
+            const other = rows.find((r) => r.id.startsWith('window:'))!;
+            expect(other.detail).toBe('no duplicates inside');
+            // one closing tab + one kept tab per row; all windows closes 2 and keeps 2.
+            expect(byId('window').items!.filter((i) => i.kind === 'close')).toHaveLength(1);
+            expect(byId('window').items!.filter((i) => i.kind === 'keep')).toHaveLength(1);
+            expect(byId('all').items!.filter((i) => i.kind === 'close')).toHaveLength(2);
+
+            // Checking both windows (not "all") still dedupes across them.
+            modals[0].clearSelection();
+            for (const r of rows) {
+                if (r.id === 'window' || r.id.startsWith('window:')) modals[0].toggleRow(r);
+            }
+            modals[0].executeCollection();
+            await new Promise((r) => setTimeout(r, 0));
+            expect(crossDup.detached).toBe(true);
+            expect(active.detached).toBe(false);
+            expect([b1.detached, b2.detached].filter(Boolean)).toHaveLength(1);
+        });
         it('deduplicates the union of all checked scopes', async () => {
             const g1 = new MockWorkspaceParent(rootContainer);
             const g2 = new MockWorkspaceParent(rootContainer);

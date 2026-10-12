@@ -18,6 +18,9 @@ const MAX_BYTES = 2 * 1024 * 1024;
 export class DiagLog {
     private seq = 0;
     private ok = true;
+    private lastSignature = '';
+    private repeats = 0;
+    private reported = 0;
     readonly session = Math.random().toString(36).slice(2, 7);
 
     constructor(private readonly path: string | null) {
@@ -48,11 +51,36 @@ export class DiagLog {
                 extra = ' <unserializable>';
             }
         }
+        // Collapse back-to-back identical records (e.g. tens of thousands of
+        // "ResizeObserver loop" errors in a layout storm) into the first line
+        // plus a REPEAT summary at the next different record and at counts of
+        // 10, 100, 1000, ... so a freeze mid-storm still leaves a count.
+        const signature = `${tag} ${msg}${extra}`;
+        if (signature === this.lastSignature) {
+            this.repeats++;
+            if (/^10+$/.test(String(this.repeats))) this.writeRepeat();
+            return;
+        }
+        this.flushRepeats();
+        this.lastSignature = signature;
+        this.write(signature);
+    }
+
+    private writeRepeat(): void {
+        this.write(`REPEAT previous record x${this.repeats} so far (identical, suppressed)`);
+        this.reported = this.repeats;
+    }
+
+    private flushRepeats(): void {
+        if (this.repeats === 1) this.write(this.lastSignature);
+        else if (this.repeats > 1 && this.reported !== this.repeats) this.writeRepeat();
+        this.repeats = 0;
+        this.reported = 0;
+    }
+
+    private write(body: string): void {
         try {
-            appendFileSync(
-                this.path,
-                `${new Date().toISOString()} [${this.session}#${++this.seq}] ${tag} ${msg}${extra}\n`,
-            );
+            appendFileSync(this.path as string, `${new Date().toISOString()} [${this.session}#${++this.seq}] ${body}\n`);
         } catch {
             this.ok = false;
         }

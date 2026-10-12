@@ -578,7 +578,7 @@ describe('canonical model', () => {
             const popout2 = model.windows.find((w) => w.window === popupWin2)!;
             const row = rowEl();
             plugin.renderWindowSuggestion(popout2, row);
-            expect(row.querySelector('.ntg-nav-primary')!.textContent!).toContain('Pop-out 2');
+            expect(row.querySelector('.ntg-nav-secondary')!.textContent!).toContain('Pop-out 2');
         });
 
         it('switch to tab in group contains only active-group leaves', () => {

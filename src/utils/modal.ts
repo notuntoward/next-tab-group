@@ -1,4 +1,4 @@
-import type { SuggestModal } from 'obsidian';
+import { setIcon, type SuggestModal } from 'obsidian';
 
 interface ChooserLike {
     selectedItem?: number;
@@ -195,4 +195,46 @@ export function registerEmacsMotionKeys(
         }
         return false;
     });
+}
+
+/** Identity of a picker: shown as a header and used to color it. */
+export interface PickerHeader {
+    /** Kebab-case id; becomes the `ntg-picker-<kind>` class that sets the accent color. */
+    kind: string;
+    title: string;
+    /** One-line instruction under the title. */
+    hint: string;
+    /** Lucide icon id. */
+    icon: string;
+}
+
+/**
+ * Adds a title row (icon, title, hint) above the filter input and tags the
+ * modal with its `ntg-picker-<kind>` class, so each command's picker looks
+ * different (accent stripe + icon + title) instead of all being the same bare
+ * search box. Cosmetic only: never throws into the caller's setup.
+ */
+export function addPickerHeader(modalEl: HTMLElement | undefined, header: PickerHeader): void {
+    try {
+        if (!modalEl) return;
+        modalEl.classList.add('ntg-picker', `ntg-picker-${header.kind}`);
+        const inputContainer = modalEl.querySelector('.prompt-input-container');
+        const parent = inputContainer?.parentElement ?? modalEl;
+        const doc = modalEl.ownerDocument;
+        const row = doc.createElement('div');
+        row.className = 'ntg-picker-header';
+        const icon = doc.createElement('span');
+        icon.className = 'ntg-picker-icon';
+        setIcon(icon, header.icon);
+        const title = doc.createElement('span');
+        title.className = 'ntg-picker-title';
+        title.textContent = header.title;
+        const hint = doc.createElement('span');
+        hint.className = 'ntg-picker-hint';
+        hint.textContent = header.hint;
+        row.append(icon, title, hint);
+        parent.insertBefore(row, inputContainer ?? parent.firstChild);
+    } catch {
+        // purely decorative
+    }
 }

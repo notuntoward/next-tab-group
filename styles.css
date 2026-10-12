@@ -487,3 +487,204 @@ body.theme-dark {
     min-width: 0;
     max-width: min(440px, 90vw);
 }
+/* Dedupe picker: tabs that will be closed, listed under their row. */
+.ntg-col-content.ntg-col-content-multiline {
+    flex-wrap: wrap;
+    white-space: normal;
+}
+
+.ntg-scope-items {
+    flex: 0 0 100%;
+    margin: 2px 0 2px 14px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller, 11px);
+}
+
+.ntg-scope-item {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ntg-scope-item-more {
+    color: var(--text-faint, var(--text-muted));
+}
+
+/* The one tab kept for a duplicated note: a distinct (green) outline from the
+ * accent used for tabs about to be closed. */
+.workspace-tab-header.ntg-dedupe-keep {
+    outline: 3px solid var(--color-green, #3fb950) !important;
+    outline-offset: -3px !important;
+    background-color: color-mix(in srgb, var(--color-green, #3fb950) 30%, var(--background-secondary, transparent)) !important;
+    border-radius: var(--radius-s, 4px);
+    position: relative;
+    z-index: 2;
+}
+
+.workspace-tab-header.is-active.ntg-dedupe-keep::before,
+.workspace-tab-header.is-active.ntg-dedupe-keep::after {
+    display: none !important;
+}
+
+/* Tabs the Deduplicate tabs picker will close: red, so they cannot be
+ * mistaken for the accent-colored active tab or the green kept tab. */
+.workspace-tab-header.ntg-dedupe-close {
+    outline: 3px solid var(--color-red, #e5484d) !important;
+    outline-offset: -3px !important;
+    background-color: color-mix(in srgb, var(--color-red, #e5484d) 30%, var(--background-secondary, transparent)) !important;
+    border-radius: var(--radius-s, 4px);
+    position: relative;
+    z-index: 2;
+}
+
+.workspace-tab-header.is-active.ntg-dedupe-close::before,
+.workspace-tab-header.is-active.ntg-dedupe-close::after {
+    display: none !important;
+}
+
+.workspace-tabs.ntg-dedupe-close-group {
+    position: relative;
+}
+
+.workspace-tabs.ntg-dedupe-close-group::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 3px var(--color-red, #e5484d);
+    background: color-mix(in srgb, var(--color-red, #e5484d) 10%, transparent);
+}
+
+/* Picker identity: every picker gets an accent stripe, an icon, a title and a
+ * one-line hint above the filter box. The accent differs per command. */
+.ntg-picker {
+    --ntg-picker-accent: var(--interactive-accent);
+    border-top: 4px solid var(--ntg-picker-accent);
+}
+
+.ntg-picker-collect { --ntg-picker-accent: var(--color-blue, #3b82f6); }
+.ntg-picker-dedupe { --ntg-picker-accent: var(--color-red, #e5484d); }
+.ntg-picker-any-tab { --ntg-picker-accent: var(--color-purple, #8b5cf6); }
+.ntg-picker-tab-in-group { --ntg-picker-accent: var(--color-cyan, #06b6d4); }
+.ntg-picker-tab-group { --ntg-picker-accent: var(--color-orange, #f59e0b); }
+.ntg-picker-window { --ntg-picker-accent: var(--color-green, #3fb950); }
+
+.ntg-picker-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 12px 2px;
+}
+
+.ntg-picker-icon {
+    color: var(--ntg-picker-accent);
+    display: inline-flex;
+    align-self: center;
+}
+
+.ntg-picker-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.ntg-picker-title {
+    color: var(--ntg-picker-accent);
+    font-size: var(--font-ui-medium, 15px);
+    font-weight: var(--font-semibold, 600);
+    white-space: nowrap;
+}
+
+.ntg-picker-hint {
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller, 11px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Window that ENTER will switch to: an inset frame over the window's root. */
+.ntg-switch-target-window {
+    position: relative;
+}
+
+.ntg-switch-target-window::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1000;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 4px var(--ntg-target-color);
+}
+
+/* Picker header: let the hint wrap instead of truncating. */
+.ntg-picker-header {
+    flex-wrap: wrap;
+}
+
+.ntg-picker-hint {
+    flex: 1 1 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+}
+
+/* What Enter will do for the current selection. */
+.ntg-picker-summary {
+    padding: 6px 12px;
+    color: var(--text-muted);
+    font-size: var(--font-ui-smaller, 11px);
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.ntg-scope-item-close {
+    color: var(--color-red, #e5484d);
+}
+
+.ntg-scope-item-keep {
+    color: var(--color-green, #3fb950);
+}
+
+/* Short windows (small screens, small pop-outs): the picker is sized by the
+ * window it opens in, so reclaim vertical space for the list. Keep the title
+ * row, drop the wrapped hint and the keyboard-hints footer, tighten the
+ * toolbar, and let the picker use most of the window height. */
+@media (max-height: 800px) {
+    .ntg-picker {
+        --prompt-top: 8px;
+        --prompt-max-height: 92vh;
+    }
+
+    .ntg-picker .ntg-picker-header {
+        padding: 4px 12px 0;
+    }
+
+    .ntg-picker .ntg-picker-hint {
+        display: none;
+    }
+
+    .ntg-picker .prompt-input {
+        height: 26px;
+    }
+
+    .ntg-picker .prompt-instructions {
+        display: none;
+    }
+
+    .ntg-picker .collect-tabs-action-toolbar {
+        padding: 4px 8px;
+    }
+
+    .ntg-picker .ntg-picker-summary {
+        padding: 3px 12px;
+    }
+
+    .ntg-collect-modal.ntg-picker .prompt-results {
+        max-height: none;
+    }
+}
+
+/* Whatever the window size, always leave room for a few rows. */
+.ntg-picker .prompt-results {
+    min-height: min(9rem, 30vh);
+}

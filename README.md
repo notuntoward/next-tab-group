@@ -237,6 +237,8 @@ Each confirmation dialog lists every tab to be closed, grouped by note with coun
 ## Tab highlighting
 
 - **Highlight the tab you will switch to** � While a Switch-to-tab modal is open, outlines the tab header that ENTER will switch to. On by default.
+- **Highlight the tabs Deduplicate tabs will close** - While the Deduplicate tabs picker is open, outlines the duplicate tabs the selected (checked and highlighted) options will close. On by default.
+- **Highlight the tab groups Deduplicate tabs will clean** - While the picker is open, outlines each tab group containing tabs that will be closed. On by default.
 
 - **Color the active tab** — Highlight the active tab with a custom background color in both light and dark mode. Off by default.
 - **Active tab color (light mode)** — Background color for the active tab when Obsidian is in light mode.

@@ -51,7 +51,7 @@ describe('NextTabGroupSettingTab getSettingDefinitions', () => {
 
         const colorGroup = definitions[2];
         const colorItems = colorGroup.items;
-        expect(colorItems).toHaveLength(4);
+        expect(colorItems).toHaveLength(11);
 
         const enableToggle = colorItems[0];
         const lightPicker = colorItems[1];

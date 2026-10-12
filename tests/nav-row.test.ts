@@ -230,8 +230,8 @@ describe('window row metadata', () => {
 
         const primary = el.querySelector('.ntg-nav-primary')!.textContent;
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
-        expect(primary).toBe('Main window');
-        expect(secondary).toBe('Most recent: Note-02.md · 2 groups');
+        expect(primary).toBe('Note-02.md');
+        expect(secondary).toBe('Main window · 2 groups · Current window');
     });
 
     it('renders a pop-out with most-recent tab and group count', () => {
@@ -251,8 +251,8 @@ describe('window row metadata', () => {
 
         const primary = el.querySelector('.ntg-nav-primary')!.textContent;
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
-        expect(primary).toBe('Pop-out');
-        expect(secondary).toBe('Most recent: Other.md · 1 group');
+        expect(primary).toBe('Other.md');
+        expect(secondary).toBe('Pop-out · 1 group');
     });
 });
 

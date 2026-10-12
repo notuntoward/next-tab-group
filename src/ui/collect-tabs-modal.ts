@@ -1,6 +1,7 @@
 import { App, Notice, SuggestModal, WorkspaceLeaf } from 'obsidian';
-import { registerEmacsMotionKeys } from '../utils/modal';
+import { addPickerHeader, registerEmacsMotionKeys, type PickerHeader } from '../utils/modal';
 import type { WindowInfo } from '../../main';
+import { TargetHighlighter, type HighlightTarget } from '../utils/target-highlight';
 
 export type CollectChoice =
     | { kind: 'current'; winInfo: WindowInfo; label: string; checked: boolean; windowIndex: number }
@@ -21,8 +22,10 @@ export interface ScopeChoice {
     badge: string;
     /** Short trailing detail shown after the label (e.g. "2 to close"). */
     detail?: string;
-    /** Optional status pill text (e.g. "HERE"). */
+    /** Optional status pill text (e.g. "HERE", "MAIN", "HERE · MAIN"). */
     status?: string;
+    /** Indented sub-lines listed under the row (e.g. tabs that will be closed). */
+    items?: Array<{ kind: 'close' | 'keep'; text: string }>;
 }
 
 export interface CollectModalOptions {
@@ -31,6 +34,11 @@ export interface CollectModalOptions {
     placeholder?: string;
     actionLabel?: string;
     commandName?: string;
+    header?: PickerHeader;
+    /** Workspace elements to mark for the currently chosen + checked rows. */
+    getTargets?: (chosen: CollectChoice[]) => HighlightTarget[];
+    /** Text describing what the action would do for the current selection. */
+    getSummary?: (chosen: CollectChoice[]) => string;
 }
 
 const sessionWindowIndices = new Map<Window | object, number>();
@@ -136,6 +144,11 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     private rows: CollectChoice[];
     private actionLabel: string;
     private commandName: string;
+    private header: PickerHeader;
+    private getTargets?: (chosen: CollectChoice[]) => HighlightTarget[];
+    private getSummary?: (chosen: CollectChoice[]) => string;
+    private summaryEl?: HTMLElement;
+    private readonly highlighter = new TargetHighlighter();
     private onPick: (choice: CollectChoice | CollectChoice[]) => void;
 
     public highlightedIndex = 0;
@@ -159,6 +172,14 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         this.onPick = onPick;
         this.actionLabel = options.actionLabel ?? 'Collect';
         this.commandName = options.commandName ?? 'collect-tabs';
+        this.header = options.header ?? {
+            kind: 'collect',
+            title: 'Collect tabs',
+            hint: 'Check the windows whose tabs should be gathered into one tab group.',
+            icon: 'combine',
+        };
+        this.getTargets = options.getTargets;
+        this.getSummary = options.getSummary;
 
         // Clean row content with no prefix text; status is conveyed by the badge & column grid.
         // The HERE row starts checked: it is what Enter/Collect acts on by default,
@@ -303,7 +324,25 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         this.setHighlightedIndex(this.highlightedIndex + delta);
     }
 
+    /**
+     * What Enter would act on: the checked rows plus the highlighted one
+     * (see executeCollection). Marks their workspace targets.
+     */
+    public syncTargetHighlight(): void {
+        if (!this.getTargets && !this.getSummary) return;
+        try {
+            const chosen = [...this.getCheckedRows()];
+            const hi = this.getHighlightedItem();
+            if (hi && !chosen.includes(hi)) chosen.push(hi);
+            if (this.getTargets) this.highlighter.set(this.getTargets(chosen));
+            if (this.summaryEl && this.getSummary) this.summaryEl.setText(this.getSummary(chosen));
+        } catch {
+            this.highlighter.clear();
+        }
+    }
+
     public updateHighlightVisuals(): void {
+        this.syncTargetHighlight();
         const container = this.resultContainerEl ?? this.modalEl?.querySelector('.prompt-results') ?? this.modalEl;
         if (!container) return;
 
@@ -369,6 +408,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
         if (this.modalEl) {
             this.modalEl.addClass('ntg-collect-modal');
+            addPickerHeader(this.modalEl, this.header);
 
             // Ensure input type is 'text' so WebKit never renders a native search cancel button
             if (this.inputEl) {
@@ -471,6 +511,13 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
                 promptEl.appendChild(this.toolbarEl);
             }
 
+            if (this.getSummary && this.toolbarEl.parentElement) {
+                this.summaryEl = document.createElement('div');
+                this.summaryEl.className = 'ntg-picker-summary';
+                this.toolbarEl.parentElement.insertBefore(this.summaryEl, this.toolbarEl);
+                this.syncTargetHighlight();
+            }
+
             // Tab / Shift+Tab and Space key handling
             this.handleKeyDown = (evt: KeyboardEvent) => {
                 if (evt.key === 'Tab') {
@@ -555,6 +602,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     onClose(): void {
+        this.highlighter.clear();
         this.isOpen = false;
         if (CollectTabsModal.activeModal === this) {
             CollectTabsModal.activeModal = null;
@@ -566,6 +614,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     public updateToolbarState(): void {
+        this.syncTargetHighlight();
         const hasChecked = this.hasAnyChecked();
         if (this.clearSelectionBtn) {
             this.clearSelectionBtn.disabled = !hasChecked;
@@ -809,6 +858,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         // Column 3 - Description column (structured tab titles or "All windows")
         const colContent = el.createSpan({ cls: 'ntg-col-content' });
         colContent.title = choice.label;
+        if (choice.kind === 'scope' && choice.items?.length) colContent.addClass('ntg-col-content-multiline');
 
         if (choice.kind === 'all') {
             colContent.createSpan({ cls: 'ntg-desc-primary', text: 'All windows' });
@@ -816,6 +866,16 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             colContent.createSpan({ cls: 'ntg-desc-primary', text: choice.label });
             if (choice.detail) {
                 colContent.createSpan({ cls: 'ntg-desc-count', text: choice.detail });
+            }
+            if (choice.items && choice.items.length > 0) {
+                const maxItems = 6;
+                const list = colContent.createDiv({ cls: 'ntg-scope-items' });
+                for (const item of choice.items.slice(0, maxItems)) {
+                    list.createDiv({ cls: `ntg-scope-item ntg-scope-item-${item.kind}`, text: (item.kind === 'close' ? '✕ ' : '✓ keeps ') + item.text });
+                }
+                if (choice.items.length > maxItems) {
+                    list.createDiv({ cls: 'ntg-scope-item ntg-scope-item-more', text: `+${choice.items.length - maxItems} more` });
+                }
             }
         } else {
             const details = getWindowTabDetails(choice.winInfo);
@@ -835,7 +895,8 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         const colStatus = el.createSpan({ cls: 'ntg-col-status' });
         if (choice.kind === 'scope') {
             if (choice.status) {
-                colStatus.createSpan({ cls: 'ntg-status-pill ntg-pill-here', text: choice.status });
+                const cls = choice.status === 'HERE · MAIN' ? 'ntg-pill-here-main' : choice.status === 'MAIN' ? 'ntg-pill-main' : 'ntg-pill-here';
+                colStatus.createSpan({ cls: `ntg-status-pill ${cls}`, text: choice.status });
             }
         } else if (choice.kind !== 'all') {
             const isMainWin = Boolean(
