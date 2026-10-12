@@ -10,7 +10,8 @@ import {
 import type { App, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
 import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText } from './src/utils/modal';
-import { CollectTabsModal, describeWindow as formatWindowDescription } from './src/ui/collect-tabs-modal';
+import { CollectTabsModal, describeWindow as formatWindowDescription, getSessionWindowIndex } from './src/ui/collect-tabs-modal';
+import type { ScopeChoice } from './src/ui/collect-tabs-modal';
 import { DiagLog, FreezeWatchdog, summarizeLayout } from './src/utils/diagnostics';
 import { dirname, join } from 'path';
 
@@ -103,6 +104,17 @@ interface TabInfo {
     leaf: WorkspaceLeaf;
     group: TabGroupInfo;
     lastActive: number;
+}
+
+interface DedupeScope {
+    id: string;
+    kind: 'group' | 'window' | 'other-window' | 'all';
+    label: string;
+    badge: string;
+    status?: string;
+    leaves: WorkspaceLeaf[];
+    confirmKey: 'confirmDedupeGroup' | 'confirmDedupeAllGroups' | 'confirmDedupeAllWindows';
+    title: string;
 }
 
 export interface WindowInfo {
@@ -352,29 +364,12 @@ export default class NextTabGroupPlugin extends Plugin {
         });
 
         this.addCommand({
-            id: 'dedupe-tabs-in-group',
-            name: 'Deduplicate tabs in group',
+            id: 'dedupe-tabs',
+            name: 'Deduplicate tabs',
             callback: () => {
-                void this.dedupeInGroup();
+                void this.runDedupeTabs();
             }
         });
-
-        this.addCommand({
-            id: 'dedupe-tabs-in-all-groups',
-            name: 'Deduplicate tabs in all groups',
-            callback: () => {
-                void this.dedupeInAllGroups();
-            }
-        });
-
-        this.addCommand({
-            id: 'dedupe-tabs-in-all-windows',
-            name: 'Deduplicate tabs in all windows',
-            callback: () => {
-                void this.dedupeInAllWindows();
-            }
-        });
-
         this.addCommand({
             id: 'switch-to-tab-in-group',
             name: 'Switch to tab in group',
@@ -2021,52 +2016,200 @@ export default class NextTabGroupPlugin extends Plugin {
         });
     }
 
-    private async dedupeInGroup() {
-        const activeLeaf = this.getActiveLeafInFocusedWindow();
-        if (!activeLeaf) return;
-
-        const model = this.buildNavigationModel(activeLeaf);
-        const activeGroup = this.getGroupForLeaf(model, activeLeaf);
+    /**
+     * Build every deduplication scope that could apply to the current
+     * workspace, narrowest first: the active tab group, the active window (all
+     * of its groups), each other window, and all windows. Each scope carries
+     * the exact leaves it covers, captured now, so a later modal callback never
+     * re-derives "the active window" (AGENTS.md hard rule 5).
+     */
+    private buildDedupeScopes(
+        activeLeaf: WorkspaceLeaf | null,
+        model: WorkspaceNavigationModel,
+    ): DedupeScope[] {
+        const scopes: DedupeScope[] = [];
+        const activeWindow = this.getWindowForLeaf(activeLeaf);
 
         // "In group" means the exact group in the exact window of the active
         // leaf. The model already excludes sidebar leaves, so this never
         // includes unexpected workspace items from activeLeaf.parent.children.
-        if (!activeGroup || activeGroup.leaves.length === 0) return;
-        await this.runDedupe(activeGroup.leaves, activeLeaf, this.settings.confirmDedupeGroup, 'Deduplicate tabs in group');
-    }
+        const activeGroup = this.getGroupForLeaf(model, activeLeaf);
+        if (activeGroup && activeGroup.leaves.length > 0) {
+            scopes.push({
+                id: 'group',
+                kind: 'group',
+                label: 'This tab group',
+                badge: 'G',
+                status: 'HERE',
+                leaves: [...activeGroup.leaves],
+                confirmKey: 'confirmDedupeGroup',
+                title: 'Deduplicate tabs in group',
+            });
+        }
 
-    private async dedupeInAllGroups() {
-        const activeLeaf = this.getActiveLeafInFocusedWindow();
-        const model = this.buildNavigationModel(activeLeaf);
-        const activeWindow = this.getWindowForLeaf(activeLeaf);
-
-        // "All groups" means every editor group in the active leaf's actual
+        // "This window" means every editor group in the active leaf's actual
         // window. With no active leaf to identify a window, fall back to the
         // main layout's root leaves so scope never silently expands to all
         // windows.
-        const leaves: WorkspaceLeaf[] = [];
+        const windowLeaves: WorkspaceLeaf[] = [];
         if (activeWindow) {
             for (const tab of this.getTabsInWindow(model, activeWindow)) {
-                leaves.push(tab.leaf);
+                windowLeaves.push(tab.leaf);
             }
         } else {
             this.app.workspace.iterateRootLeaves((leaf) => {
-                leaves.push(leaf);
+                windowLeaves.push(leaf);
             });
         }
-        await this.runDedupe(leaves, activeLeaf, this.settings.confirmDedupeAllGroups, 'Deduplicate tabs in all groups');
+        scopes.push({
+            id: 'window',
+            kind: 'window',
+            label: 'This window',
+            badge: 'W',
+            leaves: windowLeaves,
+            confirmKey: 'confirmDedupeAllGroups',
+            title: 'Deduplicate tabs in all groups',
+        });
+
+        // Other windows, each individually (like the Collect tabs modal).
+        const currentWin = model.windows.find((w) => w.window === activeWindow);
+        for (const winInfo of model.windows) {
+            if (winInfo === currentWin || (activeWindow && winInfo.window === activeWindow)) continue;
+            scopes.push({
+                id: `window:${getSessionWindowIndex(winInfo)}`,
+                kind: 'other-window',
+                label: formatWindowDescription(winInfo),
+                badge: String(getSessionWindowIndex(winInfo)),
+                leaves: this.getTabsInWindow(model, winInfo.window).map((t) => t.leaf),
+                confirmKey: 'confirmDedupeAllGroups',
+                title: 'Deduplicate tabs in window',
+            });
+        }
+
+        // All windows, built from the canonical model so sidebar leaves are
+        // excluded consistently.
+        scopes.push({
+            id: 'all',
+            kind: 'all',
+            label: 'All windows',
+            badge: '⧉',
+            leaves: model.tabs.map((tab) => tab.leaf),
+            confirmKey: 'confirmDedupeAllWindows',
+            title: 'Deduplicate tabs in all windows',
+        });
+
+        return scopes;
     }
 
-    private async dedupeInAllWindows() {
+    /**
+     * Keep only scopes that would actually close something, and drop any scope
+     * whose outcome is identical to a narrower one already kept (e.g. "This
+     * window" when the window has a single group, or "All windows" when there
+     * is only one window). What remains is the set of genuinely distinct
+     * actions available right now.
+     */
+    private distinctDedupeScopes(
+        scopes: DedupeScope[],
+        activeLeaf: WorkspaceLeaf | null,
+    ): Array<DedupeScope & { removeCount: number }> {
+        const seen = new Set<string>();
+        const result: Array<DedupeScope & { removeCount: number }> = [];
+        for (const scope of scopes) {
+            const plan = this.planDedupe(scope.leaves, activeLeaf);
+            if (!plan) continue;
+            const key = plan.toRemove.map((l) => this.getLeafId(l)).sort().join('|');
+            if (seen.has(key)) continue;
+            seen.add(key);
+            result.push({ ...scope, removeCount: plan.toRemove.length });
+        }
+        return result;
+    }
+
+    /**
+     * Deduplicate tabs. Decides what is possible given the workspace:
+     * - nothing to deduplicate: shows a notice;
+     * - exactly one distinct action: runs it directly (honoring the matching
+     *   "confirm before deduplicating" setting) without a picker;
+     * - otherwise: a multi-select picker of scopes, like Collect tabs.
+     */
+    private async runDedupeTabs(): Promise<void> {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
-
-        // All-window scope, but built from the canonical model so sidebar
-        // leaves are excluded consistently.
         const model = this.buildNavigationModel(activeLeaf);
-        const leaves = model.tabs.map((tab) => tab.leaf);
-        await this.runDedupe(leaves, activeLeaf, this.settings.confirmDedupeAllWindows, 'Deduplicate tabs in all windows');
+        const scopes = this.distinctDedupeScopes(this.buildDedupeScopes(activeLeaf, model), activeLeaf);
+
+        if (scopes.length === 0) {
+            new Notice('No duplicate tabs to close.');
+            return;
+        }
+
+        if (scopes.length === 1) {
+            await this.runDedupeScope(scopes[0], activeLeaf);
+            return;
+        }
+
+        const rows: ScopeChoice[] = scopes.map((scope, i) => ({
+            kind: 'scope' as const,
+            id: scope.id,
+            label: scope.label,
+            // The narrowest scope is what Enter acts on by default, so it
+            // starts checked.
+            checked: i === 0,
+            badge: scope.badge,
+            status: scope.status,
+            detail: `${scope.removeCount} to close`,
+        }));
+
+        new CollectTabsModal(
+            this.app,
+            null,
+            [],
+            (result) => {
+                const picked = new Set((Array.isArray(result) ? result : [result]).map((c) => (c.kind === 'scope' ? c.id : '')));
+                const chosen = scopes.filter((s) => picked.has(s.id));
+                if (chosen.length === 0) return;
+                const leaves: WorkspaceLeaf[] = [];
+                for (const scope of chosen) {
+                    for (const leaf of scope.leaves) {
+                        if (!leaves.includes(leaf) && !(leaf as any).detached) leaves.push(leaf);
+                    }
+                }
+                // The picker rows already show what will be closed.
+                void this.runDedupe(leaves, activeLeaf, false, 'Deduplicate tabs');
+            },
+            {
+                scopeRows: rows,
+                placeholder: 'Filter scopes…',
+                actionLabel: 'Deduplicate',
+                commandName: 'deduplicate-tabs',
+            },
+        ).open();
     }
 
+    private async runDedupeScope(scope: DedupeScope, activeLeaf: WorkspaceLeaf | null): Promise<void> {
+        await this.runDedupe(scope.leaves, activeLeaf, this.settings[scope.confirmKey], scope.title);
+    }
+
+    /** Deduplicate within the active tab group only. */
+    async dedupeInGroup() {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        if (!activeLeaf) return;
+        const scope = this.buildDedupeScopes(activeLeaf, this.buildNavigationModel(activeLeaf)).find((s) => s.kind === 'group');
+        if (scope) await this.runDedupeScope(scope, activeLeaf);
+    }
+
+    /** Deduplicate across all groups of the active window. */
+    async dedupeInAllGroups() {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const scope = this.buildDedupeScopes(activeLeaf, this.buildNavigationModel(activeLeaf)).find((s) => s.kind === 'window');
+        if (scope) await this.runDedupeScope(scope, activeLeaf);
+    }
+
+    /** Deduplicate across every window. */
+    async dedupeInAllWindows() {
+        const activeLeaf = this.getActiveLeafInFocusedWindow();
+        const scope = this.buildDedupeScopes(activeLeaf, this.buildNavigationModel(activeLeaf)).find((s) => s.kind === 'all');
+        if (scope) await this.runDedupeScope(scope, activeLeaf);
+    }
     private async runDedupe(leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null, confirm: boolean, title: string) {
         const plan = this.planDedupe(leaves, activeLeaf);
         if (!plan) return;

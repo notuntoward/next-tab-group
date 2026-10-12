@@ -5,7 +5,33 @@ import type { WindowInfo } from '../../main';
 export type CollectChoice =
     | { kind: 'current'; winInfo: WindowInfo; label: string; checked: boolean; windowIndex: number }
     | { kind: 'all'; label: string; checked: boolean }
-    | { kind: 'window'; winInfo: WindowInfo; label: string; checked: boolean; windowIndex: number };
+    | { kind: 'window'; winInfo: WindowInfo; label: string; checked: boolean; windowIndex: number }
+    | ScopeChoice;
+
+/**
+ * A generic, caller-defined row (used by the Deduplicate tabs command, whose
+ * scopes are tab groups / windows rather than only windows).
+ */
+export interface ScopeChoice {
+    kind: 'scope';
+    id: string;
+    label: string;
+    checked: boolean;
+    /** Text/glyph shown in the badge column. */
+    badge: string;
+    /** Short trailing detail shown after the label (e.g. "2 to close"). */
+    detail?: string;
+    /** Optional status pill text (e.g. "HERE"). */
+    status?: string;
+}
+
+export interface CollectModalOptions {
+    /** Rows to show instead of the window rows (requires currentWindow === null). */
+    scopeRows?: ScopeChoice[];
+    placeholder?: string;
+    actionLabel?: string;
+    commandName?: string;
+}
 
 const sessionWindowIndices = new Map<Window | object, number>();
 let nextSessionIndex = 2; // 1 is reserved for the main window
@@ -106,9 +132,10 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     public static activeModal: CollectTabsModal | null = null;
     public isOpen = false;
 
-    private currentRow: CollectChoice & { kind: 'current' };
-    private allRow: CollectChoice & { kind: 'all' };
-    private windowRows: Array<CollectChoice & { kind: 'window' }>;
+    // Single list of selectable rows; all selection state lives on these.
+    private rows: CollectChoice[];
+    private actionLabel: string;
+    private commandName: string;
     private onPick: (choice: CollectChoice | CollectChoice[]) => void;
 
     public highlightedIndex = 0;
@@ -123,53 +150,60 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
     constructor(
         app: App,
-        currentWindow: WindowInfo,
+        currentWindow: WindowInfo | null,
         otherWindows: WindowInfo[],
         onPick: (choice: CollectChoice | CollectChoice[]) => void,
+        options: CollectModalOptions = {},
     ) {
         super(app);
         this.onPick = onPick;
+        this.actionLabel = options.actionLabel ?? 'Collect';
+        this.commandName = options.commandName ?? 'collect-tabs';
 
         // Clean row content with no prefix text; status is conveyed by the badge & column grid.
         // The HERE row starts checked: it is what Enter/Collect acts on by default,
         // and the checkbox must reflect that truthfully instead of relying solely
         // on the keyboard-current highlight to convey "this will be collected".
-        const currentIdx = getSessionWindowIndex(currentWindow);
-        this.currentRow = {
-            kind: 'current',
-            winInfo: currentWindow,
-            label: describeWindow(currentWindow),
-            checked: true,
-            windowIndex: currentIdx,
-        };
-
-        this.allRow = {
-            kind: 'all',
-            label: 'All windows',
-            checked: false,
-        };
-
-        this.windowRows = otherWindows.map((w) => {
-            const idx = getSessionWindowIndex(w);
-            return {
-                kind: 'window' as const,
-                winInfo: w,
-                label: describeWindow(w),
-                checked: false,
-                windowIndex: idx,
+        if (currentWindow === null) {
+            this.rows = options.scopeRows ?? [];
+        } else {
+            const currentIdx = getSessionWindowIndex(currentWindow);
+            const currentRow: CollectChoice = {
+                kind: 'current',
+                winInfo: currentWindow,
+                label: describeWindow(currentWindow),
+                checked: true,
+                windowIndex: currentIdx,
             };
-        });
 
+            const allRow: CollectChoice = {
+                kind: 'all',
+                label: 'All windows',
+                checked: false,
+            };
+
+            const windowRows: CollectChoice[] = otherWindows.map((w) => {
+                const idx = getSessionWindowIndex(w);
+                return {
+                    kind: 'window' as const,
+                    winInfo: w,
+                    label: describeWindow(w),
+                    checked: false,
+                    windowIndex: idx,
+                };
+            });
+            this.rows = [currentRow, allRow, ...windowRows];
+        }
         // Filter and instructions hierarchy:
         // 1. Filter input
         // 2. Window list
         // 3. Action toolbar
         // 4. Keyboard hints
-        this.setPlaceholder('Filter windows…');
+        this.setPlaceholder(options.placeholder ?? 'Filter windows…');
         this.setInstructions([
             { command: '↑↓', purpose: 'navigate' },
             { command: 'space', purpose: 'toggle' },
-            { command: '↵', purpose: 'collect' },
+            { command: '↵', purpose: this.actionLabel.toLowerCase() },
             { command: 'esc', purpose: 'cancel' },
         ]);
     }
@@ -308,7 +342,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             } catch {
                 // ignore
             }
-            new Notice('Existing collect-tabs command cancelled');
+            new Notice(`Existing ${this.commandName} command cancelled`);
         }
         CollectTabsModal.activeModal = this;
         try {
@@ -422,7 +456,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
             this.collectBtn = rightGroup.createEl('button', {
                 cls: 'mod-cta ntg-btn ntg-btn-collect',
-                text: 'Collect',
+                text: this.actionLabel,
                 attr: { type: 'button' },
             });
             this.collectBtn.addEventListener('click', (evt) => {
@@ -540,17 +574,11 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     public hasAnyChecked(): boolean {
-        return this.currentRow.checked || this.allRow.checked || this.windowRows.some((w) => w.checked);
+        return this.rows.some((r) => r.checked);
     }
 
     public getCheckedRows(): CollectChoice[] {
-        const list: CollectChoice[] = [];
-        if (this.currentRow.checked) list.push(this.currentRow);
-        if (this.allRow.checked) list.push(this.allRow);
-        for (const w of this.windowRows) {
-            if (w.checked) list.push(w);
-        }
-        return list;
+        return this.rows.filter((r) => r.checked);
     }
 
     public syncRowVisuals(choice: CollectChoice): void {
@@ -600,20 +628,16 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     public checkAll(): void {
-        this.currentRow.checked = true;
-        this.allRow.checked = true;
-        for (const w of this.windowRows) {
-            w.checked = true;
+        for (const r of this.rows) {
+            r.checked = true;
         }
         this.syncAllRowVisuals();
         this.updateToolbarState();
     }
 
     public clearSelection(): void {
-        this.currentRow.checked = false;
-        this.allRow.checked = false;
-        for (const w of this.windowRows) {
-            w.checked = false;
+        for (const r of this.rows) {
+            r.checked = false;
         }
         this.syncAllRowVisuals();
         this.updateToolbarState();
@@ -671,7 +695,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
      * to what gets collected; it never removes the row you just chose.
      */
     public executeCollection(fallbackChoice?: CollectChoice): void {
-        const chosen = fallbackChoice ?? this.getHighlightedItem() ?? this.currentRow;
+        const chosen = fallbackChoice ?? this.getHighlightedItem() ?? this.rows[0];
         const checked = this.getCheckedRows();
 
         const result: CollectChoice[] = [];
@@ -692,11 +716,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     public buildChoices(): CollectChoice[] {
         // Suggestion list contains strictly selectable targets.
         // It never gains, loses, reorders, or resizes when selection changes.
-        return [
-            this.currentRow,
-            this.allRow,
-            ...this.windowRows,
-        ];
+        return [...this.rows];
     }
 
     getSuggestions(query: string): CollectChoice[] {
@@ -708,6 +728,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             if (c.kind === 'current' || c.kind === 'window') {
                 if (String(c.windowIndex) === q) return true;
             }
+            if (c.kind === 'scope' && c.detail?.toLowerCase().includes(q)) return true;
             return false;
         });
     }
@@ -779,6 +800,8 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         if (choice.kind === 'all') {
             badge.addClass('ntg-badge-all');
             badge.createSpan({ cls: 'ntg-badge-glyph', text: '⧉' });
+        } else if (choice.kind === 'scope') {
+            badge.setText(choice.badge);
         } else {
             badge.setText(String(choice.windowIndex));
         }
@@ -789,6 +812,11 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
         if (choice.kind === 'all') {
             colContent.createSpan({ cls: 'ntg-desc-primary', text: 'All windows' });
+        } else if (choice.kind === 'scope') {
+            colContent.createSpan({ cls: 'ntg-desc-primary', text: choice.label });
+            if (choice.detail) {
+                colContent.createSpan({ cls: 'ntg-desc-count', text: choice.detail });
+            }
         } else {
             const details = getWindowTabDetails(choice.winInfo);
             colContent.createSpan({ cls: 'ntg-desc-primary', text: details.primaryTitle });
@@ -805,7 +833,11 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
         // Column 4 - Status column (fixed width, HERE, MAIN, HERE · MAIN, or empty)
         const colStatus = el.createSpan({ cls: 'ntg-col-status' });
-        if (choice.kind !== 'all') {
+        if (choice.kind === 'scope') {
+            if (choice.status) {
+                colStatus.createSpan({ cls: 'ntg-status-pill ntg-pill-here', text: choice.status });
+            }
+        } else if (choice.kind !== 'all') {
             const isMainWin = Boolean(
                 choice.winInfo.isMainWindow ||
                 (typeof window !== 'undefined' && choice.winInfo.window === window)

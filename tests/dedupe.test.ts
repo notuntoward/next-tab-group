@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { App, WorkspaceLeaf } from 'obsidian';
 import NextTabGroupPlugin from '../main.ts';
+import { CollectTabsModal } from '../src/ui/collect-tabs-modal';
 import {
     MockApp,
     MockModal,
@@ -19,6 +20,7 @@ type TestPlugin = NextTabGroupPlugin & {
     dedupeInGroup: () => Promise<void>;
     dedupeInAllGroups: () => Promise<void>;
     dedupeInAllWindows: () => Promise<void>;
+    runDedupeTabs: () => Promise<void>;
     getActiveLeafInFocusedWindow: () => WorkspaceLeaf | null;
     switchToTabInGroup: () => void;
     planDedupe: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => { toRemove: WorkspaceLeaf[]; notesAffected: number } | null;
@@ -312,6 +314,128 @@ describe('deduplication commands', () => {
         });
     });
 
+    describe('runDedupeTabs (unified command)', () => {
+        // Capture the picker instead of opening it so tests can drive it.
+        let modals: CollectTabsModal[];
+        let originalOpen: typeof CollectTabsModal.prototype.open;
+
+        beforeEach(() => {
+            modals = [];
+            originalOpen = CollectTabsModal.prototype.open;
+            CollectTabsModal.prototype.open = function (this: CollectTabsModal) {
+                modals.push(this);
+            };
+        });
+
+        afterEach(() => {
+            CollectTabsModal.prototype.open = originalOpen;
+        });
+
+        function setup(leaves: MockWorkspaceLeaf[], active: MockWorkspaceLeaf, root: MockWorkspaceLeaf[] = leaves) {
+            app.workspace.rootLeaves = root;
+            app.workspace.allLeaves = leaves;
+            app.workspace.setActiveLeaf(active);
+            plugin.settings.confirmDedupeGroup = false;
+            plugin.settings.confirmDedupeAllGroups = false;
+            plugin.settings.confirmDedupeAllWindows = false;
+        }
+
+        it('does nothing and shows no picker when there are no duplicates', async () => {
+            const group = new MockWorkspaceParent(rootContainer);
+            const a = leaf('a', 'Note-A.md', group, rootContainer);
+            const b = leaf('b', 'Note-B.md', group, rootContainer);
+            setup([a, b], a);
+
+            await plugin.runDedupeTabs();
+
+            expect(modals).toHaveLength(0);
+            expect(a.detached).toBe(false);
+            expect(b.detached).toBe(false);
+        });
+
+        it('runs directly without a picker when one window has a single group', async () => {
+            const group = new MockWorkspaceParent(rootContainer);
+            const keep = leaf('a', 'Note-A.md', group, rootContainer);
+            const dup = leaf('b', 'Note-A.md', group, rootContainer);
+            setup([keep, dup], keep);
+
+            await plugin.runDedupeTabs();
+
+            expect(modals).toHaveLength(0);
+            expect(keep.detached).toBe(false);
+            expect(dup.detached).toBe(true);
+        });
+
+        it('runs directly when only cross-group duplicates exist (group scope has nothing to do)', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(rootContainer);
+            const keep = leaf('a', 'Note-A.md', g1, rootContainer);
+            const dup = leaf('b', 'Note-A.md', g2, rootContainer);
+            setup([keep, dup], keep);
+
+            await plugin.runDedupeTabs();
+
+            expect(modals).toHaveLength(0);
+            expect(dup.detached).toBe(true);
+        });
+
+        it('runs directly when the only duplicates are inside another window', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(windowContainer);
+            const active = leaf('a', 'Note-A.md', g1, rootContainer);
+            const dup1 = leaf('b', 'Note-B.md', g2, windowContainer);
+            const dup2 = leaf('c', 'Note-B.md', g2, windowContainer);
+            setup([active, dup1, dup2], active, [active]);
+
+            await plugin.runDedupeTabs();
+
+            expect(modals).toHaveLength(0);
+            expect([dup1.detached, dup2.detached].filter(Boolean)).toHaveLength(1);
+            expect(active.detached).toBe(false);
+        });
+
+        it('offers a picker when group-only and wider actions differ, and defaults to the narrowest', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(rootContainer);
+            const keep = leaf('a', 'Note-A.md', g1, rootContainer);
+            const groupDup = leaf('b', 'Note-A.md', g1, rootContainer);
+            const x1 = leaf('c', 'Note-X.md', g1, rootContainer);
+            const x2 = leaf('d', 'Note-X.md', g2, rootContainer);
+            setup([keep, groupDup, x1, x2], keep);
+
+            await plugin.runDedupeTabs();
+            expect(modals).toHaveLength(1);
+
+            const rows = modals[0].getSuggestions('');
+            expect(rows.map((r) => (r.kind === 'scope' ? r.id : r.kind))).toEqual(['group', 'window']);
+            expect(rows.map((r) => r.checked)).toEqual([true, false]);
+
+            modals[0].executeCollection();
+            await new Promise((r) => setTimeout(r, 0));
+
+            expect(groupDup.detached).toBe(true);
+            expect(x1.detached).toBe(false);
+            expect(x2.detached).toBe(false);
+        });
+
+        it('deduplicates the union of all checked scopes', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(rootContainer);
+            const keep = leaf('a', 'Note-A.md', g1, rootContainer);
+            const groupDup = leaf('b', 'Note-A.md', g1, rootContainer);
+            const x1 = leaf('c', 'Note-X.md', g1, rootContainer);
+            const x2 = leaf('d', 'Note-X.md', g2, rootContainer);
+            setup([keep, groupDup, x1, x2], keep);
+
+            await plugin.runDedupeTabs();
+            modals[0].checkAll();
+            modals[0].executeCollection();
+            await new Promise((r) => setTimeout(r, 0));
+
+            expect(groupDup.detached).toBe(true);
+            expect([x1.detached, x2.detached].filter(Boolean)).toHaveLength(1);
+        });
+    });
     describe('confirmation modal', () => {
         it('cancelling the modal leaves all tabs intact', async () => {
             const group1 = new MockWorkspaceParent(rootContainer);

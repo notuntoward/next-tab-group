@@ -147,45 +147,32 @@ Performs a recursive **90° Clockwise Rotation** of the entire workspace layout.
 
 Use this when you need to reorient your workspace layout for better screen utilization, such as switching from side-by-side panes to stacked panes.
 
-## Deduplicate Tabs in Group
+## Deduplicate Tabs
 
-**Command ID:** `dedupe-tabs-in-group`
+**Command ID:** `dedupe-tabs`
 
-Removes duplicate tabs in the **current tab group** that point to the same file. For each duplicated file, the tab that survives is chosen in this order:
+Closes duplicate tabs that point to the same file, leaving at most one tab per note within the chosen scope. Scopes, narrowest first:
+
+- **This tab group**
+- **This window** (all of its tab groups)
+- **Each other window**, individually
+- **All windows**
+
+The command only offers what is actually useful right now:
+
+- If there is nothing to deduplicate, it shows a notice and does nothing.
+- If only one distinct action is possible (for example a single window with a single group, or duplicates that exist only in one place), it runs immediately without a picker.
+- Otherwise it opens a picker like **Collect tabs**: each row shows how many tabs it would close, the narrowest scope is checked by default, Space toggles rows, and Enter or **Deduplicate** acts on everything checked (the union of the scopes).
+
+For each duplicated file, the surviving tab is chosen in this order:
 
 1. The currently active tab (if it points to that file).
-2. The most recently visited tab in the current tab group (if recency is available).
-3. A stable fallback by leaf id.
-
-This command runs without confirmation by default. Enable confirmation in **Settings → Next Tab Group → Confirm before deduplicating in group** to show a dialog listing the tabs to be closed before running it. Use this when you've opened the same note in multiple tabs within a group and want to clean up the duplicates.
-
-## Deduplicate Tabs in All Groups
-
-**Command ID:** `dedupe-tabs-in-all-groups`
-
-Scans **every tab group in the current window** and removes duplicate tabs that point to the same file, leaving at most one tab per note across the window. For each duplicated file, the surviving tab is chosen in this order:
-
-1. The currently active tab.
-2. The most recently visited tab in the current tab group.
-3. The most recently visited tab in any other group in the current window.
-4. A stable fallback by leaf id.
-
-This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all groups**. Use this for a quick cleanup when duplicate tabs have accumulated across all groups in your current window.
-
-## Deduplicate Tabs in All Windows
-
-**Command ID:** `dedupe-tabs-in-all-windows`
-
-Scans **every tab in every window** (the main window and any pop-out windows) and removes duplicate tabs that point to the same file, leaving at most one tab per note across the entire workspace. The surviving tab is chosen in this order:
-
-1. The currently active tab.
 2. The most recently visited tab in the active tab group.
-3. The most recently visited tab in any other group in the active window.
+3. The most recently visited tab in the active window.
 4. The most recently visited tab in any other window.
 5. A stable fallback by leaf id.
 
-This command shows a confirmation dialog by default, listing every tab it will close (grouped by note, with counts per tab group). Disable the confirmation in **Settings → Next Tab Group → Confirm before deduplicating in all windows**. Use this for a full workspace cleanup when duplicate tabs exist across the main window and any pop-out windows.
-
+The confirmation dialog settings below apply only when the command runs directly without the picker.
 ## Switch to Tab in Group
 
 **Command ID:** `switch-to-tab-in-group`
@@ -237,9 +224,9 @@ The plugin adds a **Settings → Next Tab Group** tab with the following options
 
 ## Deduplicate tabs
 
-- **Confirm before deduplicating in group** — Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs in group". Off by default; enable to prompt before closing tabs in the current group.
-- **Confirm before deduplicating in all groups** — Show a confirmation dialog when running "Deduplicate tabs in all groups". On by default; disable to run without prompting.
-- **Confirm before deduplicating in all windows** — Show a confirmation dialog when running "Deduplicate tabs in all windows". On by default; disable to run without prompting.
+- **Confirm before deduplicating in group** — Show a confirmation dialog listing the tabs to be removed when running "Deduplicate tabs" directly on a single tab group. Off by default; enable to prompt before closing tabs in the current group.
+- **Confirm before deduplicating in all groups** — Show a confirmation dialog when running "Deduplicate tabs" directly on a window. On by default; disable to run without prompting.
+- **Confirm before deduplicating in all windows** — Show a confirmation dialog when running "Deduplicate tabs" directly on all windows. On by default; disable to run without prompting.
 
 Each confirmation dialog lists every tab to be closed, grouped by note with counts per tab group and per window, before anything is removed.
 
@@ -249,7 +236,7 @@ Each confirmation dialog lists every tab to be closed, grouped by note with coun
 
 ## Tab highlighting
 
-- **Highlight the tab you will switch to** � While a Switch-to-tab modal is open, outlines the tab header that ENTER will switch to. On by default.
+- **Highlight the tab you will switch to** � While a Switch-to-tab modal is open, outlines the tab header that ENTER will switch to. On by default.
 
 - **Color the active tab** — Highlight the active tab with a custom background color in both light and dark mode. Off by default.
 - **Active tab color (light mode)** — Background color for the active tab when Obsidian is in light mode.
@@ -264,9 +251,7 @@ The color is applied as a CSS custom property on every open window's `<body>`, s
    - `Next tab group`
    - `Collect tabs`
    - `Rotate tab groups`
-   - `Deduplicate tabs in group`
-   - `Deduplicate tabs in all groups`
-   - `Deduplicate tabs in all windows`
+   - `Deduplicate tabs`
    - `Switch to tab in group`
    - `Switch to any tab`
    - `Switch to tab group`
