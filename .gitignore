@@ -26,3 +26,7 @@ data.json
 
 # Direnv file
 .envrc
+
+# Diagnostics flight-recorder output
+diagnostics.log*
+heartbeat.txt

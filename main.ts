@@ -11,6 +11,8 @@ import type { App, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
 import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText } from './src/utils/modal';
 import { CollectTabsModal, describeWindow as formatWindowDescription } from './src/ui/collect-tabs-modal';
+import { DiagLog, FreezeWatchdog, summarizeLayout } from './src/utils/diagnostics';
+import { dirname, join } from 'path';
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -154,7 +156,147 @@ export default class NextTabGroupPlugin extends Plugin {
     private leafLastActive: Map<string, number> = new Map();
     settings: NextTabGroupSettings = { ...DEFAULT_SETTINGS };
 
+    diag: DiagLog = new DiagLog(null);
+    private restoreExecuteCommand: (() => void) | null = null;
+    private collectInFlight = 0;
+    private watchdog: FreezeWatchdog | null = null;
+
+    /** Logs a layout snapshot; anomalies are always logged, the full tree only when asked. */
+    private logLayout(label: string, force = true): void {
+        const { text, anomalies } = summarizeLayout(this.app.workspace);
+        if (anomalies.length) this.diag.log('ANOMALY', label, { anomalies, layout: text });
+        else if (force) this.diag.log('LAYOUT', label, text);
+    }
+
+    /** Wrap every command so each invocation is logged (sync part only). */
+    addCommand(command: Parameters<Plugin['addCommand']>[0]) {
+        const cb = command.callback;
+        if (cb) {
+            command.callback = () => {
+                const end = this.diag.begin(`cmd ${command.id}`);
+                try {
+                    cb();
+                } finally {
+                    end();
+                }
+            };
+        }
+        return super.addCommand(command);
+    }
+
+    private startDiagnostics(): void {
+        let path: string | null = null;
+        try {
+            const base = (this.app.vault.adapter as any).getBasePath?.();
+            const dir = this.manifest.dir;
+            if (base && dir) path = join(base, dir, 'diagnostics.log');
+        } catch {
+            // no filesystem adapter; diagnostics stay disabled
+        }
+        this.diag = new DiagLog(path);
+        this.diag.log('SESSION', 'plugin load', {
+            version: this.manifest.version,
+            log: path,
+        });
+
+        // Main-thread stall detector: logs when the event loop was blocked.
+        let last = Date.now();
+        this.registerInterval(
+            window.setInterval(() => {
+                const now = Date.now();
+                if (now - last > 1500 && document.visibilityState === 'visible') this.diag.log('STALL', 'main thread blocked', { ms: now - last - 500 });
+                last = now;
+            }, 500),
+        );
+
+        if (path) {
+            try {
+                this.watchdog = new FreezeWatchdog();
+                this.watchdog.start(path, join(dirname(path), 'heartbeat.txt'), () => this.diag.context(), (m) => this.diag.log('WARN', m));
+            } catch (e) {
+                this.diag.log('WARN', 'watchdog failed to start', { err: String(e) });
+            }
+        }
+
+        // Uncaught errors in any window.
+        this.registerDomEvent(window, 'error', (e: ErrorEvent) =>
+            this.diag.log('ERROR', 'window error', { msg: e.message, src: e.filename, line: e.lineno }),
+        );
+        this.registerDomEvent(window, 'unhandledrejection', (e: PromiseRejectionEvent) =>
+            this.diag.log('ERROR', 'unhandled rejection', { reason: String(e.reason), stack: (e.reason as Error)?.stack }),
+        );
+
+        // Log EVERY Obsidian command (including built-in tab commands).
+        try {
+            const cmds = (this.app as any).commands;
+            const orig = cmds?.executeCommandById;
+            if (typeof orig === 'function') {
+                const wrapped = (id: string, ...rest: unknown[]) => {
+                    const end = this.diag.begin(`obsidian-cmd ${id}`);
+                    try {
+                        return orig.call(cmds, id, ...rest);
+                    } finally {
+                        end();
+                    }
+                };
+                cmds.executeCommandById = wrapped;
+                this.restoreExecuteCommand = () => {
+                    if (cmds.executeCommandById === wrapped) cmds.executeCommandById = orig;
+                };
+            }
+        } catch {
+            // private API unavailable
+        }
+
+        // Workspace events, with storm detection.
+        let burst = 0;
+        let burstStart = Date.now();
+        const storm = (name: string) => {
+            const now = Date.now();
+            if (now - burstStart > 1000) {
+                burst = 0;
+                burstStart = now;
+            }
+            if (++burst === 40) this.diag.log('STORM', `${name}: 40+ workspace events within 1s`);
+        };
+        const ws = this.app.workspace;
+        this.registerEvent(ws.on('layout-change', () => {
+            storm('layout-change');
+            this.diag.lastEvent = 'layout-change@' + new Date().toISOString();
+            this.diag.log('EVENT', 'layout-change');
+            this.logLayout('after layout-change', false);
+        }));
+        this.registerEvent(ws.on('active-leaf-change', (leaf) => {
+            storm('active-leaf-change');
+            this.diag.lastEvent = 'active-leaf-change@' + new Date().toISOString();
+            this.diag.log('EVENT', 'active-leaf-change', {
+                id: (leaf as any)?.id,
+                type: leaf?.view?.getViewType?.(),
+            });
+        }));
+        const watchVisibility = (w: Window, label: string) => {
+            this.registerDomEvent(w.document, 'visibilitychange', () =>
+                this.diag.log('VIS', label, { state: w.document.visibilityState, focused: w.document.hasFocus() }));
+            this.registerDomEvent(w, 'focus', () => this.diag.log('VIS', label + ' focus'));
+            this.registerDomEvent(w, 'blur', () => this.diag.log('VIS', label + ' blur'));
+        };
+        watchVisibility(window, 'main');
+        this.diag.log('VIS', 'initial', { state: document.visibilityState, focused: document.hasFocus() });
+        this.registerEvent(ws.on('window-open', (_w, win) => {
+            this.diag.log('EVENT', 'window-open');
+            try { watchVisibility(win, 'popout'); } catch { /* window closing */ }
+        }));
+        this.registerEvent(ws.on('window-close', () => this.diag.log('EVENT', 'window-close')));
+        this.app.workspace.onLayoutReady(() => this.logLayout('layout ready'));
+    }
+
     async onload() {
+        try {
+            this.startDiagnostics();
+        } catch (e) {
+            // Diagnostics must never prevent the plugin from loading.
+            console.error('next-tab-group: diagnostics failed to start', e);
+        }
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
         this.applyActiveTabColors();
 
@@ -281,6 +423,9 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     onunload(): void {
+        this.diag.log('SESSION', 'plugin unload');
+        this.restoreExecuteCommand?.();
+        this.watchdog?.stop();
         const windows = new Set<Window>();
         const mainWin = this.getMainWindow();
         if (mainWin && !mainWin.closed) windows.add(mainWin);
@@ -1289,6 +1434,7 @@ export default class NextTabGroupPlugin extends Plugin {
             // window/document already torn down; fall through to the close attempts below
         }
 
+        this.diag.log('STEP', 'closing popout window');
         try {
             const floating = (this.app.workspace as any).floatingSplit?.children ?? [];
             for (const child of floating) {
@@ -1426,8 +1572,13 @@ export default class NextTabGroupPlugin extends Plugin {
         const targetParent = destLeaf.parent as any;
         if (!targetParent) return;
 
+        if (this.collectInFlight > 0) this.diag.log('WARN', 'collectTabs re-entered while another is in flight', { inFlight: this.collectInFlight });
+        this.collectInFlight++;
+        const endCollect = this.diag.begin('collectTabs', { scope, tabs: tabsToMigrate.length, popouts: evacuatedPopouts.size });
+        this.logLayout('collectTabs before');
         try {
             for (const leaf of tabsToMigrate) {
+                this.diag.log('STEP', 'collect migrate leaf', { id: (leaf as any).id });
                 const state = leaf.getViewState();
                 const ephemeralState = typeof (leaf as any).getEphemeralState === 'function'
                     ? (leaf as any).getEphemeralState()
@@ -1440,6 +1591,7 @@ export default class NextTabGroupPlugin extends Plugin {
                     group: undefined,
                 };
                 await newLeaf.setViewState(cleanState, ephemeralState);
+                this.diag.log('STEP', 'collect detach old leaf', { id: (leaf as any).id });
                 leaf.detach();
             }
 
@@ -1448,11 +1600,15 @@ export default class NextTabGroupPlugin extends Plugin {
             }
         } catch (err) {
             console.error('Failed to collect tabs:', err);
+            this.diag.log('ERROR', 'collectTabs failed', { err: String(err), stack: (err as Error)?.stack });
         } finally {
+            this.collectInFlight--;
             if (destLeaf.parent && this.isLeafAttached(destLeaf)) {
                 this.tabGroupActiveLeaves.set(destLeaf.parent, destLeaf);
             }
             this.focusLeafAndWindow(destLeaf);
+            this.logLayout('collectTabs after');
+            endCollect();
         }
     }
 
@@ -1497,7 +1653,9 @@ export default class NextTabGroupPlugin extends Plugin {
         }
 
         // Perform recursive 90-degree clockwise rotation on the split tree
+        this.logLayout('rotate before');
         this.rotateSplitClockwise(highestSplit, activeWin);
+        this.logLayout('rotate after');
 
         // Notify Obsidian to re-render layout bounds and tab header containers
         if (typeof (this.app.workspace as any).trigger === 'function') {
@@ -1892,9 +2050,13 @@ export default class NextTabGroupPlugin extends Plugin {
             if (!ok) return;
         }
 
+        const endDedupe = this.diag.begin('dedupe detach', { n: plan.toRemove.length });
         for (const leaf of plan.toRemove) {
+            this.diag.log('STEP', 'dedupe detach leaf', { id: (leaf as any).id });
             leaf.detach();
         }
+        this.logLayout('dedupe after');
+        endDedupe();
     }
 
     // ------------------------------------------------------------------------
