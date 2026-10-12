@@ -67,12 +67,14 @@ describe('switchToTabGroup', () => {
     let container: MockWorkspaceContainer;
     let group1: MockWorkspaceParent;
     let group2: MockWorkspaceParent;
+    let group3: MockWorkspaceParent;
 
     beforeEach(() => {
         app = new MockApp();
         container = new MockWorkspaceContainer('root', {} as Window);
         group1 = new MockWorkspaceParent(container);
         group2 = new MockWorkspaceParent(container);
+        group3 = new MockWorkspaceParent(container);
         plugin = createPlugin(app);
     });
 
@@ -80,9 +82,10 @@ describe('switchToTabGroup', () => {
         const a1 = leaf('a1', 'A.md', group1, container);
         const a2 = leaf('a2', 'A2.md', group1, container);
         const b1 = leaf('b1', 'B.md', group2, container);
+        const c1 = leaf('c1', 'C.md', group3, container);
 
-        app.workspace.rootLeaves = [a1, a2, b1];
-        app.workspace.allLeaves = [a1, a2, b1];
+        app.workspace.rootLeaves = [a1, a2, b1, c1];
+        app.workspace.allLeaves = [a1, a2, b1, c1];
         app.workspace.setActiveLeaf(a1);
 
         let captured: MockFuzzySuggestModal<TabGroupInfo> | undefined;
@@ -97,21 +100,22 @@ describe('switchToTabGroup', () => {
         MockFuzzySuggestModal.prototype.open = originalOpen;
 
         expect(captured).toBeDefined();
-        expect(captured!.getItems()).toHaveLength(2);
+        expect(captured!.getItems()).toHaveLength(3);
     });
 
     it('groups sort by the most-recent activity of their representative', () => {
         const a1 = leaf('a1', 'A.md', group1, container);
         const a2 = leaf('a2', 'A2.md', group1, container);
         const b1 = leaf('b1', 'B.md', group2, container);
+        const c1 = leaf('c1', 'C.md', group3, container);
         const b2 = leaf('b2', 'B2.md', group2, container);
         plugin.leafLastActive.set('a1', 100);
         plugin.leafLastActive.set('a2', 200);
         plugin.leafLastActive.set('b1', 300);
         plugin.leafLastActive.set('b2', 400);
 
-        app.workspace.rootLeaves = [a1, a2, b1, b2];
-        app.workspace.allLeaves = [a1, a2, b1, b2];
+        app.workspace.rootLeaves = [a1, a2, b1, b2, c1];
+        app.workspace.allLeaves = [a1, a2, b1, b2, c1];
         app.workspace.setActiveLeaf(a1);
 
         let captured: MockFuzzySuggestModal<TabGroupInfo> | undefined;
@@ -134,9 +138,10 @@ describe('switchToTabGroup', () => {
         const a1 = leaf('a1', 'A.md', group1, container);
         const a2 = leaf('a2', 'A2.md', group1, container);
         const b1 = leaf('b1', 'B.md', group2, container);
+        const c1 = leaf('c1', 'C.md', group3, container);
 
-        app.workspace.rootLeaves = [a1, a2, b1];
-        app.workspace.allLeaves = [a1, a2, b1];
+        app.workspace.rootLeaves = [a1, a2, b1, c1];
+        app.workspace.allLeaves = [a1, a2, b1, c1];
         app.workspace.setActiveLeaf(a1);
 
         plugin.tabGroupActiveLeaves.set(group1, a2);
@@ -162,9 +167,10 @@ describe('switchToTabGroup', () => {
         const a1 = leaf('a1', 'A.md', group1, container);
         const a2 = leaf('a2', 'A2.md', group1, container);
         const b1 = leaf('b1', 'B.md', group2, container);
+        const c1 = leaf('c1', 'C.md', group3, container);
 
-        app.workspace.rootLeaves = [a1, a2, b1];
-        app.workspace.allLeaves = [a1, a2, b1];
+        app.workspace.rootLeaves = [a1, a2, b1, c1];
+        app.workspace.allLeaves = [a1, a2, b1, c1];
         app.workspace.setActiveLeaf(a1);
 
         // Store a leaf that no longer belongs to group1
@@ -192,9 +198,10 @@ describe('switchToTabGroup', () => {
         const a1 = leaf('a1', 'A.md', group1, container);
         const a2 = leaf('a2', 'A2.md', group1, container);
         const b1 = leaf('b1', 'B.md', group2, container);
+        const c1 = leaf('c1', 'C.md', group3, container);
 
-        app.workspace.rootLeaves = [a1, a2, b1];
-        app.workspace.allLeaves = [a1, a2, b1];
+        app.workspace.rootLeaves = [a1, a2, b1, c1];
+        app.workspace.allLeaves = [a1, a2, b1, c1];
         app.workspace.setActiveLeaf(a1);
 
         const groups = plugin.buildTabGroupInfos([loc(a1), loc(a2), loc(b1)], asLeaf(a1));
@@ -215,5 +222,64 @@ describe('switchToTabGroup', () => {
         const group2Item = items.find((g) => g.group === group2)!;
         expect(group1Item.label).toBe(groups.find((g) => g.group === group1)!.label);
         expect(group2Item.label).toBe(groups.find((g) => g.group === group2)!.label);
+    });
+
+    describe('with exactly two groups', () => {
+        function spyOpen() {
+            const originalOpen = MockFuzzySuggestModal.prototype.open;
+            const state = { opened: 0 };
+            MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<TabGroupInfo>) {
+                state.opened++;
+                return originalOpen.call(this);
+            };
+            return { state, restore: () => { MockFuzzySuggestModal.prototype.open = originalOpen; } };
+        }
+
+        it('switches to the other group immediately without opening the picker', () => {
+            const a1 = leaf('a1', 'A.md', group1, container);
+            const b1 = leaf('b1', 'B.md', group2, container);
+            app.workspace.rootLeaves = [a1, b1];
+            app.workspace.allLeaves = [a1, b1];
+            app.workspace.setActiveLeaf(a1);
+
+            const spy = spyOpen();
+            plugin.switchToTabGroup();
+            spy.restore();
+
+            expect(spy.state.opened).toBe(0);
+            expect(app.workspace.activeLeaf).toBe(b1);
+        });
+
+        it('switches to the other window\'s group when it is in a pop-out', () => {
+            const popupContainer = new MockWorkspaceContainer('window', {} as Window);
+            const popupGroup = new MockWorkspaceParent(popupContainer);
+            const a1 = leaf('a1', 'A.md', group1, container);
+            const p1 = leaf('p1', 'P.md', popupGroup, popupContainer);
+            app.workspace.rootLeaves = [a1, p1];
+            app.workspace.allLeaves = [a1, p1];
+            app.workspace.setActiveLeaf(a1);
+
+            const spy = spyOpen();
+            plugin.switchToTabGroup();
+            spy.restore();
+
+            expect(spy.state.opened).toBe(0);
+            expect(app.workspace.activeLeaf).toBe(p1);
+        });
+
+        it('still opens the picker with three groups', () => {
+            const a1 = leaf('a1', 'A.md', group1, container);
+            const b1 = leaf('b1', 'B.md', group2, container);
+            const c1 = leaf('c1', 'C.md', group3, container);
+            app.workspace.rootLeaves = [a1, b1, c1];
+            app.workspace.allLeaves = [a1, b1, c1];
+            app.workspace.setActiveLeaf(a1);
+
+            const spy = spyOpen();
+            plugin.switchToTabGroup();
+            spy.restore();
+
+            expect(spy.state.opened).toBe(1);
+        });
     });
 });

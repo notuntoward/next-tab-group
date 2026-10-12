@@ -2177,6 +2177,20 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
+        // With exactly two groups, one of which is the current one, there is
+        // only one place to go: switch immediately without showing the picker.
+        // activateTabGroup focuses the target's window when it is a pop-out.
+        if (orderedGroups.length === 2) {
+            const isCurrent = (group: TabGroupInfo) =>
+                group.window === activeWindow &&
+                group.group === activeLeaf?.parent;
+            const other = orderedGroups.filter((group) => !isCurrent(group));
+            if (other.length === 1) {
+                this.activateTabGroup(other[0].group, other[0].representative);
+                return;
+            }
+        }
+
         const multipleWindows =
             new Set(model.groups.map((group) => group.window)).size > 1;
         const showGroup = model.groups.length > 1;

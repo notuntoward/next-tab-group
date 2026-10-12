@@ -208,7 +208,9 @@ All fuzzy-completion modals in this plugin support Emacs-style motion keys: **Ct
 
 Opens a fuzzy-completion prompt listing **every tab group across all windows**. Pick a group to focus its most recently active tab (or the tab you last had open there). The active group is marked "Current group"; other groups in the same window get relative labels like "group below" or "right group". Press Enter without typing to jump straight to the next-most-recent group.
 
-Like "Switch to any tab", the listing respects the **Group results by tab group and window** setting. Use this when you know which group you want to focus but don't want to click through panes manually.
+Like "Switch to any tab", the listing respects the **Group results by tab group and window** setting. With exactly two tab groups, the command skips the prompt and switches straight to the other group, focusing its window if it is a pop-out. While the prompt is open, the tab group Enter will switch to is outlined in the workspace (controlled by the **Highlight the tab you will switch to** setting).
+
+Use this when you know which group you want to focus but don't want to click through panes manually.
 
 ## Switch to Window
 
