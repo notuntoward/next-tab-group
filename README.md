@@ -237,8 +237,13 @@ Each confirmation dialog lists every tab to be closed, grouped by note with coun
 ## Tab highlighting
 
 - **Highlight the tab you will switch to** � While a Switch-to-tab modal is open, outlines the tab header that ENTER will switch to. On by default.
-- **Highlight the tabs Deduplicate tabs will close** - While the Deduplicate tabs picker is open, outlines the duplicate tabs the selected (checked and highlighted) options will close. On by default.
-- **Highlight the tab groups Deduplicate tabs will clean** - While the picker is open, outlines each tab group containing tabs that will be closed. On by default.
+- **Also outline the tab group you will switch to** � In Switch to any tab, outlines the tab group of the target tab (only with more than one tab group). On by default.
+- **Also outline the window you will switch to** � In Switch to any tab and Switch to tab group, outlines the target window in green (only with more than one window). On by default.
+- **Highlight the windows Collect tabs will gather** � In the Collect tabs picker, outlines each window whose tabs the selection (checked and highlighted rows) will collect. On by default.
+- **Highlight the tab groups Collect tabs will gather** � In the Collect tabs picker, outlines each tab group inside those windows. On by default.
+- **Highlight the tabs Deduplicate tabs will close** � In the Deduplicate tabs picker, outlines in red the duplicate tabs the selected (checked and highlighted) options will close. On by default.
+- **Highlight the tab Deduplicate tabs will keep** � Outlines in green the one tab kept for each duplicated note. On by default.
+- **Highlight the tab groups Deduplicate tabs will clean** � Outlines each tab group containing tabs that will be closed. On by default.
 
 - **Color the active tab** — Highlight the active tab with a custom background color in both light and dark mode. Off by default.
 - **Active tab color (light mode)** — Background color for the active tab when Obsidian is in light mode.

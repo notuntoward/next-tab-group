@@ -2310,7 +2310,7 @@ export default class NextTabGroupPlugin extends Plugin {
             },
             {
                 scopeRows: rows,
-                getSummary: (chosen) => this.dedupeSummary(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
+                getSummary: (chosen, checked) => this.dedupeSummary(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf, checked.map((c) => (c.kind === 'scope' ? c.id : ''))),
                 getTargets: (chosen) => this.dedupeHighlightTargets(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
                 placeholder: 'Filter scopes…',
                 actionLabel: 'Deduplicate',
@@ -2365,11 +2365,13 @@ export default class NextTabGroupPlugin extends Plugin {
         scopes: Array<DedupeScope & { removeCount: number }>,
         chosen: Array<{ id: string }>,
         activeLeaf: WorkspaceLeaf | null,
+        checkedIds: string[] = [],
     ): string {
         const ids = new Set(chosen.map((c) => c.id));
         const picked = scopes.filter((s) => ids.has(s.id));
         const plan = this.planDedupe(this.mergeScopeLeaves(picked), activeLeaf);
-        const where = picked.map((s) => s.label).join(' + ');
+        const checkedSet = new Set(checkedIds);
+        const where = picked.map((s) => (checkedSet.has(s.id) ? s.label : s.label + ' (highlighted)')).join(' + ');
         if (!plan) return `Nothing to close in: ${where}.`;
         const n = plan.toRemove.length;
         const k = plan.survivors.length;

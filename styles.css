@@ -501,9 +501,8 @@ body.theme-dark {
 }
 
 .ntg-scope-item {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .ntg-scope-item-more {
@@ -614,7 +613,7 @@ body.theme-dark {
     inset: 0;
     z-index: 1000;
     pointer-events: none;
-    box-shadow: inset 0 0 0 4px var(--ntg-target-color);
+    box-shadow: inset 0 0 0 4px var(--color-green, #3fb950);
 }
 
 /* Picker header: let the hint wrap instead of truncating. */
@@ -687,4 +686,18 @@ body.theme-dark {
 /* Whatever the window size, always leave room for a few rows. */
 .ntg-picker .prompt-results {
     min-height: min(9rem, 30vh);
+}
+
+/* The list shrinks and scrolls; the toolbar and summary never get clipped. */
+.ntg-picker.prompt {
+    display: flex;
+    flex-direction: column;
+}
+.ntg-picker .prompt-results {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+.ntg-picker .collect-tabs-action-toolbar,
+.ntg-picker .ntg-picker-summary {
+    flex: 0 0 auto;
 }

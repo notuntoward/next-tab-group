@@ -38,7 +38,7 @@ export interface CollectModalOptions {
     /** Workspace elements to mark for the currently chosen + checked rows. */
     getTargets?: (chosen: CollectChoice[]) => HighlightTarget[];
     /** Text describing what the action would do for the current selection. */
-    getSummary?: (chosen: CollectChoice[]) => string;
+    getSummary?: (chosen: CollectChoice[], checked: CollectChoice[]) => string;
 }
 
 const sessionWindowIndices = new Map<Window | object, number>();
@@ -146,7 +146,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     private commandName: string;
     private header: PickerHeader;
     private getTargets?: (chosen: CollectChoice[]) => HighlightTarget[];
-    private getSummary?: (chosen: CollectChoice[]) => string;
+    private getSummary?: (chosen: CollectChoice[], checked: CollectChoice[]) => string;
     private summaryEl?: HTMLElement;
     private readonly highlighter = new TargetHighlighter();
     private onPick: (choice: CollectChoice | CollectChoice[]) => void;
@@ -335,7 +335,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             const hi = this.getHighlightedItem();
             if (hi && !chosen.includes(hi)) chosen.push(hi);
             if (this.getTargets) this.highlighter.set(this.getTargets(chosen));
-            if (this.summaryEl && this.getSummary) this.summaryEl.setText(this.getSummary(chosen));
+            if (this.summaryEl && this.getSummary) this.summaryEl.setText(this.getSummary(chosen, [...this.getCheckedRows()]));
         } catch {
             this.highlighter.clear();
         }
