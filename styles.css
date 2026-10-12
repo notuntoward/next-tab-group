@@ -98,17 +98,22 @@ body.ntg-color-active-tab.theme-dark .workspace-tabs.mod-active .workspace-tab-h
 body {
     --ntg-target-color: var(--interactive-accent, #7c3aed);
     --ntg-target-tint: 8%;
+    --ntg-target-tab-tint: 18%;
 }
 
 body.theme-dark {
     --ntg-target-color: var(--text-accent, #a78bfa);
     --ntg-target-tint: 16%;
+    --ntg-target-tab-tint: 35%;
 }
 /* Tab that ENTER will switch to in a Switch-to-tab modal: a subtle inset
  * outline, distinct from the active tab's background fill. */
 .workspace-tab-header.ntg-switch-target {
-    outline: 2px solid var(--ntg-target-color) !important;
-    outline-offset: -2px !important;
+    outline: 3px solid var(--ntg-target-color) !important;
+    outline-offset: -3px !important;
+    /* Tint so the marker reads even when the tab is small or already active. */
+    background-color: color-mix(in srgb, var(--ntg-target-color) var(--ntg-target-tab-tint), var(--background-secondary, transparent)) !important;
+    border-radius: var(--radius-s, 4px);
     /* Paint above a neighboring active tab's overhanging shoulder. */
     position: relative;
     z-index: 2;
