@@ -2336,6 +2336,16 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
+        // With exactly two windows there is only one possible destination,
+        // so switch straight to it instead of showing a one-choice picker.
+        if (windows.length === 2) {
+            const others = windows.filter((item) => !item.isCurrentWindow);
+            if (others.length === 1) {
+                this.focusLeafAndWindow(others[0].representative);
+                return;
+            }
+        }
+
         new NavigationSuggestModal(
             this.app,
             windows,

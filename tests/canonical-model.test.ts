@@ -591,12 +591,12 @@ describe('canonical model', () => {
             cap.restore();
         });
 
-        it('switch to window contains one item per actual window', () => {
+        it('switch to window skips the picker when there are only two windows', () => {
             const ar = arrange(app);
             app.workspace.setActiveLeaf(ar.mainA1);
             const cap = captureItems<WindowInfo>(MockFuzzySuggestModal);
             plugin.switchToWindow();
-            expect(cap.captured!.getItems()).toHaveLength(2);
+            expect(cap.captured).toBeUndefined();
             cap.restore();
         });
 

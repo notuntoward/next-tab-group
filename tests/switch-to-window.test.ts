@@ -149,14 +149,17 @@ describe('switchToWindow', () => {
     });
 
     it('choosing a window activates its representative leaf', () => {
+        const windowContainer2 = new MockWorkspaceContainer('window2', {} as Window);
         const groupMain = new MockWorkspaceParent(rootContainer);
         const groupWin = new MockWorkspaceParent(windowContainer);
+        const groupWin2 = new MockWorkspaceParent(windowContainer2);
 
         const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
         const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
+        const winB = leaf('winB', 'Win-B.md', groupWin2, windowContainer2);
 
         app.workspace.rootLeaves = [mainA];
-        app.workspace.allLeaves = [mainA, winA];
+        app.workspace.allLeaves = [mainA, winA, winB];
         app.workspace.setActiveLeaf(mainA);
 
         let captured: MockFuzzySuggestModal<WindowInfo> | undefined;
@@ -171,8 +174,36 @@ describe('switchToWindow', () => {
         MockFuzzySuggestModal.prototype.open = originalOpen;
 
         const items = captured!.getItems();
-        const winItem = items.find((w) => !w.isCurrentWindow)!;
+        const winItem = items.find((w) => w.representative === asLeaf(winA))!;
         captured!.onChooseItem(winItem);
+        expect(app.workspace.activeLeaf).toBe(winA);
+    });
+
+    it('two windows switch directly without opening the picker', () => {
+        const groupMain = new MockWorkspaceParent(rootContainer);
+        const groupWin = new MockWorkspaceParent(windowContainer);
+
+        const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
+        const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
+
+        app.workspace.rootLeaves = [mainA];
+        app.workspace.allLeaves = [mainA, winA];
+        app.workspace.setActiveLeaf(mainA);
+
+        let opened = false;
+        const originalOpen = MockFuzzySuggestModal.prototype.open;
+        MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<WindowInfo>) {
+            opened = true;
+            return originalOpen.call(this);
+        };
+
+        try {
+            plugin.switchToWindow();
+        } finally {
+            MockFuzzySuggestModal.prototype.open = originalOpen;
+        }
+
+        expect(opened).toBe(false);
         expect(app.workspace.activeLeaf).toBe(winA);
     });
 
