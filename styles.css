@@ -110,6 +110,23 @@ body.ntg-color-active-tab.theme-dark .workspace-tabs.mod-active .workspace-tab-h
     display: none !important;
 }
 
+/* Tab group that ENTER will switch to in the Switch-to-tab-group modal: same
+ * accent outline as the tab header marker, plus a faint tint. Drawn as a
+ * non-interactive overlay so layout and clicks are unaffected. */
+.workspace-tabs.ntg-switch-target-group {
+    position: relative;
+}
+
+.workspace-tabs.ntg-switch-target-group::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 2px var(--interactive-accent, #7c3aed);
+    background: color-mix(in srgb, var(--interactive-accent, #7c3aed) 8%, transparent);
+}
+
 /* Section 2: Row styling for Collect tabs modal */
 .ntg-collect-row {
     box-sizing: border-box;

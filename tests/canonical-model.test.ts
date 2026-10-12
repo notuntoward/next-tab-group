@@ -410,6 +410,94 @@ describe('canonical model', () => {
             cap.restore();
         });
 
+        describe('switch to tab group target highlight', () => {
+            const TARGET = 'ntg-switch-target-group';
+
+            // Open the real modal with a real fuzzy-style getSuggestions, and
+            // give each group a real, connected container element (the mock's
+            // default is not a DOM node).
+            function openGroupPicker() {
+                const ar = arrange(app);
+                const els = new Map<unknown, HTMLElement>();
+                for (const g of [ar.groupA, ar.groupB, ar.groupC]) {
+                    const el = document.createElement('div');
+                    document.body.appendChild(el);
+                    (g as unknown as { containerEl: HTMLElement }).containerEl = el;
+                    els.set(g, el);
+                }
+                app.workspace.setActiveLeaf(ar.mainA1);
+
+                const ctor = MockFuzzySuggestModal;
+                const originalOpen = ctor.prototype.open;
+                let modal!: MockFuzzySuggestModal<TabGroupInfo>;
+                ctor.prototype.open = function (this: MockFuzzySuggestModal<TabGroupInfo>) {
+                    modal = this;
+                    this.getSuggestions = () =>
+                        this.getItems().map((item) => ({ item, match: { score: 0, matches: [] } })) as never;
+                    return originalOpen.call(this);
+                };
+                plugin.switchToTabGroup();
+                ctor.prototype.open = originalOpen;
+
+                const marked = () => [...els.values()].filter((e) => e.classList.contains(TARGET));
+                const groupAt = (i: number) => modal.getItems()[i].group;
+                return { modal, els, marked, groupAt };
+            }
+
+            const flush = () => new Promise((r) => setTimeout(r, 0));
+
+            it('marks only the initially selected group, then follows the selection', async () => {
+                const { modal, els, marked, groupAt } = openGroupPicker();
+                await flush(); // let the modal's deferred initial-selection timer run
+                const initial = (modal as unknown as { chooser: { selectedItem: number } }).chooser.selectedItem;
+                expect(marked()).toEqual([els.get(groupAt(initial))]);
+
+                const next = (initial + 1) % modal.getItems().length;
+                modal.setSelectedItem(next);
+                await flush();
+                expect(marked()).toEqual([els.get(groupAt(next))]);
+                modal.close();
+            });
+
+            it('marks a group in a pop-out window', async () => {
+                const { modal, els, marked, groupAt } = openGroupPicker();
+                await flush(); // let the modal's deferred initial-selection timer run
+                const popIdx = modal.getItems().findIndex((g) => g.window !== globalThis.window);
+                modal.setSelectedItem(popIdx);
+                await flush();
+                expect(marked()).toEqual([els.get(groupAt(popIdx))]);
+                modal.close();
+            });
+
+            it('removes every marker when the modal closes', async () => {
+                const { modal, marked } = openGroupPicker();
+                await flush(); // let the modal's deferred initial-selection timer run
+                modal.setSelectedItem(1);
+                await flush();
+                expect(marked()).toHaveLength(1);
+                modal.close();
+                expect(marked()).toHaveLength(0);
+            });
+
+            it('does not mark a group whose container is detached', async () => {
+                const { modal, els, marked, groupAt } = openGroupPicker();
+                await flush(); // let the modal's deferred initial-selection timer run
+                els.get(groupAt(1))!.remove();
+                modal.setSelectedItem(1);
+                await flush();
+                expect(marked()).toHaveLength(0);
+                modal.close();
+            });
+
+            it('does not mark anything when the highlight setting is off', async () => {
+                plugin.settings.highlightSwitchTarget = false;
+                const { modal, marked } = openGroupPicker();
+                await flush(); // let the modal's deferred initial-selection timer run
+                expect(marked()).toHaveLength(0);
+                modal.close();
+            });
+        });
+
         it('switch to tab group shows the window label on every group when more than one window', () => {
             const ar = arrange(app);
             app.workspace.setActiveLeaf(ar.mainA1);

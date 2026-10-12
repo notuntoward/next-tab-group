@@ -55,6 +55,11 @@ interface WorkspaceContainerEl extends WorkspaceParent {
     children?: WorkspaceContainerEl[];
 }
 
+/** Tab header element of a leaf (undocumented Obsidian field; may be missing). */
+function leafHeaderEl(leaf: WorkspaceLeaf): HTMLElement | null {
+    return ((leaf as any)?.tabHeaderEl as HTMLElement | undefined) ?? null;
+}
+
 interface TabGroupInfo {
     group: WorkspaceParent;
     leaves: WorkspaceLeaf[];
@@ -1932,7 +1937,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 (leaf) => this.getLeafLastActive(leaf),
             ),
             (leaf) => this.getLeafFileKey(leaf),
-            this.settings.highlightSwitchTarget ? (leaf) => leaf : undefined,
+            this.settings.highlightSwitchTarget ? (leaf) => leafHeaderEl(leaf) : undefined,
         ).open();
     }
 
@@ -1973,7 +1978,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 (tab) => tab.lastActive,
             ),
             (tab) => this.getLeafFileKey(tab.leaf),
-            this.settings.highlightSwitchTarget ? (tab) => tab.leaf : undefined,
+            this.settings.highlightSwitchTarget ? (tab) => leafHeaderEl(tab.leaf) : undefined,
         ).open();
     }
 
@@ -2033,6 +2038,10 @@ export default class NextTabGroupPlugin extends Plugin {
                 (group) => group.lastActive,
             ),
             (group) => this.getLeafFileKey(group.representative),
+            this.settings.highlightSwitchTarget
+                ? (group) => ((group.group as WorkspaceContainerEl).containerEl ?? null)
+                : undefined,
+            'ntg-switch-target-group',
         ).open();
     }
 
@@ -2231,39 +2240,43 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         private readonly renderItem?: SuggestionRenderer<T>,
         private readonly initialIndex = 0,
         private readonly getFilePath?: (item: T) => string | null,
-        private readonly getLeaf?: (item: T) => WorkspaceLeaf | null,
+        private readonly getTargetEl?: (item: T) => HTMLElement | null,
+        private readonly targetClass = 'ntg-switch-target',
     ) {
         super(app);
         this.setPlaceholder(placeholder);
     }
 
-    private readonly rowLeaves = new WeakMap<HTMLElement, WorkspaceLeaf>();
+    private readonly rowItems = new WeakMap<HTMLElement, T>();
     private highlightedHeader: HTMLElement | null = null;
     private selectionObserver: MutationObserver | null = null;
 
     /**
-     * Marks the tab header of the row ENTER would switch to. Reads only DOM
-     * state (the .is-selected row), not Obsidian's private chooser fields.
+     * Marks the workspace element (tab header or tab group) of the row ENTER
+     * would switch to. Reads only DOM state (the .is-selected row), not
+     * Obsidian's private chooser fields.
      */
     private syncTargetHighlight(): void {
         let header: HTMLElement | null = null;
         try {
             const row = this.resultContainerEl?.querySelector<HTMLElement>('.suggestion-item.is-selected');
-            const leaf = row ? this.rowLeaves.get(row) : undefined;
-            header = ((leaf as any)?.tabHeaderEl as HTMLElement | undefined) ?? null;
+            if (row && this.rowItems.has(row)) {
+                const el = this.getTargetEl?.(this.rowItems.get(row) as T) ?? null;
+                header = el && el.isConnected ? el : null;
+            }
         } catch {
             header = null;
         }
         if (header === this.highlightedHeader) return;
-        this.highlightedHeader?.classList.remove('ntg-switch-target');
-        header?.classList.add('ntg-switch-target');
+        this.highlightedHeader?.classList.remove(this.targetClass);
+        header?.classList.add(this.targetClass);
         this.highlightedHeader = header;
     }
 
     onClose() {
         this.selectionObserver?.disconnect();
         this.selectionObserver = null;
-        this.highlightedHeader?.classList.remove('ntg-switch-target');
+        this.highlightedHeader?.classList.remove(this.targetClass);
         this.highlightedHeader = null;
         super.onClose();
     }
@@ -2273,7 +2286,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
 
         registerEmacsMotionKeys(this);
 
-        if (this.getLeaf && this.resultContainerEl && typeof MutationObserver !== 'undefined') {
+        if (this.getTargetEl && this.resultContainerEl && typeof MutationObserver !== 'undefined') {
             this.selectionObserver = new MutationObserver(() => this.syncTargetHighlight());
             this.selectionObserver.observe(this.resultContainerEl, {
                 subtree: true,
@@ -2281,6 +2294,9 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
                 attributes: true,
                 attributeFilter: ['class'],
             });
+            // Mark the initially selected row; the observer only reacts to
+            // later changes.
+            this.syncTargetHighlight();
         }
 
         // Keep the list in recency order (the active item stays in its slot)
@@ -2325,10 +2341,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
             updateElementPathDatasets(el, null);
         }
 
-        if (this.getLeaf) {
-            const leaf = this.getLeaf(match.item);
-            if (leaf) this.rowLeaves.set(el, leaf);
-        }
+        if (this.getTargetEl) this.rowItems.set(el, match.item);
 
         if (this.renderItem) {
             el.empty();
