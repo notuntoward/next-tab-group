@@ -69,13 +69,13 @@ describe('dedupe summary: tab groups and windows that close', () => {
         app.workspace.allLeaves = [a, dup, keepish];
         app.workspace.setActiveLeaf(a);
         const scope = { id: 'all', kind: 'all', label: 'Across all windows', leaves: [a, dup, keepish], removeCount: 1 };
-        const text = plugin.dedupeSummary([scope], [{ id: 'all' }], a as unknown as WorkspaceLeaf, ['all']);
-        expect(text).toBe('Enter closes 1 tab (red), 1 tab group, 1 window and keeps 1 (green) in: Across all windows.');
+        const text = plugin.dedupeSummary([scope], [{ id: 'all' }], a as unknown as WorkspaceLeaf);
+        expect(text).toBe('Enter closes 1 tab, 1 tab group, 1 window');
 
         const dup2 = new MockWorkspaceLeaf('a.md').setId('e').setParent(g1).setContainer(mainC);
         app.workspace.allLeaves = [a, dup2, keepish];
         const scope2 = { id: 'all', kind: 'all', label: 'Across all windows', leaves: [a, dup2, keepish], removeCount: 1 };
-        expect(plugin.dedupeSummary([scope2], [{ id: 'all' }], a as unknown as WorkspaceLeaf, ['all'])).toBe(
-            'Enter closes 1 tab (red) and keeps 1 (green) in: Across all windows.',
+        expect(plugin.dedupeSummary([scope2], [{ id: 'all' }], a as unknown as WorkspaceLeaf)).toBe(
+            'Enter closes 1 tab',
         );
     });});

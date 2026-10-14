@@ -2421,7 +2421,7 @@ export default class NextTabGroupPlugin extends Plugin {
             },
             {
                 scopeRows: rows,
-                getSummary: (chosen, checked) => this.dedupeSummary(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf, checked.map((c) => (c.kind === 'scope' ? c.id : ''))),
+                getSummary: (chosen) => this.dedupeSummary(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
                 getTargets: (chosen) => this.dedupeHighlightTargets(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
                 placeholder: 'Select where to close duplicates',
                 actionLabel: 'Deduplicate',
@@ -2468,33 +2468,28 @@ export default class NextTabGroupPlugin extends Plugin {
         return targets;
     }
     /**
-     * One-line statement of what Enter would do right now, so the picker never
-     * leaves it ambiguous: Enter acts on every checked row plus the
-     * highlighted one.
+     * One-line statement of what Enter would do right now: Enter acts on every
+     * checked row plus the highlighted one, which the rows already show.
      */
     private dedupeSummary(
         scopes: Array<DedupeScope & { removeCount: number }>,
         chosen: Array<{ id: string }>,
         activeLeaf: WorkspaceLeaf | null,
-        checkedIds: string[] = [],
     ): string {
         const ids = new Set(chosen.map((c) => c.id));
         const picked = scopes.filter((s) => ids.has(s.id));
         const plan = this.planDedupe(this.mergeScopeLeaves(picked), activeLeaf);
-        const checkedSet = new Set(checkedIds);
-        const where = picked.map((s) => (checkedSet.has(s.id) ? s.label : s.label + ' (highlighted)')).join(' + ');
-        if (!plan) return `Nothing to close in: ${where}.`;
+        if (!plan) return 'Nothing to close.';
         const n = plan.toRemove.length;
-        const k = plan.survivors.length;
         const { groups, windows } = this.dedupeEmptied(plan.toRemove);
         // Obsidian closes a tab group once its last tab is gone, and a pop-out
         // window once its last tab group is gone. Only mention nonzero counts.
         const closes = [
-            `${n} tab${n === 1 ? '' : 's'} (red)`,
+            `${n} tab${n === 1 ? '' : 's'}`,
             ...(groups > 0 ? [`${groups} tab group${groups === 1 ? '' : 's'}`] : []),
             ...(windows > 0 ? [`${windows} window${windows === 1 ? '' : 's'}`] : []),
         ].join(', ');
-        return `Enter closes ${closes} and keeps ${k} (green) in: ${where}.`;
+        return `Enter closes ${closes}`;
     }
 
     /**
