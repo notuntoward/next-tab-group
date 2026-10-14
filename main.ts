@@ -92,39 +92,88 @@ export function neighborInTabStrip<T>(
     return null;
 }
 
+export interface Rect { x: number; y: number; w: number; h: number }
+
 /**
- * Orders items clockwise on screen by the angle of each item's center around
- * the centroid of all centers (screen y grows downward, so increasing atan2
- * is clockwise). This is the same sense as "Rotate tab groups". Returns null
- * when any item has no usable position, so the caller can fall back. Items at
- * the same angle (and collinear layouts) are ordered by x, then y.
+ * The one shared ring: orders items clockwise on screen. Used by Rotate tab
+ * groups' sense of direction, Next/Previous tab group, and the Left/Right keys
+ * of the group and window pickers.
+ *
+ * - The ring's center is the center of the bounding box of all rectangles.
+ * - Items touching the bounding box's edge come first, sorted by the angle of
+ *   their centers around that center (screen y grows downward, so increasing
+ *   atan2 is clockwise); interior items follow in the same way, so the order is
+ *   a clockwise spiral.
+ * - When any rectangle is unknown, or two rectangles overlap heavily (stacked
+ *   windows), geometry is meaningless and `fallback` gives a stable order.
  */
-export function clockwiseOrder<T>(
+export function ringOrder<T>(
     items: T[],
-    center: (item: T) => { x: number; y: number } | null,
-): T[] | null {
-    const points = items.map((item) => ({ item, c: center(item) }));
-    if (points.some((p) => !p.c || !Number.isFinite(p.c.x) || !Number.isFinite(p.c.y))) return null;
-    const cx = points.reduce((s, p) => s + p.c!.x, 0) / (points.length || 1);
-    const cy = points.reduce((s, p) => s + p.c!.y, 0) / (points.length || 1);
-    const angle = (p: { c: { x: number; y: number } | null }) => Math.atan2(p.c!.y - cy, p.c!.x - cx);
-    return points
-        .sort((a, b) => {
-            const d = angle(a) - angle(b);
-            if (Math.abs(d) > 1e-9) return d;
-            return a.c!.x - b.c!.x || a.c!.y - b.c!.y;
-        })
-        .map((p) => p.item);
+    rect: (item: T) => Rect | null,
+    fallback: (a: T, b: T) => number,
+): T[] {
+    const stable = () => [...items].sort(fallback);
+    const entries = items.map((item) => ({ item, r: rect(item) }));
+    if (entries.some((e) => !e.r || ![e.r.x, e.r.y, e.r.w, e.r.h].every(Number.isFinite))) return stable();
+    if (entries.length < 2) return stable();
+    const rs = entries.map((e) => e.r!);
+    for (let i = 0; i < rs.length; i++) {
+        for (let j = i + 1; j < rs.length; j++) {
+            const a = rs[i];
+            const b = rs[j];
+            const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+            const oh = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+            if (ow > 0 && oh > 0 && ow * oh > 0.5 * Math.min(a.w * a.h, b.w * b.h)) return stable();
+        }
+    }
+    const minX = Math.min(...rs.map((r) => r.x));
+    const minY = Math.min(...rs.map((r) => r.y));
+    const maxX = Math.max(...rs.map((r) => r.x + r.w));
+    const maxY = Math.max(...rs.map((r) => r.y + r.h));
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const tol = Math.min(10, 0.05 * Math.min(maxX - minX, maxY - minY));
+    const keyed = entries.map((e) => {
+        const r = e.r!;
+        const px = r.x + r.w / 2;
+        const py = r.y + r.h / 2;
+        return {
+            item: e.item,
+            px,
+            py,
+            angle: Math.atan2(py - cy, px - cx),
+            edge: r.x <= minX + tol || r.y <= minY + tol || r.x + r.w >= maxX - tol || r.y + r.h >= maxY - tol,
+        };
+    });
+    keyed.sort((a, b) => {
+        if (a.edge !== b.edge) return a.edge ? -1 : 1;
+        const d = a.angle - b.angle;
+        if (Math.abs(d) > 1e-9) return d;
+        return a.px - b.px || a.py - b.py;
+    });
+    // Cyclic order is fixed by the sort; start the edge ring at its top-left
+    // item so "first" is the reading-order start.
+    const edgeCount = keyed.filter((k) => k.edge).length;
+    let start = 0;
+    let best = Infinity;
+    for (let i = 0; i < edgeCount; i++) {
+        const score = keyed[i].px - cx + (keyed[i].py - cy);
+        if (score < best - 1e-9) {
+            best = score;
+            start = i;
+        }
+    }
+    const ring = [...keyed.slice(start, edgeCount), ...keyed.slice(0, start), ...keyed.slice(edgeCount)];
+    return ring.map((k) => k.item);
 }
 
-/** Center of a native window on the screen, or null when it is unknown. */
-export function windowScreenCenter(win: Window | undefined): { x: number; y: number } | null {
+/** Screen rectangle of a native window, or null when it is unknown. */
+export function windowScreenRect(win: Window | undefined): Rect | null {
     if (!win) return null;
     const w = win as unknown as { screenX?: number; screenY?: number; outerWidth?: number; outerHeight?: number };
     if (![w.screenX, w.screenY, w.outerWidth, w.outerHeight].every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
-    return { x: w.screenX! + w.outerWidth! / 2, y: w.screenY! + w.outerHeight! / 2 };
+    return { x: w.screenX!, y: w.screenY!, w: w.outerWidth!, h: w.outerHeight! };
 }
-
 /**
  * Returns the item `direction` steps (-1/+1) after `item` in `ordered`,
  * wrapping at the ends (the way cycling tab groups does), or null when there
@@ -761,28 +810,26 @@ export default class NextTabGroupPlugin extends Plugin {
     // Tab group discovery & navigation
     // ------------------------------------------------------------------------
 
-    private getSpatiallySortedGroups(
-        groups: TabGroupInfo[],
-    ): TabGroupInfo[] {
-        return [...groups].sort((a, b) => {
-            const aRect = this.getTabGroupRect(a.group as WorkspaceContainerEl);
-            const bRect = this.getTabGroupRect(b.group as WorkspaceContainerEl);
-
-            if (aRect && bRect) {
-                const yDiff = aRect.y - bRect.y;
-                if (Math.abs(yDiff) > 50) {
-                    return yDiff;
-                }
-                return aRect.x - bRect.x;
-            }
-
-            if (aRect) return -1;
-            if (bRect) return 1;
-
-            return a.label.localeCompare(b.label);
-        });
+    /** Tab groups in clockwise ring order (see `ringOrder`), from their DOM rectangles. */
+    private getRingGroups(groups: TabGroupInfo[]): TabGroupInfo[] {
+        return ringOrder(
+            groups,
+            (g) => this.getTabGroupRect(g.group as WorkspaceContainerEl),
+            (a, b) => b.lastActive - a.lastActive || a.label.localeCompare(b.label),
+        );
     }
 
+    /** Windows in clockwise ring order, from their screen rectangles. */
+    private getRingWindows(windows: WindowInfo[]): WindowInfo[] {
+        return ringOrder(
+            windows,
+            (w) => windowScreenRect(w.window),
+            (a, b) =>
+                Number(!!b.isMainWindow) - Number(!!a.isMainWindow) ||
+                b.lastActive - a.lastActive ||
+                a.label.localeCompare(b.label),
+        );
+    }
     private capitalizeFirst(value: string): string {
         return value.length === 0
             ? value
@@ -1376,7 +1423,7 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const sorted = this.getSpatiallySortedGroups(windowGroups);
+        const sorted = this.getRingGroups(windowGroups);
 
         if (!activeLeaf) {
             this.focusTabGroup(sorted[0]);
@@ -2696,14 +2743,7 @@ export default class NextTabGroupPlugin extends Plugin {
             this.settings.switchLeftRightNavigation
                 ? (group, direction) => {
                     const inWindow = orderedGroups.filter((g) => g.window === group.window);
-                    return cyclicNeighbor(
-                        clockwiseOrder(inWindow, (g) => {
-                            const r = this.getTabGroupRect(g.group as WorkspaceContainerEl);
-                            return r ? { x: r.x + r.w / 2, y: r.y + r.h / 2 } : null;
-                        }) ?? this.getSpatiallySortedGroups(inWindow),
-                        group,
-                        direction,
-                    );
+                    return cyclicNeighbor(this.getRingGroups(inWindow), group, direction);
                 }
                 : undefined,
         ).withHeader({ kind: 'tab-group', title: 'Switch to tab group', hint: 'Pick a tab group to jump to.', icon: 'layout-panel-left' })
@@ -2846,17 +2886,9 @@ export default class NextTabGroupPlugin extends Plugin {
             ),
             (item) => this.getLeafFileKey(item.representative),
             (item) => this.switchTargets(item.representative, false, true, false),
-            // Left/Right step through the windows in a fixed order (main
-            // window first, then pop-outs by number), wrapping.
+            // Left/Right step clockwise/counterclockwise around the windows' ring, wrapping.
             this.settings.switchLeftRightNavigation
-                ? (item, direction) => cyclicNeighbor(
-                    // Clockwise around the screen (like Rotate tab groups);
-                    // without screen positions, main window then pop-outs.
-                    clockwiseOrder(windows, (w) => windowScreenCenter(w.window))
-                        ?? [...windows].sort((a, b) => Number(b.isMainWindow) - Number(a.isMainWindow) || a.label.localeCompare(b.label)),
-                    item,
-                    direction,
-                  )
+                ? (item, direction) => cyclicNeighbor(this.getRingWindows(windows), item, direction)
                 : undefined,
         ).withHeader({ kind: 'window', title: 'Switch to window', hint: 'Pick a window to bring forward.', icon: 'app-window' })
             .withKeyHints({ upDown: 'recent', leftRight: 'neighbor window', enter: 'switch' }).open();

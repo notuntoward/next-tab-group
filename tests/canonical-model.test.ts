@@ -938,12 +938,12 @@ describe('canonical model', () => {
             const type = plugin2 as unknown as {
                 getGroupsInWindow: (m: WorkspaceNavigationModel, w: Window | undefined) => TabGroupInfo[];
                 getWindowForLeaf: (l: WorkspaceLeaf | null) => Window | undefined;
-                getSpatiallySortedGroups: (g: TabGroupInfo[]) => TabGroupInfo[];
+                getRingGroups: (g: TabGroupInfo[]) => TabGroupInfo[];
                 buildNavigationModel: (l: WorkspaceLeaf | null) => WorkspaceNavigationModel;
             };
 
             const model = type.buildNavigationModel(asLeaf(a));
-            const ordered = type.getSpatiallySortedGroups(
+            const ordered = type.getRingGroups(
                 type.getGroupsInWindow(model, type.getWindowForLeaf(asLeaf(a))),
             );
             expect(ordered.map((g) => g.window)).toEqual([mainWin, mainWin]);
@@ -968,11 +968,11 @@ describe('canonical model', () => {
             app2.workspace.setActiveLeaf(a);
 
             const type = plugin2 as unknown as {
-                getSpatiallySortedGroups: (g: TabGroupInfo[]) => TabGroupInfo[];
+                getRingGroups: (g: TabGroupInfo[]) => TabGroupInfo[];
                 buildNavigationModel: (l: WorkspaceLeaf | null) => WorkspaceNavigationModel;
             };
             const model = type.buildNavigationModel(asLeaf(a));
-            const ordered = type.getSpatiallySortedGroups(model.groups);
+            const ordered = type.getRingGroups(model.groups);
             expect(ordered.map((g) => (g.group === g1 ? 'g1' : 'g2'))).toEqual(['g2', 'g1']);
         });
     });

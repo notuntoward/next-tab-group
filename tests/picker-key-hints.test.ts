@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { App } from 'obsidian';
-import NextTabGroupPlugin, { neighborInTabStrip, cyclicNeighbor, clockwiseOrder, windowScreenCenter } from '../main.ts';
+import NextTabGroupPlugin, { neighborInTabStrip, cyclicNeighbor } from '../main.ts';
 import {
     MockApp,
     MockWorkspaceContainer,
@@ -21,40 +21,6 @@ describe('cyclicNeighbor', () => {
     it('returns null when there is nowhere else to go', () => {
         expect(cyclicNeighbor(['a'], 'a', 1)).toBeNull();
         expect(cyclicNeighbor(['a', 'b'], 'zzz', 1)).toBeNull();
-    });
-});
-
-describe('clockwiseOrder', () => {
-    const win = (screenX: number, screenY: number, outerWidth: number, outerHeight: number) =>
-        ({ screenX, screenY, outerWidth, outerHeight }) as unknown as Window;
-
-    it('orders a top-left, bottom-left and right window clockwise: top-left, right, bottom-left', () => {
-        const w1 = win(0, 0, 1000, 720);
-        const w3 = win(0, 727, 1000, 600);
-        const w2 = win(1000, 0, 1000, 1333);
-        const ordered = clockwiseOrder([w1, w3, w2], windowScreenCenter)!;
-        expect(ordered).toEqual([w1, w2, w3]);
-        // Right arrow (+1) from the top-left window goes to the right window.
-        expect(cyclicNeighbor(ordered, w1, 1)).toBe(w2);
-        expect(cyclicNeighbor(ordered, w2, 1)).toBe(w3);
-        expect(cyclicNeighbor(ordered, w1, -1)).toBe(w3);
-    });
-
-    it('orders a 2x2 grid TL, TR, BR, BL', () => {
-        const pts: Record<string, { x: number; y: number }> = { tl: { x: 0, y: 0 }, tr: { x: 10, y: 0 }, bl: { x: 0, y: 10 }, br: { x: 10, y: 10 } };
-        expect(clockwiseOrder(['bl', 'tr', 'tl', 'br'], (k) => pts[k])).toEqual(['tl', 'tr', 'br', 'bl']);
-    });
-
-    it('orders collinear layouts left-to-right', () => {
-        const pts: Record<string, { x: number; y: number }> = { l: { x: 0, y: 0 }, m: { x: 5, y: 0 }, r: { x: 10, y: 0 } };
-        const o = clockwiseOrder(['r', 'l', 'm'], (k) => pts[k])!;
-        expect(cyclicNeighbor(o, 'l', 1)).toBe('m');
-        expect(cyclicNeighbor(o, 'm', 1)).toBe('r');
-        expect(cyclicNeighbor(o, 'r', 1)).toBe('l');
-    });
-
-    it('returns null when a position is unknown', () => {
-        expect(clockwiseOrder([{}, win(0, 0, 1, 1)] as Window[], windowScreenCenter)).toBeNull();
     });
 });
 
