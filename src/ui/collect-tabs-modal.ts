@@ -1,5 +1,5 @@
 import { App, Notice, SuggestModal, WorkspaceLeaf } from 'obsidian';
-import { addPickerHeader, registerEmacsMotionKeys, type PickerHeader } from '../utils/modal';
+import { addPickerHeader, registerEmacsMotionKeys, closeOnEscapeFromOtherWindows, type PickerHeader } from '../utils/modal';
 import type { WindowInfo } from '../../main';
 import { TargetHighlighter, type HighlightTarget } from '../utils/target-highlight';
 
@@ -148,6 +148,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     private getTargets?: (chosen: CollectChoice[]) => HighlightTarget[];
     private getSummary?: (chosen: CollectChoice[], checked: CollectChoice[]) => string;
     private summaryEl?: HTMLElement;
+    private stopEscape?: () => void;
     private readonly highlighter = new TargetHighlighter();
     private onPick: (choice: CollectChoice | CollectChoice[]) => void;
 
@@ -402,6 +403,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
     onOpen(): void {
         super.onOpen();
+        this.stopEscape = closeOnEscapeFromOtherWindows(this);
         if (this.containerEl) {
             this.containerEl.addClass('ntg-collect-modal-container');
         }
@@ -602,6 +604,8 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     onClose(): void {
+        this.stopEscape?.();
+        this.stopEscape = undefined;
         this.highlighter.clear();
         this.isOpen = false;
         if (CollectTabsModal.activeModal === this) {

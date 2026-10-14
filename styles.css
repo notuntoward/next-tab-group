@@ -564,9 +564,10 @@ body.theme-dark {
 
 .ntg-picker-collect { --ntg-picker-accent: var(--color-blue, #3b82f6); }
 .ntg-picker-dedupe { --ntg-picker-accent: var(--color-red, #e5484d); }
-.ntg-picker-any-tab { --ntg-picker-accent: var(--color-purple, #8b5cf6); }
-.ntg-picker-tab-in-group { --ntg-picker-accent: var(--color-cyan, #06b6d4); }
-.ntg-picker-tab-group { --ntg-picker-accent: var(--color-orange, #f59e0b); }
+/* The three tab switchers are one family (a set and its subsets): one color, matching their tab and group outlines. */
+.ntg-picker-any-tab,
+.ntg-picker-tab-group,
+.ntg-picker-tab-in-group { --ntg-picker-accent: var(--ntg-target-color); }
 .ntg-picker-window { --ntg-picker-accent: var(--color-green, #3fb950); }
 
 .ntg-picker-header {

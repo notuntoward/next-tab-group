@@ -9,7 +9,7 @@ import {
 } from 'obsidian';
 import type { App, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
-import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, addPickerHeader, type PickerHeader } from './src/utils/modal';
+import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, addPickerHeader, closeOnEscapeFromOtherWindows, type PickerHeader } from './src/utils/modal';
 import type { CollectChoice } from './src/ui/collect-tabs-modal';
 import { CollectTabsModal, describeWindow as formatWindowDescription, getSessionWindowIndex } from './src/ui/collect-tabs-modal';
 import { TargetHighlighter, type HighlightTarget } from './src/utils/target-highlight';
@@ -1162,34 +1162,76 @@ export default class NextTabGroupPlugin extends Plugin {
         showWindow: boolean,
         match?: FuzzyMatch<TabInfo>,
     ): void {
-        el.empty();
-        el.addClass("ntg-nav-row");
-
-        const filePath = this.getLeafFileKey(tab.leaf);
-        if (filePath) {
-            updateElementPathDatasets(el, filePath);
-        }
-
-        const primaryContainer = el.createDiv({
-            cls: "ntg-nav-primary suggestion-title data-link-text",
-        });
         const rawDisplayText = tab.leaf.getDisplayText();
-        const searchText = this.getTabSearchText(tab);
         const matches = mapFuzzyMatchesToDisplayText(
-            searchText,
+            this.getTabSearchText(tab),
             rawDisplayText,
             0,
             match?.match.matches ?? [],
         );
 
-        renderHighlightedText(primaryContainer, rawDisplayText, matches);
-
         const parts: string[] = [];
         if (showGroup) parts.push(this.getTabGroupMeta(tab));
         if (showWindow) parts.push(this.getWindowLabel(tab.group.window, labels));
 
-        const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
-        secondaryContainer.setText(parts.join(" · "));
+        this.renderGridRow(el, tab.leaf, tab.group.window, rawDisplayText, matches, parts.join(" · "), undefined, showWindow);
+    }
+
+    /**
+     * Shared row layout for every switch picker, and the same grid the
+     * Collect/Dedupe pickers use: window badge | title · detail | HERE/MAIN pill.
+     */
+    private renderGridRow(
+        el: HTMLElement,
+        leaf: WorkspaceLeaf,
+        win: Window | undefined,
+        title: string,
+        matches: ReturnType<typeof mapFuzzyMatchesToDisplayText>,
+        secondary: string,
+        windowInfo: WindowInfo | undefined,
+        showWindowId: boolean,
+    ): void {
+        el.empty();
+        el.addClass("ntg-nav-row");
+        el.addClass("ntg-grid-row");
+
+        const filePath = this.getLeafFileKey(leaf);
+        if (filePath) {
+            updateElementPathDatasets(el, filePath);
+        }
+
+        const isMain = windowInfo
+            ? Boolean(windowInfo.isMainWindow || windowInfo.window === window)
+            : this.isMainLeaf(leaf) || win === window;
+        const isCurrent = windowInfo
+            ? windowInfo.isCurrentWindow
+            : win === this.getWindowForLeaf(this.getActiveLeafInFocusedWindow());
+        const info = windowInfo ?? ({ window: win, isMainWindow: isMain } as WindowInfo);
+
+        // The window number and HERE/MAIN pill only disambiguate when more
+        // than one window exists; with a single window they are noise.
+        if (showWindowId) {
+            el.createSpan({ cls: "ntg-col-badge" }).createSpan({
+                cls: "ntg-window-badge",
+                text: String(getSessionWindowIndex(info)),
+            });
+        }
+
+        const colContent = el.createSpan({ cls: "ntg-col-content" });
+        const primary = colContent.createSpan({
+            cls: "ntg-desc-primary ntg-nav-primary data-link-text",
+        });
+        renderHighlightedText(primary, title, matches);
+        if (secondary) colContent.createSpan({ cls: "ntg-desc-separator", text: "·" });
+        colContent.createSpan({ cls: "ntg-desc-secondary ntg-nav-secondary" }).setText(secondary);
+
+        if (!showWindowId) return;
+        const colStatus = el.createSpan({ cls: "ntg-col-status" });
+        const status = isCurrent ? (isMain ? "HERE · MAIN" : "HERE") : (isMain ? "MAIN" : "");
+        if (status) {
+            const cls = status === "HERE · MAIN" ? "ntg-pill-here-main" : status === "MAIN" ? "ntg-pill-main" : "ntg-pill-here";
+            colStatus.createSpan({ cls: `ntg-status-pill ${cls}`, text: status });
+        }
     }
 
     private getWindowLabel(
@@ -1209,17 +1251,6 @@ export default class NextTabGroupPlugin extends Plugin {
     ): void {
         const title = group.representative.getDisplayText() || "Untitled tab";
 
-        el.empty();
-        el.addClass("ntg-nav-row");
-
-        const filePath = this.getLeafFileKey(group.representative);
-        if (filePath) {
-            updateElementPathDatasets(el, filePath);
-        }
-
-        const primaryContainer = el.createDiv({
-            cls: "ntg-nav-primary suggestion-title data-link-text",
-        });
         const location = this.getTabGroupLocation(group);
         const searchText = location ? `${location} ${title}` : title;
         const displayOffset = location ? location.length + 1 : 0;
@@ -1230,8 +1261,6 @@ export default class NextTabGroupPlugin extends Plugin {
             match?.match.matches ?? [],
         );
 
-        renderHighlightedText(primaryContainer, title, matches);
-
         const parts: string[] = [];
         if (showGroup) {
             const count =
@@ -1241,8 +1270,7 @@ export default class NextTabGroupPlugin extends Plugin {
         }
         if (showWindow) parts.push(this.getWindowLabel(group.window, labels));
 
-        const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
-        secondaryContainer.setText(parts.join(" · "));
+        this.renderGridRow(el, group.representative, group.window, title, matches, parts.join(" · "), undefined, showWindow);
     }
 
     private renderWindowSuggestion(
@@ -1256,52 +1284,17 @@ export default class NextTabGroupPlugin extends Plugin {
         const recent = item.representative.getDisplayText() || "Untitled tab";
         const role = item.label.split(" — ")[0];
 
-        el.empty();
-        el.addClass("ntg-nav-row");
-        // Same column layout as the Collect/Dedupe rows: badge | text | pill.
-        el.addClass("ntg-grid-row");
-
-        const filePath = this.getLeafFileKey(item.representative);
-        if (filePath) {
-            updateElementPathDatasets(el, filePath);
-        }
-
-        const colBadge = el.createSpan({ cls: "ntg-col-badge" });
-        colBadge.createSpan({
-            cls: "ntg-window-badge",
-            text: String(getSessionWindowIndex(item)),
-        });
-
-        const colContent = el.createSpan({ cls: "ntg-col-content" });
-        const primaryContainer = colContent.createSpan({
-            cls: "ntg-desc-primary ntg-nav-primary data-link-text",
-        });
         const matches = mapFuzzyMatchesToDisplayText(
             `${item.label} ${recent}`,
             recent,
             item.label.length + 1,
             match?.match.matches ?? [],
         );
-        renderHighlightedText(primaryContainer, recent, matches);
-
         const parts = [role, groupCount];
         if (item.isCurrentWindow) parts.push("Current window");
-        colContent.createSpan({ cls: "ntg-desc-separator", text: "·" });
-        colContent
-            .createSpan({ cls: "ntg-desc-secondary ntg-nav-secondary" })
-            .setText(parts.join(" · "));
-
-        // HERE / MAIN pills, as in the Collect/Dedupe pickers.
-        const colStatus = el.createSpan({ cls: "ntg-col-status" });
-        const isMain = Boolean(item.isMainWindow || item.window === window);
-        const status = item.isCurrentWindow
-            ? (isMain ? "HERE · MAIN" : "HERE")
-            : (isMain ? "MAIN" : "");
-        if (status) {
-            const cls = status === "HERE · MAIN" ? "ntg-pill-here-main" : status === "MAIN" ? "ntg-pill-main" : "ntg-pill-here";
-            colStatus.createSpan({ cls: `ntg-status-pill ${cls}`, text: status });
-        }
+        this.renderGridRow(el, item.representative, item.window, recent, matches, parts.join(" · "), item, true);
     }
+
     private renderInGroupTabSuggestion(
         leaf: WorkspaceLeaf,
         el: HTMLElement,
@@ -1313,21 +1306,7 @@ export default class NextTabGroupPlugin extends Plugin {
             ? this.getWindowLabel(this.getWindowForLeaf(leaf), labels)
             : "";
 
-        el.empty();
-        el.addClass("ntg-nav-row");
-
-        const filePath = this.getLeafFileKey(leaf);
-        if (filePath) {
-            updateElementPathDatasets(el, filePath);
-        }
-
-        const primaryContainer = el.createDiv({
-            cls: "ntg-nav-primary suggestion-title data-link-text",
-        });
-        renderHighlightedText(primaryContainer, leaf.getDisplayText(), match?.match.matches ?? []);
-
-        const secondaryContainer = el.createDiv({ cls: "ntg-nav-secondary" });
-        secondaryContainer.setText(secondary);
+        this.renderGridRow(el, leaf, this.getWindowForLeaf(leaf), leaf.getDisplayText(), match?.match.matches ?? [], secondary, undefined, showWindow);
     }
 
     private cycleTabGroups() {
@@ -2218,6 +2197,10 @@ export default class NextTabGroupPlugin extends Plugin {
             }
             rows.push({ ...scope, removeCount: removed.length, removed, kept: plan?.survivors ?? [] });
         }
+        // As in Collect tabs, "All windows" is the second most likely choice,
+        // so it goes right after the first row.
+        const allIdx = rows.findIndex((r) => r.kind === 'all');
+        if (allIdx > 1) rows.splice(1, 0, ...rows.splice(allIdx, 1));
         return rows;
     }
     /**
@@ -2279,14 +2262,17 @@ export default class NextTabGroupPlugin extends Plugin {
         const rows: ScopeChoice[] = pickerScopes.map((scope, i) => {
             const isMain = Boolean(scope.winInfo?.isMainWindow || (scope.winInfo?.window && scope.winInfo.window === window));
             const isHere = scope.kind === 'window' && Boolean(scope.winInfo);
-            const status = isHere && isMain ? 'HERE · MAIN' : isHere ? 'HERE' : isMain ? 'MAIN' : undefined;
+            // Window numbers and HERE/MAIN only disambiguate with 2+ windows.
+            const multi = model.windows.length > 1;
+            const status = !multi ? undefined : isHere && isMain ? 'HERE · MAIN' : isHere ? 'HERE' : isMain ? 'MAIN' : undefined;
+            const single = !multi && scope.kind === 'window';
             return {
                 kind: 'scope' as const,
                 id: scope.id,
-                label: scope.label,
+                label: single ? 'All tab groups' : scope.label,
                 // Enter acts on the first row that would close something.
                 checked: i === Math.max(0, firstNonEmpty),
-                badge: scope.badge,
+                badge: single ? '⧉' : scope.badge,
                 status,
                 detail: scope.removeCount > 0 ? `${scope.removeCount} to close` : 'no duplicates inside',
                 items: [
@@ -2436,6 +2422,30 @@ export default class NextTabGroupPlugin extends Plugin {
     // ------------------------------------------------------------------------
 
 
+    /**
+     * A picker is only worth showing when there is a real choice. With zero
+     * or one possible destination (everything except the current item) this
+     * explains or just does the action and returns true; the caller then
+     * skips the picker.
+     */
+    private skipPickerIfTrivial<T>(
+        items: T[],
+        isCurrent: (item: T) => boolean,
+        go: (item: T) => void,
+        nothingToSwitchTo: string,
+    ): boolean {
+        const others = items.filter((item) => !isCurrent(item));
+        if (others.length === 0) {
+            new Notice(nothingToSwitchTo);
+            return true;
+        }
+        if (others.length === 1) {
+            go(others[0]);
+            return true;
+        }
+        return false;
+    }
+
     private switchToTabInGroup(): void {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         const model = this.buildNavigationModel(activeLeaf);
@@ -2452,10 +2462,12 @@ export default class NextTabGroupPlugin extends Plugin {
             (a, b) => this.getLeafId(a).localeCompare(this.getLeafId(b)),
         );
 
+        if (this.skipPickerIfTrivial(leaves, (leaf) => leaf === activeLeaf, (leaf) => this.focusLeafAndWindow(leaf), "This tab group has only one tab.")) return;
+
         // The active group is the only group in this modal, so its name is
         // never needed; the window is named only when more than one exists.
         const showWindow =
-            new Set(model.groups.map((group) => group.window)).size > 1;
+            model.windows.length > 1;
         const windowLabels = this.buildWindowLabels(model);
 
         new NavigationSuggestModal(
@@ -2514,6 +2526,8 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
+        if (this.skipPickerIfTrivial(model.tabs, (tab) => tab.leaf === activeLeaf, (tab) => this.focusLeafAndWindow(tab.leaf), "There is only one tab open.")) return;
+
         // When the setting is on, tabs are grouped by tab group within each
         // window and windows (and their groups) are ordered by recency so the
         // freshest contexts sit at the top. When off, everything is a single
@@ -2524,7 +2538,7 @@ export default class NextTabGroupPlugin extends Plugin {
             : this.orderTabsByRecency(model);
 
         const multipleWindows =
-            new Set(model.groups.map((group) => group.window)).size > 1;
+            model.windows.length > 1;
         const showGroup = model.groups.length > 1;
         const windowLabels = this.buildWindowLabels(model);
 
@@ -2581,22 +2595,17 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        // With exactly two groups, one of which is the current one, there is
-        // only one place to go: switch immediately without showing the picker.
+        // One or zero other groups: nothing to choose, so no picker.
         // activateTabGroup focuses the target's window when it is a pop-out.
-        if (orderedGroups.length === 2) {
-            const isCurrent = (group: TabGroupInfo) =>
-                group.window === activeWindow &&
-                group.group === activeLeaf?.parent;
-            const other = orderedGroups.filter((group) => !isCurrent(group));
-            if (other.length === 1) {
-                this.activateTabGroup(other[0].group, other[0].representative);
-                return;
-            }
-        }
+        if (this.skipPickerIfTrivial(
+            orderedGroups,
+            (group) => group.window === activeWindow && group.group === activeLeaf?.parent,
+            (group) => this.activateTabGroup(group.group, group.representative),
+            "There is only one tab group.",
+        )) return;
 
         const multipleWindows =
-            new Set(model.groups.map((group) => group.window)).size > 1;
+            model.windows.length > 1;
         const showGroup = model.groups.length > 1;
         const windowLabels = this.buildWindowLabels(model);
 
@@ -2744,15 +2753,12 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        // With exactly two windows there is only one possible destination,
-        // so switch straight to it instead of showing a one-choice picker.
-        if (windows.length === 2) {
-            const others = windows.filter((item) => !item.isCurrentWindow);
-            if (others.length === 1) {
-                this.focusLeafAndWindow(others[0].representative);
-                return;
-            }
-        }
+        if (this.skipPickerIfTrivial(
+            windows,
+            (item) => item.isCurrentWindow,
+            (item) => this.focusLeafAndWindow(item.representative),
+            "There is only one window.",
+        )) return;
 
         new NavigationSuggestModal(
             this.app,
@@ -2781,6 +2787,8 @@ class DedupeConfirmModal extends Modal {
     private readonly title: string;
     private readonly body: HTMLElement;
     private readonly resolve: (ok: boolean) => void;
+    private settled = false;
+    private stopEscape?: () => void;
 
     constructor(app: App, title: string, body: HTMLElement, resolve: (ok: boolean) => void) {
         super(app);
@@ -2797,9 +2805,10 @@ class DedupeConfirmModal extends Modal {
         this.contentEl.appendChild(this.body);
 
         const finish = (ok: boolean) => {
-            this.resolve(ok);
+            this.settle(ok);
             this.close();
         };
+        this.stopEscape = closeOnEscapeFromOtherWindows(this);
 
         // Standardized abstraction row replaces manual div + button setups
         new Setting(this.contentEl)
@@ -2817,6 +2826,20 @@ class DedupeConfirmModal extends Modal {
         // Bind core accessibility commands
         this.scope.register([], 'Escape', () => { finish(false); return false; });
         this.scope.register([], 'Enter', () => { finish(true); return false; });
+    }
+
+    /** Resolves exactly once; any dismissal that is not a button counts as Cancel. */
+    private settle(ok: boolean): void {
+        if (this.settled) return;
+        this.settled = true;
+        this.resolve(ok);
+    }
+
+    onClose() {
+        this.stopEscape?.();
+        this.stopEscape = undefined;
+        this.settle(false);
+        super.onClose();
     }
 }
 
@@ -2846,6 +2869,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     private readonly rowItems = new WeakMap<HTMLElement, T>();
     private readonly highlighter = new TargetHighlighter();
     private header?: PickerHeader;
+    private stopEscape?: () => void;
 
     /** Gives this picker a title/icon/accent so it is distinguishable from the others. */
     withHeader(header: PickerHeader): this {
@@ -2873,6 +2897,8 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     }
 
     onClose() {
+        this.stopEscape?.();
+        this.stopEscape = undefined;
         this.selectionObserver?.disconnect();
         this.selectionObserver = null;
         this.highlighter.clear();
@@ -2881,6 +2907,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
 
     onOpen() {
         super.onOpen();
+        this.stopEscape = closeOnEscapeFromOtherWindows(this);
 
         this.modalEl?.classList.add('ntg-compact-prompt');
         if (this.header) addPickerHeader(this.modalEl, this.header);

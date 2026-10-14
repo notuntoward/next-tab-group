@@ -1,4 +1,4 @@
-import { setIcon, type SuggestModal } from 'obsidian';
+import { setIcon, type Modal, type SuggestModal } from 'obsidian';
 
 interface ChooserLike {
     selectedItem?: number;
@@ -237,4 +237,55 @@ export function addPickerHeader(modalEl: HTMLElement | undefined, header: Picker
     } catch {
         // purely decorative
     }
+}
+
+/**
+ * Lets Escape close `modal` even when keyboard focus is in a different
+ * Obsidian window (a pop-out stacked over the window the modal opened in).
+ *
+ * Why: a modal is attached to the document of the window that was active when
+ * it opened, and Obsidian's own Escape handling only sees keys typed there.
+ * If a pop-out comes to the front, the modal can be completely hidden behind
+ * it, keys go to the pop-out, and Escape does nothing, leaving the user stuck
+ * with an invisible modal. Obsidian's convention is that Escape always
+ * dismisses a modal, so we honor it from every window.
+ *
+ * The modal's own window is deliberately NOT listened to: Obsidian's Scope
+ * already handles Escape there, and a second registration would run the
+ * handler twice (see AGENTS.md, one registration path per shortcut).
+ *
+ * Returns a cleanup function; call it from onClose. Never throws.
+ */
+export function closeOnEscapeFromOtherWindows(modal: Modal): () => void {
+    const attached = new Map<Document, (e: KeyboardEvent) => void>();
+    let offRef: (() => void) | undefined;
+    try {
+        const home = modal.containerEl.ownerDocument;
+        const attach = (doc: Document | undefined) => {
+            if (!doc || doc === home || attached.has(doc)) return;
+            const handler = (e: KeyboardEvent) => {
+                if (e.key !== 'Escape' || !modal.containerEl.isConnected) return;
+                e.preventDefault();
+                e.stopPropagation();
+                modal.close();
+            };
+            doc.addEventListener('keydown', handler, true);
+            attached.set(doc, handler);
+        };
+        const workspace = modal.app.workspace;
+        workspace.iterateAllLeaves((leaf) => attach(leaf.view?.containerEl?.ownerDocument));
+        const ref = workspace.on('window-open', (_ws, win) => attach(win.document));
+        offRef = () => workspace.offref(ref);
+    } catch {
+        // best effort only
+    }
+    return () => {
+        try {
+            offRef?.();
+            for (const [doc, handler] of attached) doc.removeEventListener('keydown', handler, true);
+            attached.clear();
+        } catch {
+            // ignore
+        }
+    };
 }

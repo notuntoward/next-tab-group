@@ -623,9 +623,10 @@ describe('switchToTabInGroup', () => {
         const group = new MockWorkspaceParent(container);
         const a = leaf('a', 'Note-A.md', group, container);
         const b = leaf('b', 'Note-B.md', group, container);
+        const c = leaf('c', 'Note-C.md', group, container);
 
-        app.workspace.rootLeaves = [a, b];
-        app.workspace.allLeaves = [a, b];
+        app.workspace.rootLeaves = [a, b, c];
+        app.workspace.allLeaves = [a, b, c];
         app.workspace.setActiveLeaf(a);
 
         expect(app.workspace.activeLeaf).toBe(a);
@@ -648,7 +649,7 @@ describe('switchToTabInGroup', () => {
         const items = captured!.getItems();
         // Pure recency order; with no timestamps it falls back to ID ascending,
         // so the active leaf 'a' stays first and 'b' follows.
-        expect(items.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['a', 'b']);
+        expect(items.map((l) => (l as unknown as MockWorkspaceLeaf).id)).toEqual(['a', 'b', 'c']);
 
         const leafB = items.find((l) => (l as unknown as MockWorkspaceLeaf).id === 'b');
         captured!.onChooseItem(leafB!);

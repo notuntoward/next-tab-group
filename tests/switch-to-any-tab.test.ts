@@ -141,11 +141,12 @@ describe('switchToAnyTab', () => {
         const group = new MockWorkspaceParent(rootContainer);
         const older = leaf('older', 'Old.md', group, rootContainer);
         const newer = leaf('newer', 'New.md', group, rootContainer);
+        const third = leaf('third', 'Third.md', group, rootContainer);
         plugin.leafLastActive.set('older', 100);
         plugin.leafLastActive.set('newer', 200);
 
-        app.workspace.rootLeaves = [older, newer];
-        app.workspace.allLeaves = [older, newer];
+        app.workspace.rootLeaves = [older, newer, third];
+        app.workspace.allLeaves = [older, newer, third];
         app.workspace.setActiveLeaf(older);
 
         let captured: MockFuzzySuggestModal<TabInfo> | undefined;
@@ -203,9 +204,10 @@ describe('switchToAnyTab', () => {
         const group2 = new MockWorkspaceParent(rootContainer);
         const a = leaf('a', 'A.md', group1, rootContainer);
         const b = leaf('b', 'B.md', group2, rootContainer);
+        const extra = leaf('extra', 'Extra.md', group2, rootContainer);
 
-        app.workspace.rootLeaves = [a, b];
-        app.workspace.allLeaves = [a, b];
+        app.workspace.rootLeaves = [a, b, extra];
+        app.workspace.allLeaves = [a, b, extra];
         app.workspace.setActiveLeaf(a);
 
         let captured: MockFuzzySuggestModal<TabInfo> | undefined;
@@ -249,9 +251,10 @@ describe('switchToAnyTab', () => {
         const group = new MockWorkspaceParent(rootContainer);
         const a = leaf('a', 'A.md', group, rootContainer);
         const b = leaf('b', 'B.md', group, rootContainer);
+        const c = leaf('c', 'C.md', group, rootContainer);
 
-        app.workspace.rootLeaves = [a, b];
-        app.workspace.allLeaves = [a, b];
+        app.workspace.rootLeaves = [a, b, c];
+        app.workspace.allLeaves = [a, b, c];
         app.workspace.setActiveLeaf(a);
 
         let captured: MockFuzzySuggestModal<TabInfo> | undefined;
@@ -271,15 +274,37 @@ describe('switchToAnyTab', () => {
         expect(app.workspace.activeLeaf).toBe(b);
     });
 
+    it('switches straight to the other tab, without a picker, when only two tabs exist', () => {
+        const group = new MockWorkspaceParent(rootContainer);
+        const a = leaf('a', 'A.md', group, rootContainer);
+        const b = leaf('b', 'B.md', group, rootContainer);
+        app.workspace.rootLeaves = [a, b];
+        app.workspace.allLeaves = [a, b];
+        app.workspace.setActiveLeaf(a);
+
+        let opened = false;
+        const originalOpen = MockFuzzySuggestModal.prototype.open;
+        MockFuzzySuggestModal.prototype.open = function (this: MockFuzzySuggestModal<TabInfo>) {
+            opened = true;
+            return originalOpen.call(this);
+        };
+        plugin.switchToAnyTab();
+        MockFuzzySuggestModal.prototype.open = originalOpen;
+
+        expect(opened).toBe(false);
+        expect(app.workspace.activeLeaf).toBe(b);
+    });
+
     it('lists tabs from every window, not just the focused one', () => {
         const groupMain = new MockWorkspaceParent(rootContainer);
         const groupWin = new MockWorkspaceParent(windowContainer);
 
         const mainA = leaf('mainA', 'Main-A.md', groupMain, rootContainer);
         const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
+        const winB = leaf('winB', 'Win-B.md', groupWin, windowContainer);
 
         app.workspace.rootLeaves = [mainA];
-        app.workspace.allLeaves = [mainA, winA];
+        app.workspace.allLeaves = [mainA, winA, winB];
         app.workspace.setActiveLeaf(mainA);
 
         let captured: MockFuzzySuggestModal<TabInfo> | undefined;

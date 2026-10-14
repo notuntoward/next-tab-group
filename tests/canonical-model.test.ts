@@ -581,13 +581,13 @@ describe('canonical model', () => {
             expect(row.querySelector('.ntg-nav-secondary')!.textContent!).toContain('Pop-out 2');
         });
 
-        it('switch to tab in group contains only active-group leaves', () => {
+        it('switch to tab in group skips the picker and switches when the group has two tabs', () => {
             const ar = arrange(app);
             app.workspace.setActiveLeaf(ar.mainA1);
             const cap = captureItems<MockWorkspaceLeaf>(MockFuzzySuggestModal);
             plugin.switchToTabInGroup();
-            const ids = cap.captured!.getItems().map((l) => idOf(l as unknown as WorkspaceLeaf)).sort();
-            expect(ids).toEqual(['main-a1', 'main-a2']);
+            expect(cap.captured).toBeUndefined();
+            expect(app.workspace.activeLeaf).toBe(ar.mainA2);
             cap.restore();
         });
 
