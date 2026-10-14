@@ -93,6 +93,39 @@ export function neighborInTabStrip<T>(
 }
 
 /**
+ * Orders items clockwise on screen by the angle of each item's center around
+ * the centroid of all centers (screen y grows downward, so increasing atan2
+ * is clockwise). This is the same sense as "Rotate tab groups". Returns null
+ * when any item has no usable position, so the caller can fall back. Items at
+ * the same angle (and collinear layouts) are ordered by x, then y.
+ */
+export function clockwiseOrder<T>(
+    items: T[],
+    center: (item: T) => { x: number; y: number } | null,
+): T[] | null {
+    const points = items.map((item) => ({ item, c: center(item) }));
+    if (points.some((p) => !p.c || !Number.isFinite(p.c.x) || !Number.isFinite(p.c.y))) return null;
+    const cx = points.reduce((s, p) => s + p.c!.x, 0) / (points.length || 1);
+    const cy = points.reduce((s, p) => s + p.c!.y, 0) / (points.length || 1);
+    const angle = (p: { c: { x: number; y: number } | null }) => Math.atan2(p.c!.y - cy, p.c!.x - cx);
+    return points
+        .sort((a, b) => {
+            const d = angle(a) - angle(b);
+            if (Math.abs(d) > 1e-9) return d;
+            return a.c!.x - b.c!.x || a.c!.y - b.c!.y;
+        })
+        .map((p) => p.item);
+}
+
+/** Center of a native window on the screen, or null when it is unknown. */
+export function windowScreenCenter(win: Window | undefined): { x: number; y: number } | null {
+    if (!win) return null;
+    const w = win as unknown as { screenX?: number; screenY?: number; outerWidth?: number; outerHeight?: number };
+    if (![w.screenX, w.screenY, w.outerWidth, w.outerHeight].every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
+    return { x: w.screenX! + w.outerWidth! / 2, y: w.screenY! + w.outerHeight! / 2 };
+}
+
+/**
  * Returns the item `direction` steps (-1/+1) after `item` in `ordered`,
  * wrapping at the ends (the way cycling tab groups does), or null when there
  * is nowhere else to go. Used for the spatial Left/Right keys of the group
@@ -2658,15 +2691,20 @@ export default class NextTabGroupPlugin extends Plugin {
                     : []),
                 ...this.switchTargets(group.representative, false, multipleWindows, false),
             ],
-            // Left/Right walk the highlighted group's window in spatial
-            // (reading) order, wrapping: the same order and direction as the
-            // cycle-tab-groups command.
+            // Left/Right walk the highlighted group's window clockwise (the
+            // sense of Rotate tab groups), wrapping; Left goes counterclockwise.
             this.settings.switchLeftRightNavigation
-                ? (group, direction) => cyclicNeighbor(
-                    this.getSpatiallySortedGroups(orderedGroups.filter((g) => g.window === group.window)),
-                    group,
-                    direction,
-                  )
+                ? (group, direction) => {
+                    const inWindow = orderedGroups.filter((g) => g.window === group.window);
+                    return cyclicNeighbor(
+                        clockwiseOrder(inWindow, (g) => {
+                            const r = this.getTabGroupRect(g.group as WorkspaceContainerEl);
+                            return r ? { x: r.x + r.w / 2, y: r.y + r.h / 2 } : null;
+                        }) ?? this.getSpatiallySortedGroups(inWindow),
+                        group,
+                        direction,
+                    );
+                }
                 : undefined,
         ).withHeader({ kind: 'tab-group', title: 'Switch to tab group', hint: 'Pick a tab group to jump to.', icon: 'layout-panel-left' })
             .withKeyHints({ upDown: this.settings.groupSwitchByContext ? 'by window' : 'recent', leftRight: 'neighbor group', enter: 'switch' }).open();
@@ -2812,7 +2850,10 @@ export default class NextTabGroupPlugin extends Plugin {
             // window first, then pop-outs by number), wrapping.
             this.settings.switchLeftRightNavigation
                 ? (item, direction) => cyclicNeighbor(
-                    [...windows].sort((a, b) => Number(b.isMainWindow) - Number(a.isMainWindow) || a.label.localeCompare(b.label)),
+                    // Clockwise around the screen (like Rotate tab groups);
+                    // without screen positions, main window then pop-outs.
+                    clockwiseOrder(windows, (w) => windowScreenCenter(w.window))
+                        ?? [...windows].sort((a, b) => Number(b.isMainWindow) - Number(a.isMainWindow) || a.label.localeCompare(b.label)),
                     item,
                     direction,
                   )
