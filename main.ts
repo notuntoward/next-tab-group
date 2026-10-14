@@ -81,9 +81,27 @@ export function neighborInTabStrip<T>(
     if (!Array.isArray(siblings)) return null;
     const at = siblings.indexOf(leaf);
     if (at < 0) return null;
-    const neighborLeaf = siblings[at + direction];
-    if (!neighborLeaf) return null;
-    return items.find((candidate) => getLeaf(candidate) === neighborLeaf) ?? null;
+    // Walk the strip in the given direction, wrapping at the ends, until a
+    // sibling that is one of the picker's items turns up.
+    const n = siblings.length;
+    for (let step = 1; step < n; step++) {
+        const candidateLeaf = siblings[(at + direction * step + n * step) % n];
+        const match = items.find((candidate) => getLeaf(candidate) === candidateLeaf);
+        if (match !== undefined) return match;
+    }
+    return null;
+}
+
+/**
+ * Returns the item `direction` steps (-1/+1) after `item` in `ordered`,
+ * wrapping at the ends (the way cycling tab groups does), or null when there
+ * is nowhere else to go. Used for the spatial Left/Right keys of the group
+ * and window pickers: Right is forward ("clockwise"), Left is backward.
+ */
+export function cyclicNeighbor<T>(ordered: T[], item: T, direction: -1 | 1): T | null {
+    const at = ordered.indexOf(item);
+    if (at < 0 || ordered.length < 2) return null;
+    return ordered[(at + direction + ordered.length) % ordered.length];
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,6 +1153,12 @@ export default class NextTabGroupPlugin extends Plugin {
             : group.relativeLabel || "Other group";
     }
 
+    /** "Right group" / "Group below" / "Current group" -> "Right" / "Below" / "Current". */
+    private shortGroupLocation(location: string): string {
+        const short = location.replace(/\bgroup\b/i, "").replace(/\s+/g, " ").trim();
+        return short ? short.charAt(0).toUpperCase() + short.slice(1) : location;
+    }
+
     private getTabGroupMeta(tab: TabInfo): string {
         const group = tab.group;
 
@@ -1172,7 +1196,6 @@ export default class NextTabGroupPlugin extends Plugin {
 
         const parts: string[] = [];
         if (showGroup) parts.push(this.getTabGroupMeta(tab));
-        if (showWindow) parts.push(this.getWindowLabel(tab.group.window, labels));
 
         this.renderGridRow(el, tab.leaf, tab.group.window, rawDisplayText, matches, parts.join(" · "), undefined, showWindow);
     }
@@ -1266,9 +1289,9 @@ export default class NextTabGroupPlugin extends Plugin {
             const count =
                 `${group.leaves.length} ` +
                 `tab${group.leaves.length === 1 ? "" : "s"}`;
-            parts.push(`${location} · ${count}`);
+            // The command already says "group"; drop the word from each row.
+            parts.push(`${this.shortGroupLocation(location)} · ${count}`);
         }
-        if (showWindow) parts.push(this.getWindowLabel(group.window, labels));
 
         this.renderGridRow(el, group.representative, group.window, title, matches, parts.join(" · "), undefined, showWindow);
     }
@@ -1282,7 +1305,8 @@ export default class NextTabGroupPlugin extends Plugin {
             `${item.groups.length} ` +
             `group${item.groups.length === 1 ? "" : "s"}`;
         const recent = item.representative.getDisplayText() || "Untitled tab";
-        const role = item.label.split(" — ")[0];
+        // The number badge and the HERE/MAIN pills already identify the
+        // window, so no "Main window" / "Pop-out N" text.
 
         const matches = mapFuzzyMatchesToDisplayText(
             `${item.label} ${recent}`,
@@ -1290,8 +1314,7 @@ export default class NextTabGroupPlugin extends Plugin {
             item.label.length + 1,
             match?.match.matches ?? [],
         );
-        const parts = [role, groupCount];
-        if (item.isCurrentWindow) parts.push("Current window");
+        const parts = [groupCount];
         this.renderGridRow(el, item.representative, item.window, recent, matches, parts.join(" · "), item, true);
     }
 
@@ -1302,11 +1325,8 @@ export default class NextTabGroupPlugin extends Plugin {
         showWindow: boolean,
         match?: FuzzyMatch<WorkspaceLeaf>,
     ): void {
-        const secondary = showWindow
-            ? this.getWindowLabel(this.getWindowForLeaf(leaf), labels)
-            : "";
-
-        this.renderGridRow(el, leaf, this.getWindowForLeaf(leaf), leaf.getDisplayText(), match?.match.matches ?? [], secondary, undefined, showWindow);
+        // The window badge/pills identify the window; no extra text.
+        this.renderGridRow(el, leaf, this.getWindowForLeaf(leaf), leaf.getDisplayText(), match?.match.matches ?? [], "", undefined, showWindow);
     }
 
     private cycleTabGroups() {
@@ -2269,7 +2289,8 @@ export default class NextTabGroupPlugin extends Plugin {
             return {
                 kind: 'scope' as const,
                 id: scope.id,
-                label: single ? 'All tab groups' : scope.label,
+                // The badge and HERE/MAIN pill name the window; the text says what is cleaned.
+                label: scope.kind === 'window' || scope.kind === 'other-window' ? 'All tab groups' : scope.label,
                 // Enter acts on the first row that would close something.
                 checked: i === Math.max(0, firstNonEmpty),
                 badge: single ? '⧉' : scope.badge,
@@ -2298,7 +2319,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 scopeRows: rows,
                 getSummary: (chosen, checked) => this.dedupeSummary(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf, checked.map((c) => (c.kind === 'scope' ? c.id : ''))),
                 getTargets: (chosen) => this.dedupeHighlightTargets(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
-                placeholder: 'Filter scopes…',
+                placeholder: 'Select where to close duplicates',
                 actionLabel: 'Deduplicate',
                 commandName: 'deduplicate-tabs',
                 header: {
@@ -2473,7 +2494,7 @@ export default class NextTabGroupPlugin extends Plugin {
         new NavigationSuggestModal(
             this.app,
             leaves,
-            "Switch to tab in group",
+            "Select a tab in this group",
             (leaf) => leaf.getDisplayText(),
             (leaf) => this.focusLeafAndWindow(leaf),
             (leaf, el, match) => this.renderInGroupTabSuggestion(leaf, el, windowLabels, showWindow, match),
@@ -2487,7 +2508,8 @@ export default class NextTabGroupPlugin extends Plugin {
             this.settings.switchLeftRightNavigation
                 ? (leaf, direction) => neighborInTabStrip(leaves, (l) => l, leaf, direction)
                 : undefined,
-        ).withHeader({ kind: 'tab-in-group', title: 'Switch to tab in group', hint: 'Pick a tab in this tab group.', icon: 'layout-list' }).open();
+        ).withHeader({ kind: 'tab-in-group', title: 'Switch to tab in group', hint: 'Pick a tab in this tab group.', icon: 'layout-list' })
+            .withKeyHints({ upDown: 'recent', leftRight: 'neighbor tab', enter: 'switch' }).open();
     }
 
     /**
@@ -2545,7 +2567,7 @@ export default class NextTabGroupPlugin extends Plugin {
         new NavigationSuggestModal(
             this.app,
             tabs,
-            "Switch to any tab",
+            "Select a tab",
             (tab) => this.getTabSearchText(tab),
             (tab) => this.focusLeafAndWindow(tab.leaf),
             (tab, el, match) => this.renderTabSuggestion(tab, el, windowLabels, showGroup, multipleWindows, match),
@@ -2559,7 +2581,8 @@ export default class NextTabGroupPlugin extends Plugin {
             this.settings.switchLeftRightNavigation
                 ? (tab, direction) => neighborInTabStrip(tabs, (t) => t.leaf, tab, direction)
                 : undefined,
-        ).withHeader({ kind: 'any-tab', title: 'Switch to any tab', hint: 'Pick any tab in any window.', icon: 'files' }).open();
+        ).withHeader({ kind: 'any-tab', title: 'Switch to any tab', hint: 'Pick any tab in any window.', icon: 'files' })
+            .withKeyHints({ upDown: this.settings.groupSwitchByContext ? 'by group' : 'recent', leftRight: 'neighbor tab', enter: 'switch' }).open();
     }
 
     private activateTabGroup(
@@ -2612,7 +2635,7 @@ export default class NextTabGroupPlugin extends Plugin {
         new NavigationSuggestModal(
             this.app,
             orderedGroups,
-            "Switch to tab group",
+            "Select a tab group",
             (group) => {
                 const title = group.representative.getDisplayText() || "Untitled tab";
                 const location = this.getTabGroupLocation(group);
@@ -2635,7 +2658,18 @@ export default class NextTabGroupPlugin extends Plugin {
                     : []),
                 ...this.switchTargets(group.representative, false, multipleWindows, false),
             ],
-        ).withHeader({ kind: 'tab-group', title: 'Switch to tab group', hint: 'Pick a tab group to jump to.', icon: 'layout-panel-left' }).open();
+            // Left/Right walk the highlighted group's window in spatial
+            // (reading) order, wrapping: the same order and direction as the
+            // cycle-tab-groups command.
+            this.settings.switchLeftRightNavigation
+                ? (group, direction) => cyclicNeighbor(
+                    this.getSpatiallySortedGroups(orderedGroups.filter((g) => g.window === group.window)),
+                    group,
+                    direction,
+                  )
+                : undefined,
+        ).withHeader({ kind: 'tab-group', title: 'Switch to tab group', hint: 'Pick a tab group to jump to.', icon: 'layout-panel-left' })
+            .withKeyHints({ upDown: this.settings.groupSwitchByContext ? 'by window' : 'recent', leftRight: 'neighbor group', enter: 'switch' }).open();
     }
 
     private formatWindowLabel(
@@ -2763,7 +2797,7 @@ export default class NextTabGroupPlugin extends Plugin {
         new NavigationSuggestModal(
             this.app,
             windows,
-            "Switch to window",
+            "Select a window",
             (item) => `${item.label} ${item.representative.getDisplayText()}`,
             (item) => this.focusLeafAndWindow(item.representative),
             (item, el, match) => this.renderWindowSuggestion(item, el, match),
@@ -2774,7 +2808,17 @@ export default class NextTabGroupPlugin extends Plugin {
             ),
             (item) => this.getLeafFileKey(item.representative),
             (item) => this.switchTargets(item.representative, false, true, false),
-        ).withHeader({ kind: 'window', title: 'Switch to window', hint: 'Pick a window to bring forward.', icon: 'app-window' }).open();
+            // Left/Right step through the windows in a fixed order (main
+            // window first, then pop-outs by number), wrapping.
+            this.settings.switchLeftRightNavigation
+                ? (item, direction) => cyclicNeighbor(
+                    [...windows].sort((a, b) => Number(b.isMainWindow) - Number(a.isMainWindow) || a.label.localeCompare(b.label)),
+                    item,
+                    direction,
+                  )
+                : undefined,
+        ).withHeader({ kind: 'window', title: 'Switch to window', hint: 'Pick a window to bring forward.', icon: 'app-window' })
+            .withKeyHints({ upDown: 'recent', leftRight: 'neighbor window', enter: 'switch' }).open();
     }
 
 }
@@ -2876,6 +2920,34 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         this.header = header;
         return this;
     }
+
+    private keyHints?: { upDown: string; leftRight?: string; enter: string };
+
+    /**
+     * Footer hint naming the dimension each key moves: Up/Down walks the
+     * list (`upDown` says in what order) and Left/Right (only when this
+     * picker has a neighbor function, and only while the search box is empty)
+     * moves spatially (`leftRight` says to what).
+     */
+    withKeyHints(hints: { upDown: string; leftRight?: string; enter: string }): this {
+        this.keyHints = hints;
+        return this;
+    }
+
+    private renderKeyHints(): void {
+        const hints = this.keyHints;
+        if (!hints) return;
+        try {
+            const instructions = [{ command: '↑↓', purpose: hints.upDown }];
+            if (hints.leftRight && this.getNeighbor && this.inputEl.value === '') {
+                instructions.push({ command: '←→', purpose: hints.leftRight });
+            }
+            instructions.push({ command: '↵', purpose: hints.enter }, { command: 'esc', purpose: 'dismiss' });
+            this.setInstructions(instructions);
+        } catch {
+            // hints are cosmetic
+        }
+    }
     private selectionObserver: MutationObserver | null = null;
 
     /**
@@ -2908,6 +2980,9 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     onOpen() {
         super.onOpen();
         this.stopEscape = closeOnEscapeFromOtherWindows(this);
+
+        this.renderKeyHints();
+        this.inputEl?.addEventListener('input', () => this.renderKeyHints());
 
         this.modalEl?.classList.add('ntg-compact-prompt');
         if (this.header) addPickerHeader(this.modalEl, this.header);
@@ -3052,7 +3127,7 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
                     },
                     {
                         name: 'Left/Right keys move to adjacent tabs',
-                        desc: 'In "Switch to any tab" and "Switch to tab in group", the Left/Right arrows and Ctrl+B/Ctrl+F select the tab beside the highlighted one in its tab group, while the search box is empty. Once you type, they move the text cursor as usual.',
+                        desc: 'In the switch pickers, the Left/Right arrows and Ctrl+B/Ctrl+F move spatially while the search box is empty: to the neighboring tab (any tab, tab in group), tab group, or window, wrapping at the ends. Once you type, they move the text cursor as usual. Up/Down always move through the list.',
                         control: {
                             type: 'toggle',
                             key: 'switchLeftRightNavigation',

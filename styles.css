@@ -647,7 +647,7 @@ body.theme-dark {
 
 /* Short windows (small screens, small pop-outs): the picker is sized by the
  * window it opens in, so reclaim vertical space for the list. Keep the title
- * row, drop the wrapped hint and the keyboard-hints footer, tighten the
+ * row, drop the wrapped hint, tighten the keyboard-hints footer and the
  * toolbar, and let the picker use most of the window height. */
 @media (max-height: 800px) {
     .ntg-picker {
@@ -667,8 +667,12 @@ body.theme-dark {
         height: 26px;
     }
 
+    /* The key hints stay visible (they say what each arrow key moves); just
+     * make the footer tighter. */
     .ntg-picker .prompt-instructions {
-        display: none;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        font-size: var(--font-ui-smaller);
     }
 
     .ntg-picker .collect-tabs-action-toolbar {

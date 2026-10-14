@@ -2289,7 +2289,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                     isMainWindow: true,
                 };
                 const modal = new CollectTabsModal(app as unknown as App, currentWin, [], () => {});
-                expect(modal.placeholder).toBe('Filter windows…');
+                expect(modal.placeholder).toBe('Select windows to gather tabs from');
 
                 const el = document.createElement('div');
                 modal.renderSuggestion({ kind: 'current', winInfo: currentWin, label: 'Main Note.md', checked: false, windowIndex: 1 }, el);

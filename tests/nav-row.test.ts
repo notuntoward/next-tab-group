@@ -139,7 +139,7 @@ describe('tab group row metadata', () => {
         const primary = el.querySelector('.ntg-nav-primary')!.textContent;
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
         expect(primary).toBe('A.md');
-        expect(secondary).toBe('Current group · 3 tabs');
+        expect(secondary).toBe('Current · 3 tabs');
     });
 
     it('uses relative label plus count for a non-current group', () => {
@@ -150,7 +150,7 @@ describe('tab group row metadata', () => {
         plugin.renderTabGroupSuggestion(group, el, new Map(), true, false);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
-        expect(secondary).toBe('Right group · 1 tab');
+        expect(secondary).toBe('Right · 1 tab');
     });
 
     it('maps fuzzy highlights from the search text onto the representative title only', () => {
@@ -231,7 +231,7 @@ describe('window row metadata', () => {
         const primary = el.querySelector('.ntg-nav-primary')!.textContent;
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
         expect(primary).toBe('Note-02.md');
-        expect(secondary).toBe('Main window · 2 groups · Current window');
+        expect(secondary).toBe('2 groups');
     });
 
     it('renders a pop-out with most-recent tab and group count', () => {
@@ -252,7 +252,7 @@ describe('window row metadata', () => {
         const primary = el.querySelector('.ntg-nav-primary')!.textContent;
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
         expect(primary).toBe('Other.md');
-        expect(secondary).toBe('Pop-out · 1 group');
+        expect(secondary).toBe('1 group');
     });
 });
 

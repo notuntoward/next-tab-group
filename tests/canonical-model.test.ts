@@ -498,7 +498,7 @@ describe('canonical model', () => {
             });
         });
 
-        it('switch to tab group shows the window label on every group when more than one window', () => {
+        it('switch to tab group shows window badges (not window text) on every group when more than one window', () => {
             const ar = arrange(app);
             app.workspace.setActiveLeaf(ar.mainA1);
             const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
@@ -512,10 +512,11 @@ describe('canonical model', () => {
             const popupRow = rowEl();
             plugin.renderTabGroupSuggestion(popupGroup, popupRow, labels, true, true);
 
-            // Main window group shows "Main window"; pop-out group shows its
-            // numbered pop-out label rather than the bare "Pop-out".
-            expect(mainRow.querySelector('.ntg-nav-secondary')!.textContent!).toContain('Main window');
-            expect(popupRow.querySelector('.ntg-nav-secondary')!.textContent!).toContain('Pop-out 1');
+            // The number badge and HERE/MAIN pill identify the window.
+            expect(mainRow.querySelector('.ntg-nav-secondary')!.textContent!).not.toContain('Main window');
+            expect(popupRow.querySelector('.ntg-nav-secondary')!.textContent!).not.toContain('Pop-out');
+            expect(mainRow.querySelector('.ntg-window-badge')).not.toBeNull();
+            expect(popupRow.querySelector('.ntg-window-badge')).not.toBeNull();
         });
 
         it('switch to tab group omits the window label with a single window', () => {
@@ -559,7 +560,7 @@ describe('canonical model', () => {
             expect(secondary).toBe('');
         });
 
-        it('switch to window shows numbered pop-out labels', () => {
+        it('switch to window shows the group count, not pop-out text', () => {
             const popupWin: Window = {} as Window;
             const popupWin2: Window = {} as Window;
             const container = new MockWorkspaceContainer('root', globalThis.window);
@@ -578,7 +579,8 @@ describe('canonical model', () => {
             const popout2 = model.windows.find((w) => w.window === popupWin2)!;
             const row = rowEl();
             plugin.renderWindowSuggestion(popout2, row);
-            expect(row.querySelector('.ntg-nav-secondary')!.textContent!).toContain('Pop-out 2');
+            expect(row.querySelector('.ntg-nav-secondary')!.textContent!).toBe('1 group');
+            expect(row.querySelector('.ntg-window-badge')).not.toBeNull();
         });
 
         it('switch to tab in group skips the picker and switches when the group has two tabs', () => {

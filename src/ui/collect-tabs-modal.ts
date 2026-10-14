@@ -221,7 +221,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         // 2. Window list
         // 3. Action toolbar
         // 4. Keyboard hints
-        this.setPlaceholder(options.placeholder ?? 'Filter windows…');
+        this.setPlaceholder(options.placeholder ?? 'Select windows to gather tabs from');
         this.setInstructions([
             { command: '↑↓', purpose: 'navigate' },
             { command: 'space', purpose: 'toggle' },

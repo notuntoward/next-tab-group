@@ -361,7 +361,7 @@ describe('switchToAnyTab', () => {
         expect((items[items.length - 1].leaf as unknown as MockWorkspaceLeaf).id).toBe('winA');
     });
 
-    it('appends the numbered window label to the secondary text when more than one window exists', () => {
+    it('shows the window badge and pill, not window text, when more than one window exists', () => {
         const groupMain = new MockWorkspaceParent(rootContainer);
         const groupWin = new MockWorkspaceParent(windowContainer);
 
@@ -378,8 +378,9 @@ describe('switchToAnyTab', () => {
         plugin.renderTabSuggestion(tabInWin, el, labels, true, true);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
-        expect(secondary).toContain('Pop-out 1');
+        expect(secondary).not.toContain('Pop-out');
         expect(secondary).toContain('tab');
+        expect(el.querySelector('.ntg-window-badge')!.textContent).toBe('2');
     });
 
     it('omits the window label from the secondary text with a single window', () => {
@@ -425,7 +426,7 @@ describe('switchToAnyTab', () => {
         expect(secondary).not.toContain('Pop-out');
     });
 
-    it('numbers distinct pop-out windows so they are distinguishable', () => {
+    it('numbers distinct pop-out windows by badge, without window text in the row', () => {
         const popout2 = new MockWorkspaceContainer('window', {} as Window);
 
         const groupMain = new MockWorkspaceParent(rootContainer);
@@ -449,6 +450,7 @@ describe('switchToAnyTab', () => {
         const el = rowEl();
         plugin.renderTabSuggestion(tabInWin2, el, labels, true, true);
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
-        expect(secondary).toContain('Pop-out 2');
+        expect(secondary).not.toContain('Pop-out');
+        expect(el.querySelector('.ntg-window-badge')!.textContent).toBe('3');
     });
 });
