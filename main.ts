@@ -1417,12 +1417,10 @@ export default class NextTabGroupPlugin extends Plugin {
     private renderInGroupTabSuggestion(
         leaf: WorkspaceLeaf,
         el: HTMLElement,
-        labels: Map<Window | undefined, string>,
-        showWindow: boolean,
         match?: FuzzyMatch<WorkspaceLeaf>,
     ): void {
-        // The window badge/pills identify the window; no extra text.
-        this.renderGridRow(el, leaf, this.getWindowForLeaf(leaf), leaf.getDisplayText(), match?.match.matches ?? [], "", undefined, showWindow);
+        // Every row is in the active group's own window, so no window badge or pills.
+        this.renderGridRow(el, leaf, this.getWindowForLeaf(leaf), leaf.getDisplayText(), match?.match.matches ?? [], "", undefined, false);
     }
 
     /** Steps to the next (+1, clockwise) or previous (-1) tab group on the window's ring. */
@@ -2591,19 +2589,13 @@ export default class NextTabGroupPlugin extends Plugin {
 
         if (this.skipPickerIfTrivial(leaves, (leaf) => leaf === activeLeaf, (leaf) => this.focusLeafAndWindow(leaf), "This tab group has only one tab.")) return;
 
-        // The active group is the only group in this modal, so its name is
-        // never needed; the window is named only when more than one exists.
-        const showWindow =
-            model.windows.length > 1;
-        const windowLabels = this.buildWindowLabels(model);
-
         new NavigationSuggestModal(
             this.app,
             leaves,
             "Select a tab in this group",
             (leaf) => leaf.getDisplayText(),
             (leaf) => this.focusLeafAndWindow(leaf),
-            (leaf, el, match) => this.renderInGroupTabSuggestion(leaf, el, windowLabels, showWindow, match),
+            (leaf, el, match) => this.renderInGroupTabSuggestion(leaf, el, match),
             this.firstNonActiveIndex(
                 leaves,
                 (leaf) => leaf === activeLeaf,
