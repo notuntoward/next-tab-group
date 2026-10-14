@@ -464,6 +464,14 @@ export default class NextTabGroupPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: 'previous',
+            name: 'Previous tab group',
+            callback: () => {
+                this.cycleTabGroups(-1);
+            }
+        });
+
+        this.addCommand({
             id: 'collect-tabs',
             name: 'Collect tabs',
             callback: () => {
@@ -1409,7 +1417,8 @@ export default class NextTabGroupPlugin extends Plugin {
         this.renderGridRow(el, leaf, this.getWindowForLeaf(leaf), leaf.getDisplayText(), match?.match.matches ?? [], "", undefined, showWindow);
     }
 
-    private cycleTabGroups() {
+    /** Steps to the next (+1, clockwise) or previous (-1) tab group on the window's ring. */
+    private cycleTabGroups(direction: -1 | 1 = 1) {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         const activeWindow = this.getWindowForLeaf(activeLeaf);
 
@@ -1444,7 +1453,7 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const nextIndex = (currentIndex + 1) % sorted.length;
+        const nextIndex = (currentIndex + direction + sorted.length) % sorted.length;
         this.focusTabGroup(sorted[nextIndex]);
     }
 

@@ -10,7 +10,7 @@ import {
 } from './mocks/obsidian';
 
 type TestPlugin = NextTabGroupPlugin & {
-    cycleTabGroups: () => void;
+    cycleTabGroups: (direction?: -1 | 1) => void;
     buildNavigationModel: (activeLeaf: WorkspaceLeaf | null) => {
         groups: Array<{
             leaves: WorkspaceLeaf[];
@@ -199,4 +199,41 @@ describe('cycleTabGroups', () => {
 
         expect(app.workspace.activeLeaf).toBe(m1);
     });
-});
+
+    describe('on a 2x2 grid', () => {
+        function setup() {
+            const g = {
+                tl: makeGroup(container), tr: makeGroup(container), bl: makeGroup(container), br: makeGroup(container),
+            };
+            const l = {
+                tl: leaf('tl', 'TL.md', g.tl, container), tr: leaf('tr', 'TR.md', g.tr, container),
+                bl: leaf('bl', 'BL.md', g.bl, container), br: leaf('br', 'BR.md', g.br, container),
+            };
+            setRect(g.tl, 0, 0); setRect(g.tr, 100, 0); setRect(g.bl, 0, 100); setRect(g.br, 100, 100);
+            app.workspace.allLeaves = [l.tl, l.tr, l.bl, l.br];
+            app.workspace.rootLeaves = app.workspace.allLeaves;
+            return l;
+        }
+
+        it('Next tab group goes clockwise (TL, TR, BR, BL), not reading order', () => {
+            const l = setup();
+            app.workspace.setActiveLeaf(l.tl);
+            const seen: unknown[] = [];
+            for (let i = 0; i < 4; i++) {
+                plugin.cycleTabGroups(1);
+                seen.push(app.workspace.activeLeaf);
+            }
+            expect(seen).toEqual([l.tr, l.br, l.bl, l.tl]);
+        });
+
+        it('Previous tab group goes counterclockwise (TL, BL, BR, TR)', () => {
+            const l = setup();
+            app.workspace.setActiveLeaf(l.tl);
+            const seen: unknown[] = [];
+            for (let i = 0; i < 4; i++) {
+                plugin.cycleTabGroups(-1);
+                seen.push(app.workspace.activeLeaf);
+            }
+            expect(seen).toEqual([l.bl, l.br, l.tr, l.tl]);
+        });
+    });});
