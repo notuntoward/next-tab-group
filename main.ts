@@ -2486,7 +2486,43 @@ export default class NextTabGroupPlugin extends Plugin {
         if (!plan) return `Nothing to close in: ${where}.`;
         const n = plan.toRemove.length;
         const k = plan.survivors.length;
-        return `Enter closes ${n} tab${n === 1 ? '' : 's'} (red) and keeps ${k} (green) in: ${where}.`;
+        const { groups, windows } = this.dedupeEmptied(plan.toRemove);
+        // Obsidian closes a tab group once its last tab is gone, and a pop-out
+        // window once its last tab group is gone. Only mention nonzero counts.
+        const closes = [
+            `${n} tab${n === 1 ? '' : 's'} (red)`,
+            ...(groups > 0 ? [`${groups} tab group${groups === 1 ? '' : 's'}`] : []),
+            ...(windows > 0 ? [`${windows} window${windows === 1 ? '' : 's'}`] : []),
+        ].join(', ');
+        return `Enter closes ${closes} and keeps ${k} (green) in: ${where}.`;
+    }
+
+    /**
+     * How many tab groups and pop-out windows end up empty (and so are closed
+     * by Obsidian) once `toRemove` is detached. The main window is never closed.
+     */
+    private dedupeEmptied(toRemove: WorkspaceLeaf[]): { groups: number; windows: number } {
+        const removing = new Set(toRemove);
+        const left = new Map<unknown, number>();
+        const winLeft = new Map<Window | undefined, number>();
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            if ((leaf as any).detached || this.isSidebarLeaf(leaf)) return;
+            const keep = removing.has(leaf) ? 0 : 1;
+            left.set(leaf.parent, (left.get(leaf.parent) ?? 0) + keep);
+            const win = this.getWindowForLeaf(leaf);
+            winLeft.set(win, (winLeft.get(win) ?? 0) + keep);
+        });
+        const emptiedGroups = new Set<unknown>();
+        const touchedWindows = new Set<Window | undefined>();
+        for (const leaf of toRemove) {
+            if (left.get(leaf.parent) === 0) emptiedGroups.add(leaf.parent);
+            touchedWindows.add(this.getWindowForLeaf(leaf));
+        }
+        const mainWindow = this.getMainWindow();
+        const windows = [...touchedWindows].filter(
+            (w) => w && w !== mainWindow && w !== window && winLeft.get(w) === 0,
+        ).length;
+        return { groups: emptiedGroups.size, windows };
     }
 
     private mergeScopeLeaves(chosen: DedupeScope[]): WorkspaceLeaf[] {
