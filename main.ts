@@ -483,7 +483,15 @@ export default class NextTabGroupPlugin extends Plugin {
             id: 'rotate-tab-groups',
             name: 'Rotate tab groups',
             callback: () => {
-                this.rotateTabGroups();
+                this.rotateTabGroups(1);
+            }
+        });
+
+        this.addCommand({
+            id: 'rotate-tab-groups-counterclockwise',
+            name: 'Rotate tab groups counterclockwise',
+            callback: () => {
+                this.rotateTabGroups(-1);
             }
         });
 
@@ -1819,10 +1827,11 @@ export default class NextTabGroupPlugin extends Plugin {
     // ------------------------------------------------------------------------
 
     /**
-     * Rotates the tab group split tree 90 degrees clockwise within the focused window.
+     * Rotates the tab group split tree 90 degrees within the focused window:
+     * clockwise for spin 1, counterclockwise for spin -1.
      * Replaces simple direction flipping with true tree transposition + child reversal.
      */
-    private async rotateTabGroups() {
+    private async rotateTabGroups(spin: 1 | -1 = 1) {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         if (!activeLeaf) return;
 
@@ -1845,9 +1854,9 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        // Perform recursive 90-degree clockwise rotation on the split tree
+        // Perform recursive 90-degree rotation on the split tree
         this.logLayout('rotate before');
-        this.rotateSplitClockwise(highestSplit, activeWin);
+        this.rotateSplit(highestSplit, activeWin, spin);
         this.logLayout('rotate after');
 
         // Notify Obsidian to re-render layout bounds and tab header containers
@@ -1859,12 +1868,14 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     /**
-     * Recursively transforms a split node 90 degrees clockwise.
+     * Recursively transforms a split node 90 degrees (spin 1 clockwise, -1
+     * counterclockwise). The two spins are the same transpose; only the child
+     * reversal differs, so one spin undoes the other.
      * 1. Inverts direction ('vertical' <-> 'horizontal')
-     * 2. Reverses child order array
+     * 2. Reverses child order array on one transition (see below)
      * 3. Re-orders containerEl child DOM nodes to match
      */
-    public rotateSplitClockwise(node: any, activeWin?: Window): void {
+    public rotateSplit(node: any, activeWin?: Window, spin: 1 | -1 = 1): void {
         if (!node) return;
 
         // Verify that the target node belongs to the currently active window context
@@ -1878,7 +1889,7 @@ export default class NextTabGroupPlugin extends Plugin {
             // 1. Recurse into child splits first (post-order) so nested
             //    rotations are applied before this node is transposed.
             for (const child of node.children) {
-                this.rotateSplitClockwise(child, activeWin);
+                this.rotateSplit(child, activeWin, spin);
             }
 
             const oldDirection = node.direction;
@@ -1896,7 +1907,13 @@ export default class NextTabGroupPlugin extends Plugin {
                 // 3. For true clockwise rotation matching Emacs transpose-frame:
                 //    Reversing when converting horizontal to vertical turns
                 //    Top/Bottom into Right/Left (Clockwise 90°).
-                if (oldDirection === 'horizontal' && newDirection === 'vertical') {
+                //    Counterclockwise reverses on the other transition
+                //    (vertical to horizontal) instead.
+                if (
+                    spin === 1
+                        ? oldDirection === 'horizontal'
+                        : oldDirection === 'vertical'
+                ) {
                     node.children.reverse();
                 }
 
