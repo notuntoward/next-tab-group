@@ -96,7 +96,7 @@ describe('picker footer key hints', () => {
     it('labels Up/Down by what the list order really is', () => {
         twoGroups();
         plugin.settings.groupSwitchByContext = true;
-        expect(open(() => plugin['switchToAnyTab']()).instructions[0].purpose).toBe('by group');
+        expect(open(() => plugin['switchToAnyTab']()).instructions[0].purpose).toBe('recent, by group');
         plugin.settings.groupSwitchByContext = false;
         expect(open(() => plugin['switchToAnyTab']()).instructions[0].purpose).toBe('recent');
     });

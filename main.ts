@@ -2688,7 +2688,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 ? (tab, direction) => neighborInTabStrip(tabs, (t) => t.leaf, tab, direction)
                 : undefined,
         ).withHeader({ kind: 'any-tab', title: 'Switch to any tab', hint: 'Pick any tab in any window.', icon: 'files' })
-            .withKeyHints({ upDown: this.settings.groupSwitchByContext ? 'by group' : 'recent', leftRight: 'neighbor tab', enter: 'switch' }).open();
+            .withKeyHints({ upDown: this.settings.groupSwitchByContext ? 'recent, by group' : 'recent', leftRight: 'neighbor tab', enter: 'switch' }).open();
     }
 
     private activateTabGroup(
@@ -2773,7 +2773,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 }
                 : undefined,
         ).withHeader({ kind: 'tab-group', title: 'Switch to tab group', hint: 'Pick a tab group to jump to.', icon: 'layout-panel-left' })
-            .withKeyHints({ upDown: this.settings.groupSwitchByContext ? 'by window' : 'recent', leftRight: 'neighbor group', enter: 'switch' }).open();
+            .withKeyHints({ upDown: this.settings.groupSwitchByContext ? 'recent, by window' : 'recent', leftRight: 'neighbor group', enter: 'switch' }).open();
     }
 
     private formatWindowLabel(
