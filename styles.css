@@ -706,3 +706,48 @@ body.theme-dark {
 .ntg-picker .ntg-picker-summary {
     flex: 0 0 auto;
 }
+
+/* Preview marks (keyboard cursor row and mouse hover in the checkbox pickers):
+ * the same marks as the solid ones but dashed and untinted, so they cannot be
+ * mistaken for what Enter will act on. Checked rows keep the solid marks. */
+.workspace-tab-header.ntg-dedupe-close-preview,
+.workspace-tab-header.ntg-dedupe-keep-preview {
+    outline: 2px dashed var(--ntg-preview-color) !important;
+    outline-offset: -2px !important;
+    border-radius: var(--radius-s, 4px);
+    position: relative;
+    z-index: 2;
+}
+.workspace-tab-header.ntg-dedupe-close-preview { --ntg-preview-color: var(--color-red, #e5484d); }
+.workspace-tab-header.ntg-dedupe-keep-preview { --ntg-preview-color: var(--color-green, #3fb950); }
+
+.workspace-tabs.ntg-dedupe-close-group-preview,
+.workspace-tabs.ntg-switch-target-group-preview,
+.ntg-switch-target-window-preview {
+    position: relative;
+}
+.workspace-tabs.ntg-dedupe-close-group-preview::after,
+.workspace-tabs.ntg-switch-target-group-preview::after,
+.ntg-switch-target-window-preview::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    border: 3px dashed var(--ntg-preview-color);
+}
+.workspace-tabs.ntg-dedupe-close-group-preview { --ntg-preview-color: var(--color-red, #e5484d); }
+.workspace-tabs.ntg-switch-target-group-preview { --ntg-preview-color: var(--ntg-target-color, var(--text-accent, #a78bfa)); }
+.ntg-switch-target-window-preview { --ntg-preview-color: var(--color-green, #3fb950); }
+.ntg-switch-target-window-preview::after { z-index: 1000; border-width: 4px; }
+
+/* Row under the mouse in the checkbox pickers (the cursor row keeps its own style). */
+.ntg-collect-row.ntg-hover {
+    background-color: var(--background-modifier-hover);
+}
+
+/* Tab titles listed under a row because they matched the filter. */
+.ntg-scope-item-match::before {
+    content: "? ";
+    color: var(--text-faint, var(--text-muted));
+}

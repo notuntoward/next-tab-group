@@ -12,6 +12,7 @@ type TestPlugin = NextTabGroupPlugin & {
     getTabGroupMeta: (tab: TabInfo) => string;
     getTabSearchText: (tab: TabInfo) => string;
     renderTabGroupSuggestion: (group: TabGroupInfo, el: HTMLElement, labels: Map<Window | undefined, string>, showGroup: boolean, showWindow: boolean) => void;
+    groupSearch: (group: TabGroupInfo) => { text: string };
     renderWindowSuggestion: (item: WindowInfo, el: HTMLElement) => void;
 };
 
@@ -162,7 +163,8 @@ describe('tab group row metadata', () => {
         });
 
         const el = rowEl();
-        const searchText = 'Left group Burton15libsNeuroticConsrvsHappy';
+        // Row search text is the titles first, then the location.
+        const searchText = plugin.groupSearch(group).text;
         const match: FuzzyMatch<TabGroupInfo> = {
             item: group as unknown as TabGroupInfo,
             match: {
@@ -178,6 +180,31 @@ describe('tab group row metadata', () => {
         expect(highlight!.textContent).toBe('Bur');
     });
 
+    it('searches every tab title in the group and lists a matching tab that the row does not show', () => {
+        const rep = new MockWorkspaceLeaf('Alpha.md').setId('rep');
+        const other = new MockWorkspaceLeaf('Zebra stripes.md').setId('other');
+        const group = makeGroup(container, {
+            leaves: [rep, other],
+            isCurrentGroup: false,
+            relativeLabel: 'Left group',
+        });
+        const search = plugin.groupSearch(group);
+        expect(search.text).toBe('Alpha.md · Zebra stripes.md · Left group');
+
+        const start = search.text.indexOf('Zebra');
+        const match: FuzzyMatch<TabGroupInfo> = {
+            item: group as unknown as TabGroupInfo,
+            match: { score: 1, matches: [[start, start + 5]] },
+        };
+        const el = rowEl();
+        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false, match);
+
+        expect(el.querySelector('.ntg-nav-primary .suggestion-highlight')).toBeNull();
+        const listed = el.querySelector('.ntg-scope-item-match');
+        expect(listed?.textContent).toBe('Zebra stripes.md');
+        expect(listed?.querySelector('.suggestion-highlight')?.textContent).toBe('Zebra');
+    });
+
     it('does not highlight a match that falls outside the representative title', () => {
         const rep = new MockWorkspaceLeaf('Burton15libsNeuroticConsrvsHappy.md').setId('rep');
         const group = makeGroup(container, {
@@ -191,7 +218,7 @@ describe('tab group row metadata', () => {
             item: group as unknown as TabGroupInfo,
             match: {
                 score: 1,
-                matches: [[0, 4]],
+                matches: [[plugin.groupSearch(group).text.indexOf('Left'), plugin.groupSearch(group).text.indexOf('Left') + 4]],
             },
         };
 

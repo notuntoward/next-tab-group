@@ -67,6 +67,142 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
         await plugin.onload();
     });
 
+    describe('Collect tabs hover, cursor and Left/Right window navigation', () => {
+        function setup(withRing = true) {
+            const m1 = leaf('m1', 'M.md', new MockWorkspaceParent(rootContainer), rootContainer);
+            const p1 = leaf('p1', 'P1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
+            const p2 = leaf('p2', 'P2.md', new MockWorkspaceParent(popoutContainer2), popoutContainer2);
+            const mk = (window: Window, representative: MockWorkspaceLeaf, label: string, cur: boolean, main: boolean): WindowInfo => ({
+                window, representative: representative as unknown as WorkspaceLeaf, groups: [{ leaves: [representative] } as any],
+                lastActive: 1, label, isCurrentWindow: cur, isMainWindow: main,
+            });
+            const mainWin = mk(globalThis.window, m1, 'Main', true, true);
+            const pop1 = mk(win1Obj, p1, 'P1', false, false);
+            const pop2 = mk(win2Obj, p2, 'P2', false, false);
+            const els = new Map<WindowInfo, HTMLElement>([[mainWin, document.createElement('div')], [pop1, document.createElement('div')], [pop2, document.createElement('div')]]);
+            document.body.append(...els.values());
+            const picked: unknown[] = [];
+            const modal = new CollectTabsModal(app as unknown as App, mainWin, [pop1, pop2], (c) => picked.push(c), {
+                // Ring order differs from list order so the test proves the ring is used.
+                windowRing: withRing ? (wins) => [wins[2], wins[1], wins[0]] : undefined,
+                getTargets: (chosen) => chosen.flatMap((r) => (r.kind === 'current' || r.kind === 'window') ? [{ el: els.get(r.winInfo), cls: 'ntg-switch-target-window' }] : []),
+            });
+            modal.open();
+            return { modal, mainWin, pop1, pop2, els };
+        }
+
+        it('hover is a dashed preview that never moves the cursor and vanishes on leave; checked stays solid', () => {
+            const { modal, pop1, els } = setup();
+            const rows = modal.getSuggestions('');
+            expect(els.get(pop1)!.className).toBe('');
+            // Obsidian reports mouse movement as setSelectedItem(index, mouseEvent).
+            const chooser = (modal as any).chooser;
+            chooser.setSelectedItem(2, new MouseEvent('mousemove'));
+            expect(modal.highlightedIndex).toBe(0);
+            expect(els.get(pop1)!.classList.contains('ntg-switch-target-window-preview')).toBe(true);
+            expect(els.get(pop1)!.classList.contains('ntg-switch-target-window')).toBe(false);
+            modal.setHoveredRow(null);
+            expect(els.get(pop1)!.className).toBe('');
+            // Clicking (toggling) makes it solid and it stays after the mouse leaves.
+            modal.toggleRow(rows[2]);
+            expect(els.get(pop1)!.classList.contains('ntg-switch-target-window')).toBe(true);
+            expect(els.get(pop1)!.classList.contains('ntg-switch-target-window-preview')).toBe(false);
+            modal.setHoveredRow(null);
+            expect(els.get(pop1)!.classList.contains('ntg-switch-target-window')).toBe(true);
+            modal.close();
+        });
+
+        it('the keyboard cursor row previews its window until checked or moved away', () => {
+            const { modal, pop1, pop2, els } = setup();
+            modal.setHighlightedIndex(2); // pop1
+            expect(els.get(pop1)!.classList.contains('ntg-switch-target-window-preview')).toBe(true);
+            modal.setHighlightedIndex(3); // pop2
+            expect(els.get(pop1)!.className).toBe('');
+            expect(els.get(pop2)!.classList.contains('ntg-switch-target-window-preview')).toBe(true);
+            modal.close();
+        });
+
+        it('Left/Right step through windows in ring order, wrap, and enter the ring from non-window rows', () => {
+            const { modal, mainWin, pop1, pop2 } = setup();
+            const rows = modal.getSuggestions('');
+            const rowOf = (w: WindowInfo) => rows.find((r) => (r as any).winInfo === w)!;
+            // Ring is [pop2, pop1, main]: Right from main wraps to pop2.
+            expect(modal.windowNeighbor(rowOf(mainWin), 1)).toBe(rowOf(pop2));
+            expect(modal.windowNeighbor(rowOf(pop2), 1)).toBe(rowOf(pop1));
+            expect(modal.windowNeighbor(rowOf(pop1), -1)).toBe(rowOf(pop2));
+            expect(modal.windowNeighbor(rowOf(pop2), -1)).toBe(rowOf(mainWin));
+            // "All windows" has no position: first press lands on the current window.
+            expect(modal.windowNeighbor(rows.find((r) => r.kind === 'all')!, 1)).toBe(rowOf(mainWin));
+            modal.close();
+        });
+
+        it('ArrowRight/ArrowLeft move the cursor through windows via the shared key registration, only with an empty filter', () => {
+            const { modal } = setup();
+            const press = (key: string) => {
+                const reg = (modal as any).scope.registrations.find((r: any) => r.key === key && (r.modifiers ?? []).length === 0);
+                const evt = new KeyboardEvent('keydown', { key });
+                return { result: reg.func(evt), reg };
+            };
+            expect(modal.highlightedIndex).toBe(0); // main
+            press('ArrowRight');
+            expect(modal.getHighlightedItem()?.kind).toBe('window');
+            expect((modal.getHighlightedItem() as any).winInfo.label).toBe('P2');
+            press('ArrowLeft');
+            expect(modal.highlightedIndex).toBe(0);
+            // Typing a filter hands Left/Right back to the text cursor.
+            modal.inputEl.value = 'x';
+            expect(press('ArrowRight').result).toBe(true);
+            modal.close();
+        });
+
+        it('Left/Right are only registered when a window ring is supplied', () => {
+            const { modal } = setup(false);
+            const keys = (modal as any).scope.registrations.map((r: any) => r.key);
+            expect(keys).not.toContain('ArrowLeft');
+            expect(keys).not.toContain('ArrowRight');
+            modal.close();
+        });
+    });
+
+    describe('Collect tabs toast when there is nothing to collect', () => {
+        const noticeText = () => MockNotice.notices.map((n) => n.message);
+
+        it('says briefly that nothing moved when there is one window', async () => {
+            const g = new MockWorkspaceParent(rootContainer);
+            const a = leaf('a', 'A.md', g, rootContainer);
+            const b = leaf('b', 'B.md', g, rootContainer);
+            app.workspace.allLeaves = [a, b];
+            app.workspace.rootLeaves = [a, b];
+            app.workspace.setActiveLeaf(a);
+            MockNotice.notices = [];
+
+            await plugin.collectTabs('current');
+
+            expect(noticeText()).toEqual(['No tabs to collect.']);
+        });
+
+        it('names the window when several windows exist and the chosen one has nothing to move', async () => {
+            const g = new MockWorkspaceParent(rootContainer);
+            const pg = new MockWorkspaceParent(popoutContainer1);
+            const a = leaf('a', 'A.md', g, rootContainer);
+            const b = leaf('b', 'B.md', g, rootContainer);
+            const p = leaf('p', 'P.md', pg, popoutContainer1);
+            app.workspace.allLeaves = [a, b, p];
+            app.workspace.rootLeaves = [a, b];
+            app.workspace.setActiveLeaf(a);
+            const model = plugin.buildNavigationModel(a as unknown as WorkspaceLeaf);
+            const mainInfo = model.windows.find((w: WindowInfo) => w.isMainWindow);
+            MockNotice.notices = [];
+
+            await plugin.collectTabs('multi', [mainInfo]);
+
+            const [msg] = noticeText();
+            expect(msg).toMatch(/^No tabs to collect in window \d+\.$/);
+            expect(a.detached).toBe(false);
+            expect(b.detached).toBe(false);
+        });
+    });
+
     describe('Single-window collectTabs window isolation', () => {
         it('consolidates splits within a popout window and leaves main window untouched', async () => {
             // Main window has 2 leaves
@@ -961,7 +1097,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             ]);
         });
 
-        it('triggers onPick with the union of the explicitly chosen row and the default-checked HERE row', () => {
+        it('onChooseSuggestion on an unchecked row collects only the checked (default HERE) row', () => {
             const m1 = leaf('m1', 'Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Pop.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
 
@@ -990,18 +1126,14 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             const choice = modal.getSuggestions('')[1]; // 'All windows'
             modal.onChooseSuggestion(choice, new MouseEvent('click'));
 
-            // The HERE row is checked by default and was never unchecked, so it is
-            // included alongside the explicitly chosen 'All windows' row. (Harmless
-            // in practice: the plugin's 'all' handling already short-circuits on any
-            // 'all' entry in the array and ignores the rest.)
+            // 'All windows' was never checked, so choosing/highlighting it does not
+            // add it: only the default-checked HERE row is collected.
             expect(picked).not.toBeNull();
-            expect(Array.isArray(picked)).toBe(true);
-            expect(picked).toHaveLength(2);
-            expect(picked.some((c: any) => c.kind === 'all')).toBe(true);
-            expect(picked.some((c: any) => c.kind === 'current')).toBe(true);
+            expect(Array.isArray(picked)).toBe(false);
+            expect(picked.kind).toBe('current');
         });
 
-        it('triggers onPick with the union of the explicitly chosen row and any additionally checked rows', () => {
+        it('triggers onPick with exactly the checked rows', () => {
             const m1 = leaf('m1', 'Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
             const p1 = leaf('p1', 'Pop.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
 
@@ -1034,7 +1166,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             // User highlights row 0 ("This window") and presses Enter
             modal.onChooseSuggestion(suggestions[0], new MouseEvent('click'));
 
-            // onPick receives the chosen row 0 plus the additionally-checked otherWin row.
+            // onPick receives exactly the checked rows: HERE (default) and otherWin.
             expect(Array.isArray(picked)).toBe(true);
             expect(picked).toHaveLength(2);
             expect(picked.some((c: any) => c.kind === 'current')).toBe(true);
@@ -2666,8 +2798,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal2.close();
 
                 // Case 3: Move highlight to another row without touching any checkbox.
-                // HERE remains checked by default, so both it and the highlighted
-                // row are collected (the explicit choice is never silently dropped).
+                // The highlight is only a cursor, so just the checked HERE row is collected.
                 pickedChoice = null;
                 const modal3 = new CollectTabsModal(app as unknown as App, mainWin, [pop1], (choice) => {
                     pickedChoice = choice;
@@ -2675,11 +2806,25 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal3.open();
                 modal3.setHighlightedIndex(2); // pop1
                 modal3.executeCollection();
-                expect(Array.isArray(pickedChoice)).toBe(true);
-                expect(pickedChoice).toHaveLength(2);
-                expect(pickedChoice.some((c: any) => c.kind === 'window' && c.winInfo === pop1)).toBe(true);
-                expect(pickedChoice.some((c: any) => c.kind === 'current' && c.winInfo === mainWin)).toBe(true);
+                expect(Array.isArray(pickedChoice)).toBe(false);
+                expect(pickedChoice.kind).toBe('current');
                 modal3.close();
+
+                // Case 3b: Nothing checked, cursor on another row: Enter does nothing
+                // except explain, and the modal stays open.
+                pickedChoice = null;
+                MockNotice.notices = [];
+                const modal3b = new CollectTabsModal(app as unknown as App, mainWin, [pop1], (choice) => {
+                    pickedChoice = choice;
+                });
+                modal3b.open();
+                modal3b.clearSelection();
+                modal3b.setHighlightedIndex(2); // pop1
+                modal3b.executeCollection();
+                expect(pickedChoice).toBeNull();
+                expect(MockNotice.notices.map((n) => n.message)).toEqual(['Nothing checked.']);
+                expect(modal3b.isOpen).toBe(true);
+                modal3b.close();
 
                 // Case 4: With an additional row checked, collects HERE (default) plus
                 // that row.
@@ -3106,10 +3251,10 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal.close();
             });
 
-            it('11. Choosing a different row via Enter always includes that row, even though HERE remains checked', () => {
-                // Once the HERE row is checked by default, Enter/Collect on a
-                // different, explicitly-chosen row must never silently discard that
-                // choice just because something else happens to be checked.
+            it('11. Enter never acts on an unchecked highlighted row: only checked rows are collected', () => {
+                // The highlight is just a cursor. With HERE checked by default,
+                // moving the cursor to another row and pressing Enter collects only
+                // HERE; the unchecked row is left alone.
                 const m1 = leaf('m1', 'Main Note.md', new MockWorkspaceParent(rootContainer), rootContainer);
                 const p1 = leaf('p1', 'Pop1.md', new MockWorkspaceParent(popoutContainer1), popoutContainer1);
 
@@ -3143,8 +3288,8 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal.setHighlightedIndex(1);
                 modal.executeCollection();
 
-                expect(Array.isArray(picked)).toBe(true);
-                expect(picked.some((c: any) => c.kind === 'all')).toBe(true);
+                expect(Array.isArray(picked)).toBe(false);
+                expect(picked.kind).toBe('current');
                 modal.close();
             });
 

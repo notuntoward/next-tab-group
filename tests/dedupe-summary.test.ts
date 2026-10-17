@@ -78,4 +78,41 @@ describe('dedupe summary: tab groups and windows that close', () => {
         expect(plugin.dedupeSummary([scope2], [{ id: 'all' }], a as unknown as WorkspaceLeaf)).toBe(
             'Enter closes 1 tab',
         );
-    });});
+    });
+
+    it('matches a multi-window layout: counts every emptied group and window, but not a group that keeps a New tab', () => {
+        const mainG1 = new MockWorkspaceParent(mainC);
+        const mainG2 = new MockWorkspaceParent(mainC);
+        const ulC = new MockWorkspaceContainer('window', {} as Window);
+        const urC = new MockWorkspaceContainer('window', {} as Window);
+        const lrC = new MockWorkspaceContainer('window', {} as Window);
+        const ulG = new MockWorkspaceParent(ulC);
+        const urG = new MockWorkspaceParent(urC);
+        const lrLeft = new MockWorkspaceParent(lrC);
+        const lrRight = new MockWorkspaceParent(lrC);
+        const mk = (id: string, file: string | null, g: MockWorkspaceParent, c: MockWorkspaceContainer) =>
+            new MockWorkspaceLeaf(file).setId(id).setParent(g).setContainer(c);
+        const emacs = mk('emacs', 'emacs.md', mainG1, mainC);
+        const wa = mk('wa', 'wa.md', mainG2, mainC);
+        // The active group holds the survivors, so every other copy closes.
+        const keepNext = mk('keep', 'ntg.md', mainG1, mainC);
+        const waKeep = mk('wa-keep', 'wa.md', mainG1, mainC);
+        const ulOther = mk('ul-other', 'other.md', ulG, ulC);
+        const ulDup = mk('ul-dup', 'ntg.md', ulG, ulC);
+        const urDup = mk('ur-dup', 'ntg.md', urG, urC);
+        const lrDup = mk('lr-dup', 'ntg.md', lrLeft, lrC);
+        const lrNew = mk('lr-new', null, lrLeft, lrC);
+        const lrNew2 = mk('lr-new2', null, lrRight, lrC);
+        const all = [emacs, wa, keepNext, waKeep, ulOther, ulDup, urDup, lrDup, lrNew, lrNew2];
+        app.workspace.allLeaves = all;
+        app.workspace.setActiveLeaf(emacs);
+
+        // Emptied: the main window's WA group and the UR pop-out's only group,
+        // so the UR pop-out closes. The LR left group keeps its New tab.
+        expect(plugin.dedupeEmptied(asL(wa, ulDup, urDup, lrDup))).toEqual({ groups: 2, windows: 1 });
+
+        const scope = { id: 'all', kind: 'all', label: 'all', leaves: all, removeCount: 4 };
+        const text = plugin.dedupeSummary([scope], [{ id: 'all' }], emacs as unknown as WorkspaceLeaf);
+        expect(text).toMatch(/^Enter closes \d+ tabs?, 2 tab groups, 1 window$/);
+    });
+});

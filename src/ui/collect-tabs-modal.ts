@@ -2,6 +2,7 @@ import { App, Notice, SuggestModal, WorkspaceLeaf } from 'obsidian';
 import { addPickerHeader, registerEmacsMotionKeys, closeOnEscapeFromOtherWindows, type PickerHeader } from '../utils/modal';
 import type { WindowInfo } from '../../main';
 import { TargetHighlighter, type HighlightTarget } from '../utils/target-highlight';
+import { matchParts, renderMatchingTitles, statusWords, uniqueTitles, type SearchPart } from '../utils/search';
 
 export type CollectChoice =
     | { kind: 'current'; winInfo: WindowInfo; label: string; checked: boolean; windowIndex: number }
@@ -26,6 +27,10 @@ export interface ScopeChoice {
     status?: string;
     /** Indented sub-lines listed under the row (e.g. tabs that will be closed). */
     items?: Array<{ kind: 'close' | 'keep'; text: string }>;
+    /** Titles of the tabs this row's scope covers; what typing in the filter searches. */
+    searchTitles?: string[];
+    /** The window this row stands for, if any (enables Left/Right and window hover). */
+    winInfo?: WindowInfo;
 }
 
 export interface CollectModalOptions {
@@ -33,10 +38,17 @@ export interface CollectModalOptions {
     scopeRows?: ScopeChoice[];
     placeholder?: string;
     actionLabel?: string;
+    /** Toast shown when the action is triggered with no row checked. */
+    nothingCheckedNotice?: string;
     commandName?: string;
     header?: PickerHeader;
     /** Workspace elements to mark for the currently chosen + checked rows. */
     getTargets?: (chosen: CollectChoice[]) => HighlightTarget[];
+    /**
+     * Orders windows for the Left/Right keys (clockwise from their screen
+     * rectangles, like Switch to window). Omit to disable Left/Right.
+     */
+    windowRing?: (windows: WindowInfo[]) => WindowInfo[];
     /** Text describing what the action would do for the current selection. */
     getSummary?: (chosen: CollectChoice[], checked: CollectChoice[]) => string;
 }
@@ -143,11 +155,16 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     // Single list of selectable rows; all selection state lives on these.
     private rows: CollectChoice[];
     private actionLabel: string;
+    private nothingCheckedNotice: string;
     private commandName: string;
     private header: PickerHeader;
     private getTargets?: (chosen: CollectChoice[]) => HighlightTarget[];
     private getSummary?: (chosen: CollectChoice[], checked: CollectChoice[]) => string;
+    private windowRing?: (windows: WindowInfo[]) => WindowInfo[];
     private summaryEl?: HTMLElement;
+    /** Row under the mouse: a transient preview that never moves the keyboard cursor. */
+    private hovered: CollectChoice | null = null;
+    private stopWindowHover?: () => void;
     private stopEscape?: () => void;
     private readonly highlighter = new TargetHighlighter();
     private onPick: (choice: CollectChoice | CollectChoice[]) => void;
@@ -172,6 +189,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         super(app);
         this.onPick = onPick;
         this.actionLabel = options.actionLabel ?? 'Collect';
+        this.nothingCheckedNotice = options.nothingCheckedNotice ?? 'Nothing checked.';
         this.commandName = options.commandName ?? 'collect-tabs';
         this.header = options.header ?? {
             kind: 'collect',
@@ -181,6 +199,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         };
         this.getTargets = options.getTargets;
         this.getSummary = options.getSummary;
+        this.windowRing = options.windowRing;
 
         // Clean row content with no prefix text; status is conveyed by the badge & column grid.
         // The HERE row starts checked: it is what Enter/Collect acts on by default,
@@ -224,6 +243,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         this.setPlaceholder(options.placeholder ?? 'Select windows to gather tabs from');
         this.setInstructions([
             { command: '↑↓', purpose: 'navigate' },
+            ...(options.windowRing ? [{ command: '←→', purpose: 'neighbor window' }] : []),
             { command: 'space', purpose: 'toggle' },
             { command: '↵', purpose: this.actionLabel.toLowerCase() },
             { command: 'esc', purpose: 'cancel' },
@@ -326,22 +346,108 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     /**
-     * What Enter would act on: the checked rows plus the highlighted one
-     * (see executeCollection). Marks their workspace targets.
+     * Workspace marks. Checked rows are what Enter acts on and get the solid
+     * marks. The keyboard cursor row and the hovered row (mouse only) get a
+     * dashed, lighter preview of the same marks. Hover disappears when the
+     * mouse leaves; checked rows stay. The summary describes the checked rows
+     * only, because that is exactly what the action does.
      */
     public syncTargetHighlight(): void {
         if (!this.getTargets && !this.getSummary) return;
         try {
-            const chosen = [...this.getCheckedRows()];
-            const hi = this.getHighlightedItem();
-            if (hi && !chosen.includes(hi)) chosen.push(hi);
-            if (this.getTargets) this.highlighter.set(this.getTargets(chosen));
-            if (this.summaryEl && this.getSummary) this.summaryEl.setText(this.getSummary(chosen, [...this.getCheckedRows()]));
+            const checked = [...this.getCheckedRows()];
+            const targets: HighlightTarget[] = this.getTargets ? [...this.getTargets(checked)] : [];
+            if (this.getTargets) {
+                const solid = new Set(targets.map((t) => `${t.cls}|${t.el ? this.elKey(t.el) : ''}`));
+                const previewRows: CollectChoice[] = [];
+                for (const row of [this.getHighlightedItem(), this.hovered]) {
+                    if (row && !row.checked && !previewRows.includes(row)) previewRows.push(row);
+                }
+                for (const row of previewRows) {
+                    for (const t of this.getTargets([row])) {
+                        if (solid.has(`${t.cls}|${t.el ? this.elKey(t.el) : ''}`)) continue;
+                        targets.push({ el: t.el, cls: `${t.cls}-preview` });
+                    }
+                }
+            }
+            if (this.getTargets) this.highlighter.set(targets);
+            if (this.summaryEl && this.getSummary) this.summaryEl.setText(this.getSummary(checked, checked));
         } catch {
             this.highlighter.clear();
         }
     }
 
+    private elementKeys = new WeakMap<HTMLElement, number>();
+    private nextElementKey = 1;
+    private elKey(el: HTMLElement): number {
+        let key = this.elementKeys.get(el);
+        if (key === undefined) {
+            key = this.nextElementKey++;
+            this.elementKeys.set(el, key);
+        }
+        return key;
+    }
+
+    /** Sets (or clears) the mouse-hover row and repaints; never touches the keyboard cursor. */
+    public setHoveredRow(row: CollectChoice | null): void {
+        if (this.hovered === row) return;
+        this.hovered = row;
+        this.updateHighlightVisuals();
+    }
+
+    private rowWinInfo(row: CollectChoice): WindowInfo | undefined {
+        return row.kind === 'all' ? undefined : row.winInfo;
+    }
+
+    /**
+     * Left/Right: the window row `direction` steps from `row` in the ring order
+     * of windows (clockwise like Switch to window), wrapping at the ends. From a
+     * row that is not a window (All windows, a tab group) it enters the ring at
+     * the current window. Null when there are fewer than two window rows.
+     */
+    public windowNeighbor(row: CollectChoice, direction: -1 | 1): CollectChoice | null {
+        const winRows = this.getSuggestions(this.inputEl?.value ?? '').filter((r) => this.rowWinInfo(r));
+        if (winRows.length < 2) return null;
+        const wins = winRows.map((r) => this.rowWinInfo(r)!);
+        const ring = this.windowRing ? this.windowRing(wins).filter((w) => wins.includes(w)) : wins;
+        const own = this.rowWinInfo(row);
+        let target: WindowInfo | undefined;
+        if (!own) {
+            target = ring.find((w) => w.isCurrentWindow) ?? ring[0];
+        } else {
+            const at = ring.indexOf(own);
+            if (at < 0) return null;
+            target = ring[(at + direction + ring.length) % ring.length];
+        }
+        return winRows.find((r) => this.rowWinInfo(r) === target) ?? null;
+    }
+
+    /**
+     * Hovering another window (the modal's own window is covered by the
+     * backdrop) previews its row. Listeners are per window, added once per
+     * distinct window and all removed on close.
+     */
+    private attachWindowHover(): void {
+        const ownWin = this.modalEl?.ownerDocument?.defaultView ?? null;
+        const cleanups: Array<() => void> = [];
+        const seen = new Set<Window>();
+        for (const row of this.rows) {
+            const win = this.rowWinInfo(row)?.window;
+            if (!win || win === ownWin || seen.has(win)) continue;
+            seen.add(win);
+            const doc = win.document;
+            if (!doc?.addEventListener) continue;
+            const over = () => this.setHoveredRow(row);
+            const out = () => { if (this.hovered === row) this.setHoveredRow(null); };
+            doc.addEventListener('mousemove', over, true);
+            doc.documentElement?.addEventListener('mouseleave', out);
+            cleanups.push(() => {
+                doc.removeEventListener('mousemove', over, true);
+                doc.documentElement?.removeEventListener('mouseleave', out);
+            });
+        }
+        this.stopWindowHover = () => cleanups.forEach((c) => c());
+    }
     public updateHighlightVisuals(): void {
         this.syncTargetHighlight();
         const container = this.resultContainerEl ?? this.modalEl?.querySelector('.prompt-results') ?? this.modalEl;
@@ -359,7 +465,9 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         });
 
         const rowItems = Array.from(container.querySelectorAll<HTMLElement>('.ntg-collect-row'));
+        const hoveredAt = this.hovered ? this.getSuggestions(this.inputEl?.value ?? '').indexOf(this.hovered) : -1;
         rowItems.forEach((row, i) => {
+            row.classList.toggle('ntg-hover', i === hoveredAt);
             if (i === this.highlightedIndex) {
                 row.addClass('is-selected');
                 row.addClass('ntg-keyboard-current');
@@ -548,14 +656,22 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         const chooser = (this as any).chooser;
         if (chooser) {
             const orig = chooser.setSelectedItem?.bind(chooser);
-            chooser.setSelectedItem = (index: number, scroll?: boolean) => {
+            chooser.setSelectedItem = (index: number, scroll?: unknown) => {
+                // Obsidian passes the mouse event when the pointer moves over a
+                // row. That is only a hover preview: it must not move the
+                // keyboard cursor or Obsidian's own selection.
+                const type = (scroll as { type?: unknown } | null | undefined)?.type;
+                if (typeof type === 'string' && /^(mouse|pointer)/.test(type)) {
+                    this.setHoveredRow(this.getSuggestions(this.inputEl?.value ?? '')[index] ?? null);
+                    return;
+                }
                 // See the matching comment in setHighlightedIndex(): Obsidian's
                 // real setSelectedItem can throw internally depending on its
                 // internal state and the (mismatched) argument types plugins
                 // typically pass it. Never let that break our own bookkeeping
                 // below or whatever caller (ours or Obsidian's own) invoked this.
                 try {
-                    if (orig) orig(index, scroll);
+                    if (orig) orig(index, scroll as never);
                     else chooser.selectedItem = index;
                 } catch {
                     chooser.selectedItem = index;
@@ -581,7 +697,24 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             }, 0);
         }
 
-        registerEmacsMotionKeys(this);
+        // Left/Right and Ctrl+B/F move through windows in space (clockwise ring),
+        // like Switch to window; Up/Down move through the list (recency).
+        registerEmacsMotionKeys(
+            this,
+            this.windowRing
+                ? {
+                    neighbor: (item, direction) => this.windowNeighbor(item as CollectChoice, direction),
+                    cursor: {
+                        current: () => this.getHighlightedItem(),
+                        select: (item) => {
+                            const at = this.getSuggestions(this.inputEl?.value ?? '').indexOf(item as CollectChoice);
+                            if (at >= 0) this.setHighlightedIndex(at);
+                        },
+                    },
+                }
+                : {},
+        );
+        this.attachWindowHover();
 
         this.scope.register([], 'ArrowDown', (evt) => {
             evt.preventDefault();
@@ -606,6 +739,9 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     onClose(): void {
         this.stopEscape?.();
         this.stopEscape = undefined;
+        this.stopWindowHover?.();
+        this.stopWindowHover = undefined;
+        this.hovered = null;
         this.highlighter.clear();
         this.isOpen = false;
         if (CollectTabsModal.activeModal === this) {
@@ -740,57 +876,71 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     /**
-     * Shared collection execution method used by both Enter key and Collect button.
-     * Collects the union of the explicitly chosen/highlighted row and whatever is
-     * checked, so an explicit choose action (Enter on a specific suggestion, or
-     * Collect with a given row highlighted) is never silently discarded just
-     * because the HERE row is checked by default. Checking more rows only adds
-     * to what gets collected; it never removes the row you just chose.
+     * Shared execution used by both Enter and the action button. Acts on
+     * exactly the checked rows. The highlighted row is only a cursor: an
+     * unchecked row is never acted on, and with nothing checked the modal stays
+     * open and a toast says so.
      */
-    public executeCollection(fallbackChoice?: CollectChoice): void {
-        const chosen = fallbackChoice ?? this.getHighlightedItem() ?? this.rows[0];
+    public executeCollection(): void {
         const checked = this.getCheckedRows();
-
-        const result: CollectChoice[] = [];
-        const include = (choice: CollectChoice) => {
-            if (!result.includes(choice)) {
-                result.push(choice);
-            }
-        };
-        include(chosen);
-        for (const choice of checked) {
-            include(choice);
+        if (checked.length === 0) {
+            new Notice(this.nothingCheckedNotice);
+            return;
         }
-
-        this.onPick(result.length === 1 ? result[0] : result);
+        this.onPick(checked.length === 1 ? checked[0] : checked);
         this.close();
     }
-
     public buildChoices(): CollectChoice[] {
         // Suggestion list contains strictly selectable targets.
         // It never gains, loses, reorders, or resizes when selection changes.
         return [...this.rows];
     }
 
-    getSuggestions(query: string): CollectChoice[] {
-        const choices = this.buildChoices();
-        const q = query.trim().toLowerCase();
-        if (!q) return choices;
-        return choices.filter((c) => {
-            if (c.label.toLowerCase().includes(q)) return true;
-            if (c.kind === 'current' || c.kind === 'window') {
-                if (String(c.windowIndex) === q) return true;
-            }
-            if (c.kind === 'scope' && c.detail?.toLowerCase().includes(q)) return true;
-            return false;
-        });
+    /**
+     * What typing in the filter searches for a row: the titles of the tabs it
+     * covers, its window number and its HERE/MAIN words. Never counts or
+     * "N to close" text, which a user would not think to type.
+     */
+    private rowSearchParts(row: CollectChoice): SearchPart[] {
+        if (row.kind === 'all') return [{ text: row.label }];
+        const winInfo = row.kind === 'scope' ? row.winInfo : row.winInfo;
+        const parts: SearchPart[] = [];
+        if (winInfo) {
+            const index = row.kind === 'scope' ? row.badge : String(row.windowIndex);
+            parts.push({ text: `Window ${index}` });
+            const status = row.kind === 'scope'
+                ? statusWords(row.status)
+                : [
+                    ...(row.kind === 'current' ? ['here'] : []),
+                    ...(winInfo.isMainWindow || (typeof window !== 'undefined' && winInfo.window === window) ? ['main'] : []),
+                ];
+            for (const word of status) parts.push({ text: word });
+        } else {
+            parts.push({ text: row.label });
+        }
+        const titles = row.kind === 'scope' && row.searchTitles
+            ? row.searchTitles
+            : winInfo
+                ? (winInfo.groups ?? []).flatMap((g) => (g.leaves ?? []).filter((l) => !(l as any).detached).map((l) => l.getDisplayText()))
+                : [];
+        for (const title of uniqueTitles(titles)) parts.push({ text: title, show: true });
+        return parts;
     }
 
+    getSuggestions(query: string): CollectChoice[] {
+        const choices = this.buildChoices();
+        if (!query.trim()) return choices;
+        return choices.filter((c) => matchParts(query, this.rowSearchParts(c)).length > 0);
+    }
     renderSuggestion(choice: CollectChoice, el: HTMLElement): void {
         el.empty();
         el.addClass('ntg-nav-row');
         el.addClass('ntg-collect-row');
         el.addClass('ntg-grid-row');
+
+        // Mouse hover previews the row (and its windows) until the mouse leaves.
+        el.addEventListener('mouseenter', () => this.setHoveredRow(choice));
+        el.addEventListener('mouseleave', () => { if (this.hovered === choice) this.setHoveredRow(null); });
 
         // Mouse clicks anywhere on a window row toggle checked state without closing modal
         el.addEventListener(
@@ -895,6 +1045,24 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             }
         }
 
+        // While filtering, list the matching tab titles this row does not already
+        // show, so a row never appears for a reason the user cannot see.
+        const query = this.inputEl?.value ?? '';
+        if (query.trim()) {
+            const shownTitles: string[] = [];
+            if (choice.kind === 'scope') {
+                shownTitles.push(...(choice.items ?? []).map((i) => i.text));
+            } else if (choice.kind !== 'all') {
+                const d = getWindowTabDetails(choice.winInfo);
+                shownTitles.push(d.primaryTitle, ...(d.secondaryTitle ? [d.secondaryTitle] : []));
+            }
+            renderMatchingTitles(
+                el,
+                matchParts(query, this.rowSearchParts(choice)),
+                (title) => shownTitles.some((s) => s === truncateTitle(title) || s.startsWith(title)),
+            );
+        }
+
         // Column 4 - Status column (fixed width, HERE, MAIN, HERE · MAIN, or empty)
         const colStatus = el.createSpan({ cls: 'ntg-col-status' });
         if (choice.kind === 'scope') {
@@ -928,8 +1096,9 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         super.selectSuggestion(value, evt);
     }
 
-    onChooseSuggestion(choice: CollectChoice, _evt?: MouseEvent | KeyboardEvent): void {
-        this.executeCollection(choice);
+    onChooseSuggestion(_choice: CollectChoice, _evt?: MouseEvent | KeyboardEvent): void {
+        // Enter on the cursor row must not act on an unchecked row.
+        this.executeCollection();
     }
 }
 

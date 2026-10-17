@@ -401,6 +401,36 @@ describe('Command Guardrails: Multi-Window Isolation & Edge Cases', () => {
             expect(a2.detached).toBe(false);
         });
 
+        it('the confirmation shows what closes and what is kept, and passes workspace outlines for both', async () => {
+            const gA = new MockWorkspaceParent(containerA);
+            const gB = new MockWorkspaceParent(containerB);
+            const keep = leaf('keep', 'Note.md', gA, containerA);
+            const dup = leaf('dup', 'Note.md', gB, containerB);
+            const headerKeep = document.createElement('div');
+            const headerDup = document.createElement('div');
+            document.body.append(headerKeep, headerDup);
+            (keep as unknown as { tabHeaderEl: HTMLElement }).tabHeaderEl = headerKeep;
+            (dup as unknown as { tabHeaderEl: HTMLElement }).tabHeaderEl = headerDup;
+            app.workspace.allLeaves = [keep, dup];
+            app.workspace.rootLeaves = [keep, dup];
+            app.workspace.setActiveLeaf(keep);
+
+            plugin.settings.confirmDedupeAllWindows = true;
+            plugin.askConfirmation = vi.fn().mockResolvedValue(false);
+            await plugin.dedupeInAllWindows();
+
+            const [, body, targets] = (plugin.askConfirmation as unknown as { mock: { calls: [string, HTMLElement, { el: HTMLElement; cls: string }[]][] } }).mock.calls[0];
+            // The pop-out's only tab closes, so its group and the window go with it.
+            expect(body.textContent).toContain('Will close 1 tab, 1 tab group, 1 window');
+            expect(body.textContent).toContain('keeps the copy in window');
+            expect(targets).toEqual(
+                expect.arrayContaining([
+                    { el: headerDup, cls: 'ntg-dedupe-close' },
+                    { el: headerKeep, cls: 'ntg-dedupe-keep' },
+                ]),
+            );
+        });
+
         it('focusLeafAndWindow calls targetWin.focus() when leaf belongs to a different window', () => {
             const groupB = new MockWorkspaceParent(containerB);
             const bLeaf = leaf('b', 'B.md', groupB, containerB);

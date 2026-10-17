@@ -592,3 +592,23 @@ export type WorkspaceContainer = MockWorkspaceContainer;
 export function setIcon(el: HTMLElement, iconId: string): void {
     el.setAttribute('data-icon', iconId);
 }
+
+/** Simplified stand-in for Obsidian's prepareFuzzySearch: every whitespace-separated token must be a case-insensitive subsequence. */
+export function prepareFuzzySearch(query: string): (text: string) => { score: number; matches: number[][] } | null {
+    const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+    return (text: string) => {
+        const lower = text.toLowerCase();
+        const matches: number[][] = [];
+        for (const token of tokens) {
+            let from = 0;
+            for (const ch of token) {
+                const at = lower.indexOf(ch, from);
+                if (at < 0) return null;
+                matches.push([at, at + 1]);
+                from = at + 1;
+            }
+        }
+        matches.sort((a, b) => a[0] - b[0]);
+        return { score: -text.length, matches };
+    };
+}

@@ -96,6 +96,26 @@ lesson from scratch.
    destination rather than re-deriving the destination group from a rebuilt
    model.
 
+## One navigation model
+
+12. **Derive every window/tab-group/tab fact from the canonical navigation
+    model.** `buildNavigationModel(activeLeaf)` (built on
+    `getEditorLeafLocations()`) is the single description of the arrangement:
+    `model.windows` -> `model.groups` (identity is `(window, parent)`, never
+    parent alone) -> `model.tabs`, with sidebar and detached leaves already
+    excluded and `isMainWindow` decided once. Do not write a new
+    `iterateAllLeaves` / `iterateRootLeaves` scan, a private `Map` keyed on
+    `leaf.parent`, or your own main-window test (`=== window`) for such
+    questions. Use the model and its helpers (`getGroupsInWindow`,
+    `getTabsInWindow`, `getGroupForLeaf`, `getOpenWindows`). If the model
+    lacks something you need, extend the model (and `canonical-model.test.ts`)
+    rather than computing it locally. When touching code that has its own
+    scan, refactor it onto the model if that is simpler; parallel
+    re-derivations drift (the Deduplicate footer's emptied group/window
+    counts did). `tests/architecture-guardrails.test.ts` caps the number of
+    `iterateAllLeaves` scans in `main.ts`; raise it only for a reviewed
+    reason.
+
 ## Hard rules for modal keyboard/focus handling
 
 6. **Exactly one registration path per keyboard shortcut.** Either
@@ -173,6 +193,30 @@ lesson from scratch.
     nothing at all in real Obsidian. The mock modal now mirrors this guard and
     `tests/architecture-guardrails.test.ts` checks the ordering.
 
+13. **Checkbox pickers (Collect tabs, Deduplicate) keep three separate
+    states, and only one of them is acted on.** *Checked* rows are sticky and
+    are exactly what Enter/the action button does (an unchecked or merely
+    highlighted row is never acted on; with nothing checked, do nothing and
+    toast). The *cursor* (`highlightedIndex`, moved by Up/Down/Left/Right and
+    mouse-independent) always shows its row and a dashed preview of its
+    windows. *Hover* is mouse-only: it previews a row and its windows with the
+    same dashed marks, never moves the cursor, and disappears when the mouse
+    leaves. Solid marks mean "checked"; dashed marks mean "preview". Up/Down
+    walk the list (recency); Left/Right (and Ctrl+B/F, empty filter only) walk
+    window rows in ring order via the shared `registerEmacsMotionKeys`, passing
+    `cursor` so it reads/moves `highlightedIndex` rather than Obsidian's private
+    `chooser.selectedItem` (rule 7). Single-choice pickers (the Switch
+    commands) are different: Enter picks the cursor row, so its mark must
+    always show.
+14. **Picker filters search what the user can recognise a row by, never
+    derived text.** A row is found by its tab titles (all of them, not just the
+    two it displays), its window number, and HERE/MAIN. Never by counts or
+    labels such as "11 tabs in 4 tab groups" or "2 to close". The checkbox
+    pickers use `matchParts` in `src/utils/search.ts` (orderless across words,
+    in-order within a word); the Switch pickers feed Obsidian's fuzzy engine a
+    `joinedSearch` string. Whenever a match is on a tab the row does not show,
+    list it under the row (`renderMatchingTitles` / `renderJoinedHits`) so a row
+    never appears for a reason the user cannot see.
 ## Before considering a change to these areas complete
 
 - Run `npm run build` (lint + full test suite + typecheck + esbuild) and

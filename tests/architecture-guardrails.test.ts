@@ -267,3 +267,39 @@ describe('Architecture guardrails: active-tab color scoping', () => {
         });
     }
 });
+describe('Architecture guardrails: one navigation model', () => {
+    it('only the canonical leaf discovery (and the recency-map pruner) scans workspace leaves', () => {
+        // History: dedupeEmptied, closePopoutWindowIfEmpty, the active-tab-colour
+        // window loops and getActiveLeafInFocusedWindow each ran their own
+        // iterateAllLeaves scan with its own window/group/main-window rules, so
+        // they drifted from the model the pickers use (the Deduplicate footer
+        // miscounted emptied groups and windows). Derive windows, groups and
+        // tabs from buildNavigationModel / getEditorLeafLocations instead.
+        const code = mainTsSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+        const scans = [...code.matchAll(/iterateAllLeaves\(/g)].length;
+        // getEditorLeafLocations + pruneLeafLastActive (which also needs sidebar ids)
+        expect(scans).toBe(2);
+    });
+});
+
+describe('Architecture guardrails: checkbox picker state', () => {
+    const modalSource = fs.readFileSync(path.resolve(__dirname, '../src/ui/collect-tabs-modal.ts'), 'utf-8');
+
+    it('Left/Right in the checkbox pickers read and move the modal-owned cursor, not chooser.selectedItem', () => {
+        // AGENTS.md rules 7 and 13: Obsidian can mutate chooser.selectedItem on
+        // its own, so the neighbor lookup must go through highlightedIndex.
+        expect(modalSource).toMatch(/registerEmacsMotionKeys\(\s*this,[\s\S]*?cursor:\s*\{[\s\S]*?getHighlightedItem\(\)[\s\S]*?setHighlightedIndex\(/);
+    });
+
+    it('mouse-sourced chooser selection is treated as hover and never moves the cursor', () => {
+        const hook = modalSource.match(/chooser\.setSelectedItem = \([\s\S]*?this\.setHoveredRow\([\s\S]*?return;/);
+        expect(hook).not.toBeNull();
+    });
+
+    it('the action acts only on checked rows', () => {
+        const fn = modalSource.match(/public executeCollection\(\): void \{[\s\S]*?\n    \}/);
+        expect(fn).not.toBeNull();
+        expect(fn![0]).toContain('getCheckedRows()');
+        expect(fn![0]).not.toContain('getHighlightedItem');
+    });
+});

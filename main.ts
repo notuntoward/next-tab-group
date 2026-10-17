@@ -9,10 +9,11 @@ import {
 } from 'obsidian';
 import type { App, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
-import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, addPickerHeader, closeOnEscapeFromOtherWindows, type PickerHeader } from './src/utils/modal';
+import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, renderHighlightedText, addPickerHeader, closeOnEscapeFromOtherWindows, type PickerHeader } from './src/utils/modal';
 import type { CollectChoice } from './src/ui/collect-tabs-modal';
 import { CollectTabsModal, describeWindow as formatWindowDescription, getSessionWindowIndex } from './src/ui/collect-tabs-modal';
 import { TargetHighlighter, type HighlightTarget } from './src/utils/target-highlight';
+import { joinedSearch, renderJoinedHits, uniqueTitles, type JoinedSearch } from './src/utils/search';
 import type { ScopeChoice } from './src/ui/collect-tabs-modal';
 import { DiagLog, FreezeWatchdog, summarizeLayout } from './src/utils/diagnostics';
 import { dirname, join } from 'path';
@@ -276,34 +277,6 @@ export interface FuzzyMatch<T> {
     };
 }
 
-/**
- * Helper utility to break a string down by matching index pairs
- * and render bolded/highlighted HTML elements natively.
- */
-export function renderHighlightedText(parentEl: HTMLElement, text: string, matches: number[][]): void {
-    if (!matches || matches.length === 0) {
-        parentEl.setText(text);
-        return;
-    }
-
-    let lastIndex = 0;
-    for (const [start, end] of matches) {
-        // Append unmatched prefix string segment
-        if (start > lastIndex) {
-            parentEl.createSpan().setText(text.slice(lastIndex, start));
-        }
-        // Append highlighted match segment
-        const highlightSpan = parentEl.createSpan({ cls: 'suggestion-highlight' });
-        highlightSpan.setText(text.slice(start, end));
-
-        lastIndex = end;
-    }
-
-    // Append trailing leftover text segment
-    if (lastIndex < text.length) {
-        parentEl.createSpan().setText(text.slice(lastIndex));
-    }
-}
 
 export default class NextTabGroupPlugin extends Plugin {
     private tabGroupActiveLeaves: Map<WorkspaceParent, WorkspaceLeaf> = new Map();
@@ -579,14 +552,7 @@ export default class NextTabGroupPlugin extends Plugin {
         this.diag.log('SESSION', 'plugin unload');
         this.restoreExecuteCommand?.();
         this.watchdog?.stop();
-        const windows = new Set<Window>();
-        const mainWin = this.getMainWindow();
-        if (mainWin && !mainWin.closed) windows.add(mainWin);
-        this.app.workspace.iterateAllLeaves((leaf) => {
-            const win = this.getWindowForLeaf(leaf);
-            if (win && !win.closed) windows.add(win);
-        });
-        for (const win of windows) {
+        for (const win of this.getOpenWindows()) {
             try {
                 const body = win.document?.body;
                 if (!body) continue;
@@ -607,16 +573,7 @@ export default class NextTabGroupPlugin extends Plugin {
     applyActiveTabColors(): void {
         const { colorActiveTabEnabled, activeTabColorLight, activeTabColorDark } = this.settings;
 
-        const windows = new Set<Window>();
-        const mainWin = this.getMainWindow();
-        if (mainWin && !mainWin.closed) windows.add(mainWin);
-
-        this.app.workspace.iterateAllLeaves((leaf) => {
-            const win = this.getWindowForLeaf(leaf);
-            if (win && !win.closed) windows.add(win);
-        });
-
-        for (const win of windows) {
+        for (const win of this.getOpenWindows()) {
             this.applyActiveTabColorsToWindow(win, colorActiveTabEnabled, activeTabColorLight, activeTabColorDark);
         }
     }
@@ -800,19 +757,8 @@ export default class NextTabGroupPlugin extends Plugin {
             return globalActive;
         }
 
-        let leafInFocusedWindow: WorkspaceLeaf | null = null;
-        this.app.workspace.iterateAllLeaves((leaf) => {
-            if (leafInFocusedWindow) return;
-            if ((leaf as any).detached) return;
-            if (this.isSidebarLeaf(leaf)) return;
-            if (this.getWindowForLeaf(leaf) === activeWindow) {
-                leafInFocusedWindow = leaf;
-            }
-        });
-
-        if (leafInFocusedWindow) {
-            return leafInFocusedWindow;
-        }
+        const inFocusedWindow = this.getEditorLeafLocations().find((loc) => loc.window === activeWindow);
+        if (inFocusedWindow) return inFocusedWindow.leaf;
 
         if (globalActive && !(globalActive as any).detached && !this.isSidebarLeaf(globalActive)) {
             return globalActive;
@@ -914,6 +860,17 @@ export default class NextTabGroupPlugin extends Plugin {
         });
 
         return locations;
+    }
+
+    /** Every open native window: the main window plus each window the model sees. */
+    private getOpenWindows(): Set<Window> {
+        const windows = new Set<Window>();
+        const mainWin = this.getMainWindow();
+        if (mainWin && !mainWin.closed) windows.add(mainWin);
+        for (const { window: win } of this.getEditorLeafLocations()) {
+            if (win && !win.closed) windows.add(win);
+        }
+        return windows;
     }
 
     /**
@@ -1239,6 +1196,25 @@ export default class NextTabGroupPlugin extends Plugin {
         return items.indexOf(bestItem);
     }
 
+    /** Search text for a tab group row: every tab title (representative first), then its location. */
+    private groupSearch(group: TabGroupInfo): JoinedSearch {
+        const rep = group.representative.getDisplayText() || 'Untitled tab';
+        const titles = uniqueTitles([rep, ...group.leaves.map((l) => l.getDisplayText())]);
+        return joinedSearch(titles, this.getTabGroupLocation(group));
+    }
+
+    /** Search text for a window row: every tab title (representative first), then its number and HERE/MAIN. */
+    private windowSearch(item: WindowInfo): JoinedSearch {
+        const rep = item.representative.getDisplayText() || 'Untitled tab';
+        const titles = uniqueTitles([rep, ...item.groups.flatMap((g) => g.leaves.map((l) => l.getDisplayText()))]);
+        const words = [
+            `Window ${getSessionWindowIndex(item)}`,
+            ...(item.isCurrentWindow ? ['here'] : []),
+            ...(item.isMainWindow ? ['main'] : []),
+        ];
+        return joinedSearch(titles, words.join(' '));
+    }
+
     private getTabSearchText(tab: TabInfo): string {
         return `${tab.leaf.getDisplayText()} ${tab.group.label}`;
     }
@@ -1371,12 +1347,11 @@ export default class NextTabGroupPlugin extends Plugin {
         const title = group.representative.getDisplayText() || "Untitled tab";
 
         const location = this.getTabGroupLocation(group);
-        const searchText = location ? `${location} ${title}` : title;
-        const displayOffset = location ? location.length + 1 : 0;
+        const search = this.groupSearch(group);
         const matches = mapFuzzyMatchesToDisplayText(
-            searchText,
+            search.text,
             title,
-            displayOffset,
+            0,
             match?.match.matches ?? [],
         );
 
@@ -1390,6 +1365,7 @@ export default class NextTabGroupPlugin extends Plugin {
         }
 
         this.renderGridRow(el, group.representative, group.window, title, matches, parts.join(" · "), undefined, showWindow);
+        renderJoinedHits(el, search, match?.match.matches ?? []);
     }
 
     private renderWindowSuggestion(
@@ -1404,14 +1380,16 @@ export default class NextTabGroupPlugin extends Plugin {
         // The number badge and the HERE/MAIN pills already identify the
         // window, so no "Main window" / "Pop-out N" text.
 
+        const search = this.windowSearch(item);
         const matches = mapFuzzyMatchesToDisplayText(
-            `${item.label} ${recent}`,
+            search.text,
             recent,
-            item.label.length + 1,
+            0,
             match?.match.matches ?? [],
         );
         const parts = [groupCount];
         this.renderGridRow(el, item.representative, item.window, recent, matches, parts.join(" · "), item, true);
+        renderJoinedHits(el, search, match?.match.matches ?? []);
     }
 
     private renderInGroupTabSuggestion(
@@ -1560,6 +1538,8 @@ export default class NextTabGroupPlugin extends Plugin {
             },
             {
                 getTargets: (chosen) => this.collectHighlightTargets(chosen, currentWinInfo, model.windows),
+                nothingCheckedNotice: 'No windows checked to collect.',
+                windowRing: this.settings.switchLeftRightNavigation ? (wins) => this.getRingWindows(wins) : undefined,
             },
         ).open();
     }
@@ -1607,15 +1587,7 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        let hasLeaves = false;
-        this.app.workspace.iterateAllLeaves((l) => {
-            if (hasLeaves) return;
-            if (this.getWindowForLeaf(l) === win && l.parent && !(l as any).detached) {
-                hasLeaves = true;
-            }
-        });
-
-        if (hasLeaves) return;
+        if (this.getEditorLeafLocations().some((loc) => loc.window === win && loc.group)) return;
 
         // Obsidian's Modal.open() (e.g. the Settings dialog, including the
         // Community plugins tab) attaches to whatever window was active when it
@@ -1766,7 +1738,11 @@ export default class NextTabGroupPlugin extends Plugin {
             }
         }
 
-        if (tabsToMigrate.length === 0) return;
+        if (tabsToMigrate.length === 0) {
+            // Nothing to move is a correct outcome, but a silent no-op reads as a failure.
+            new Notice(this.nothingToCollectMessage(scope, model, scope === 'multi' ? source ?? [] : []));
+            return;
+        }
 
         const targetParent = destLeaf.parent as any;
         if (!targetParent) return;
@@ -1809,6 +1785,21 @@ export default class NextTabGroupPlugin extends Plugin {
             this.logLayout('collectTabs after');
             endCollect();
         }
+    }
+
+    /**
+     * Toast for a Collect tabs run that found nothing to move: terse, and with
+     * several windows it names the windows checked.
+     */
+    private nothingToCollectMessage(
+        scope: 'current' | 'all' | 'multi',
+        model: WorkspaceNavigationModel,
+        checked: WindowInfo[],
+    ): string {
+        if (model.windows.length <= 1) return 'No tabs to collect.';
+        if (scope === 'all') return 'No tabs to collect in any window.';
+        const nums = checked.map((w) => getSessionWindowIndex(w));
+        return `No tabs to collect in window${nums.length === 1 ? '' : 's'} ${nums.join(', ')}.`;
     }
 
     // ------------------------------------------------------------------------
@@ -2068,7 +2059,8 @@ export default class NextTabGroupPlugin extends Plugin {
     private renderConfirmation(
         scope: WorkspaceLeaf[],
         activeLeaf: WorkspaceLeaf | null,
-        removed: WorkspaceLeaf[]
+        removed: WorkspaceLeaf[],
+        model: WorkspaceNavigationModel,
     ): HTMLElement {
         // Multi-window context safety: createElement using activeDocument
         const doc = activeDocument as unknown as Document;
@@ -2084,13 +2076,11 @@ export default class NextTabGroupPlugin extends Plugin {
             : null;
 
         const entries: Array<{ file: string; count: number; parts: string[] }> = [];
-        let totalRemoved = 0;
         const sortedEntries = [...fileGroups.entries()].sort(([a], [b]) => a.localeCompare(b));
         for (const [file, leaves] of sortedEntries) {
             if (leaves.length <= 1) continue;
             const fileRemoved = leaves.filter((l) => removedIds.has(this.getLeafId(l)));
             if (fileRemoved.length === 0) continue;
-            totalRemoved += fileRemoved.length;
 
             const currentWindowTabs: WorkspaceLeaf[] = [];
             const otherWindowTabs: WorkspaceLeaf[] = [];
@@ -2126,12 +2116,22 @@ export default class NextTabGroupPlugin extends Plugin {
                 parts.push(`${otherWindowTabs.length} in ${windowCount} other window${windowCount === 1 ? '' : 's'}`);
             }
 
+            // Say which copy stays, so a window full of duplicates is not
+            // mistaken for one that is about to be closed.
+            const kept = leaves.find((l) => !removedIds.has(this.getLeafId(l)));
+            const keptInfo = kept ? model.windows.find((w) => w.window === this.getWindowForLeaf(kept)) : undefined;
+            if (keptInfo && model.windows.length > 1) {
+                parts.push(`keeps the copy in window ${getSessionWindowIndex(keptInfo)}`);
+            } else if (kept) {
+                parts.push('keeps one copy');
+            }
+
             entries.push({ file, count: fileRemoved.length, parts });
         }
 
         const summary = doc.createElement('p');
         summary.classList.add('ntg-dedupe-summary');
-        summary.textContent = `Will close ${totalRemoved} duplicate tab${totalRemoved === 1 ? '' : 's'} of ${entries.length} note${entries.length === 1 ? '' : 's'}.`;
+        summary.textContent = `Will close ${this.describeClosures(removed, model)}, duplicates of ${entries.length} note${entries.length === 1 ? '' : 's'}. Red outlines in the workspace are closed, green are kept.`;
         root.appendChild(summary);
 
         if (entries.length > 0) {
@@ -2198,9 +2198,9 @@ export default class NextTabGroupPlugin extends Plugin {
         return idx >= 0 ? path.slice(idx + 1) : path;
     }
 
-    private askConfirmation(title: string, body: HTMLElement): Promise<boolean> {
+    private askConfirmation(title: string, body: HTMLElement, targets: HighlightTarget[] = []): Promise<boolean> {
         return new Promise((resolve) => {
-            const modal = new DedupeConfirmModal(this.app, title, body, resolve);
+            const modal = new DedupeConfirmModal(this.app, title, body, resolve, targets);
             modal.open();
         });
     }
@@ -2253,7 +2253,7 @@ export default class NextTabGroupPlugin extends Plugin {
         scopes.push({
             id: 'window',
             kind: 'window',
-            label: currentWin ? `Inside window ${getSessionWindowIndex(currentWin)}` : 'This window',
+            label: 'This window',
             badge: currentWin ? String(getSessionWindowIndex(currentWin)) : 'W',
             winInfo: currentWin,
             leaves: windowLeaves,
@@ -2268,7 +2268,7 @@ export default class NextTabGroupPlugin extends Plugin {
             scopes.push({
                 id: `window:${n}`,
                 kind: 'other-window',
-                label: `Inside window ${n}`,
+                label: `Window ${n}`,
                 badge: String(n),
                 winInfo,
                 leaves: this.getTabsInWindow(model, winInfo.window).map((t) => t.leaf),
@@ -2368,7 +2368,11 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        if (scopes.length === 1) {
+        // One possible action and no confirmation wanted: just do it. When the
+        // user wants to confirm, show the picker even for one action, because
+        // it previews what closes (rows, tab/group outlines, footer) far
+        // better than a plain confirmation dialog.
+        if (scopes.length === 1 && !this.settings[scopes[0].confirmKey]) {
             await this.runDedupeScope(scopes[0], activeLeaf);
             return;
         }
@@ -2393,11 +2397,14 @@ export default class NextTabGroupPlugin extends Plugin {
             return {
                 kind: 'scope' as const,
                 id: scope.id,
-                // The badge and HERE/MAIN pill name the window; the text says what is cleaned.
-                label: scope.kind === 'window' || scope.kind === 'other-window' ? 'All tab groups' : scope.label,
+                // The number badge and HERE/MAIN pill already name the window, so a
+                // window row's text says what it holds instead of repeating its name.
+                label: scope.kind === 'window' || scope.kind === 'other-window' ? this.describeWindowScope(scope) : scope.label,
                 // Enter acts on the first row that would close something.
                 checked: i === Math.max(0, firstNonEmpty),
                 badge: single ? '⧉' : scope.badge,
+                winInfo: scope.kind === 'window' || scope.kind === 'other-window' ? scope.winInfo : undefined,
+                searchTitles: scope.leaves.map((l) => l.getDisplayText()),
                 status,
                 detail: scope.removeCount > 0 ? `${scope.removeCount} to close` : 'no duplicates inside',
                 items: [
@@ -2423,13 +2430,15 @@ export default class NextTabGroupPlugin extends Plugin {
                 scopeRows: rows,
                 getSummary: (chosen) => this.dedupeSummary(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
                 getTargets: (chosen) => this.dedupeHighlightTargets(pickerScopes, chosen.map((c) => ({ id: c.kind === 'scope' ? c.id : '' })), activeLeaf),
-                placeholder: 'Select where to close duplicates',
+                placeholder: 'Choose windows or groups to deduplicate across',
+                nothingCheckedNotice: 'Nothing checked to deduplicate.',
+                windowRing: this.settings.switchLeftRightNavigation ? (wins) => this.getRingWindows(wins) : undefined,
                 actionLabel: 'Deduplicate',
                 commandName: 'deduplicate-tabs',
                 header: {
                     kind: 'dedupe',
                     title: 'Deduplicate tabs',
-                    hint: 'Check where to close duplicates. Red outline = closed, green = kept.',
+                    hint: 'Duplicates are matched across everything checked. Red outline = closed, green = kept.',
                     icon: 'copy-minus',
                 },
             },
@@ -2450,7 +2459,14 @@ export default class NextTabGroupPlugin extends Plugin {
         activeLeaf: WorkspaceLeaf | null,
     ): HighlightTarget[] {
         const ids = new Set(chosen.map((c) => c.id));
-        const plan = this.planDedupe(this.mergeScopeLeaves(scopes.filter((s) => ids.has(s.id))), activeLeaf);
+        return this.dedupePlanTargets(this.planDedupe(this.mergeScopeLeaves(scopes.filter((s) => ids.has(s.id))), activeLeaf));
+    }
+
+    /**
+     * Workspace marks for one dedupe plan, shared by the picker preview and the
+     * confirmation dialog so both show exactly what the action will do.
+     */
+    private dedupePlanTargets(plan: { toRemove: WorkspaceLeaf[]; survivors: WorkspaceLeaf[] } | null): HighlightTarget[] {
         const targets: HighlightTarget[] = [];
         for (const leaf of plan?.toRemove ?? []) {
             if (this.settings.highlightDedupeTabs) {
@@ -2478,46 +2494,53 @@ export default class NextTabGroupPlugin extends Plugin {
     ): string {
         const ids = new Set(chosen.map((c) => c.id));
         const picked = scopes.filter((s) => ids.has(s.id));
+        if (picked.length === 0) return 'Nothing checked.';
         const plan = this.planDedupe(this.mergeScopeLeaves(picked), activeLeaf);
         if (!plan) return 'Nothing to close.';
-        const n = plan.toRemove.length;
-        const { groups, windows } = this.dedupeEmptied(plan.toRemove);
-        // Obsidian closes a tab group once its last tab is gone, and a pop-out
-        // window once its last tab group is gone. Only mention nonzero counts.
-        const closes = [
+        return `Enter closes ${this.describeClosures(plan.toRemove, this.buildNavigationModel(activeLeaf))}`;
+    }
+
+    /**
+     * "3 tabs, 1 tab group, 1 window": everything that disappears when
+     * `toRemove` is detached. Obsidian closes a tab group once its last tab is
+     * gone, and a pop-out window once its last tab group is gone. Only nonzero
+     * group/window counts are mentioned.
+     */
+    private describeClosures(toRemove: WorkspaceLeaf[], model: WorkspaceNavigationModel): string {
+        const n = toRemove.length;
+        const { groups, windows } = this.dedupeEmptied(toRemove, model);
+        return [
             `${n} tab${n === 1 ? '' : 's'}`,
             ...(groups > 0 ? [`${groups} tab group${groups === 1 ? '' : 's'}`] : []),
             ...(windows > 0 ? [`${windows} window${windows === 1 ? '' : 's'}`] : []),
         ].join(', ');
-        return `Enter closes ${closes}`;
     }
 
     /**
      * How many tab groups and pop-out windows end up empty (and so are closed
      * by Obsidian) once `toRemove` is detached. The main window is never closed.
      */
-    private dedupeEmptied(toRemove: WorkspaceLeaf[]): { groups: number; windows: number } {
+    private dedupeEmptied(
+        toRemove: WorkspaceLeaf[],
+        model: WorkspaceNavigationModel = this.buildNavigationModel(null),
+    ): { groups: number; windows: number } {
         const removing = new Set(toRemove);
-        const left = new Map<unknown, number>();
-        const winLeft = new Map<Window | undefined, number>();
-        this.app.workspace.iterateAllLeaves((leaf) => {
-            if ((leaf as any).detached || this.isSidebarLeaf(leaf)) return;
-            const keep = removing.has(leaf) ? 0 : 1;
-            left.set(leaf.parent, (left.get(leaf.parent) ?? 0) + keep);
-            const win = this.getWindowForLeaf(leaf);
-            winLeft.set(win, (winLeft.get(win) ?? 0) + keep);
-        });
-        const emptiedGroups = new Set<unknown>();
-        const touchedWindows = new Set<Window | undefined>();
-        for (const leaf of toRemove) {
-            if (left.get(leaf.parent) === 0) emptiedGroups.add(leaf.parent);
-            touchedWindows.add(this.getWindowForLeaf(leaf));
-        }
-        const mainWindow = this.getMainWindow();
-        const windows = [...touchedWindows].filter(
-            (w) => w && w !== mainWindow && w !== window && winLeft.get(w) === 0,
+        // The model's (window, parent) groups and its windows are the only
+        // arrangement used here; no separate workspace scan.
+        const emptied = model.groups.filter((g) => g.leaves.every((l) => removing.has(l)));
+        const emptiedSet = new Set(emptied);
+        const windows = model.windows.filter(
+            (w) => !w.isMainWindow && w.groups.every((g) => emptiedSet.has(g)),
         ).length;
-        return { groups: emptiedGroups.size, windows };
+        return { groups: emptied.length, windows };
+    }
+
+    /** "5 tabs in 2 tab groups" for a window row; the badge/pill give the window's identity. */
+    private describeWindowScope(scope: DedupeScope): string {
+        const tabs = scope.leaves.length;
+        const groups = scope.winInfo?.groups.length ?? 0;
+        const tabText = `${tabs} tab${tabs === 1 ? '' : 's'}`;
+        return groups > 0 ? `${tabText} in ${groups} tab group${groups === 1 ? '' : 's'}` : tabText;
     }
 
     private mergeScopeLeaves(chosen: DedupeScope[]): WorkspaceLeaf[] {
@@ -2560,7 +2583,12 @@ export default class NextTabGroupPlugin extends Plugin {
         if (!plan) return;
 
         if (confirm) {
-            const ok = await this.askConfirmation(title, this.renderConfirmation(leaves, activeLeaf, plan.toRemove));
+            const model = this.buildNavigationModel(activeLeaf);
+            const ok = await this.askConfirmation(
+                title,
+                this.renderConfirmation(leaves, activeLeaf, plan.toRemove, model),
+                this.dedupePlanTargets(plan),
+            );
             if (!ok) return;
         }
 
@@ -2765,11 +2793,8 @@ export default class NextTabGroupPlugin extends Plugin {
             this.app,
             orderedGroups,
             "Select a tab group",
-            (group) => {
-                const title = group.representative.getDisplayText() || "Untitled tab";
-                const location = this.getTabGroupLocation(group);
-                return location ? `${location} ${title}` : title;
-            },            (group) => this.activateTabGroup(group.group, group.representative),
+            (group) => this.groupSearch(group).text,
+            (group) => this.activateTabGroup(group.group, group.representative),
             (group, el, match) => this.renderTabGroupSuggestion(group, el, windowLabels, showGroup, multipleWindows, match),
             this.firstNonActiveIndex(
                 orderedGroups,
@@ -2925,7 +2950,7 @@ export default class NextTabGroupPlugin extends Plugin {
             this.app,
             windows,
             "Select a window",
-            (item) => `${item.label} ${item.representative.getDisplayText()}`,
+            (item) => this.windowSearch(item).text,
             (item) => this.focusLeafAndWindow(item.representative),
             (item, el, match) => this.renderWindowSuggestion(item, el, match),
             this.firstNonActiveIndex(
@@ -2955,8 +2980,15 @@ class DedupeConfirmModal extends Modal {
     private readonly resolve: (ok: boolean) => void;
     private settled = false;
     private stopEscape?: () => void;
+    private readonly highlighter = new TargetHighlighter();
 
-    constructor(app: App, title: string, body: HTMLElement, resolve: (ok: boolean) => void) {
+    constructor(
+        app: App,
+        title: string,
+        body: HTMLElement,
+        resolve: (ok: boolean) => void,
+        private readonly targets: HighlightTarget[] = [],
+    ) {
         super(app);
         this.title = title;
         this.body = body;
@@ -2964,6 +2996,9 @@ class DedupeConfirmModal extends Modal {
     }
 
     onOpen() {
+        // Outline, in the workspace, the tabs/groups that will close and the
+        // copy that stays, exactly as the Deduplicate picker does.
+        this.highlighter.set(this.targets);
         this.titleEl.setText(this.title);
         this.contentEl.empty();
         this.contentEl.classList.add('ntg-dedupe-modal');
@@ -3004,6 +3039,7 @@ class DedupeConfirmModal extends Modal {
     onClose() {
         this.stopEscape?.();
         this.stopEscape = undefined;
+        this.highlighter.clear();
         this.settle(false);
         super.onClose();
     }

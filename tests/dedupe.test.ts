@@ -5,6 +5,7 @@ import { CollectTabsModal } from '../src/ui/collect-tabs-modal';
 import {
     MockApp,
     MockModal,
+    MockNotice,
     MockPlugin,
     MockPluginSettingTab,
     MockSetting,
@@ -473,6 +474,11 @@ describe('deduplication commands', () => {
             expect(rows.map((r) => r.label)).toEqual(
                 expect.arrayContaining(['Across all windows']),
             );
+            // The number badge and HERE/MAIN pill name a window, so window rows
+            // describe their contents and never repeat "Window N" / "This window".
+            for (const r of rows.filter((x) => x.id === 'window' || x.id.startsWith('window:'))) {
+                expect(r.label).toMatch(/^\d+ tabs? in \d+ tab groups?$/);
+            }
             const other = rows.find((r) => r.id.startsWith('window:'))!;
             expect(other.detail).toBe('no duplicates inside');
             // one closing tab + one kept tab per row; all windows closes 2 and keeps 2.
@@ -491,7 +497,89 @@ describe('deduplication commands', () => {
             expect(active.detached).toBe(false);
             expect([b1.detached, b2.detached].filter(Boolean)).toHaveLength(1);
         });
-        it('deduplicates the union of all checked scopes', async () => {
+        it('shows the previewing picker, not a plain confirmation, when only one action exists but confirmation is on', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(windowContainer);
+            const active = leaf('a', 'Note-A.md', g1, rootContainer);
+            const other = leaf('b', 'Note-B.md', g1, rootContainer);
+            // The only duplicate spans two windows, so only "Across all windows" closes anything.
+            const crossDup = leaf('d', 'Note-A.md', g2, windowContainer);
+            const keepB = leaf('e', 'Note-C.md', g2, windowContainer);
+            setup([active, other, crossDup, keepB], active, [active, other]);
+            plugin.settings.confirmDedupeAllWindows = true;
+
+            await plugin.runDedupeTabs();
+            expect(modals).toHaveLength(1);
+            const rows = modals[0].getSuggestions('').filter((r) => r.kind === 'scope');
+            expect(rows.find((r) => r.id === 'all')!.items!.filter((i) => i.kind === 'close')).toHaveLength(1);
+        });
+        it('Left/Right walk the window rows in space, and group/all rows enter at the current window', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(windowContainer);
+            const active = leaf('a', 'Note-A.md', g1, rootContainer);
+            const b1 = leaf('b', 'Note-B.md', g1, rootContainer);
+            const b2 = leaf('c', 'Note-B.md', g1, rootContainer);
+            const crossDup = leaf('d', 'Note-A.md', g2, windowContainer);
+            setup([active, b1, b2, crossDup], active, [active, b1, b2]);
+
+            await plugin.runDedupeTabs();
+            const modal = modals[0];
+            const rows = modal.getSuggestions('');
+            const winRows = rows.filter((r) => r.kind === 'scope' && r.winInfo);
+            expect(winRows.length).toBeGreaterThanOrEqual(2);
+            const here = winRows.find((r) => r.kind === 'scope' && r.winInfo!.isCurrentWindow)!;
+            const there = winRows.find((r) => r !== here)!;
+            expect(modal.windowNeighbor(here, 1)).toBe(there);
+            expect(modal.windowNeighbor(there, 1)).toBe(here);
+            expect(modal.windowNeighbor(rows.find((r) => r.kind === 'scope' && r.id === 'all')!, 1)).toBe(here);
+            // The ring (which enables the Left/Right keys on open) is supplied by default.
+            expect((modal as any).windowRing).toBeTypeOf('function');
+        });
+        it('the filter finds rows by note name, window number and here/main, never by count text', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const g2 = new MockWorkspaceParent(windowContainer);
+            const active = leaf('a', 'Note-A.md', g1, rootContainer);
+            const b1 = leaf('b', 'Note-B.md', g1, rootContainer);
+            const b2 = leaf('c', 'Note-B.md', g1, rootContainer);
+            const crossDup = leaf('d', 'Note-A.md', g2, windowContainer);
+            const onlyThere = leaf('e', 'Zebra.md', g2, windowContainer);
+            setup([active, b1, b2, crossDup, onlyThere], active, [active, b1, b2]);
+
+            await plugin.runDedupeTabs();
+            const modal = modals[0];
+            const ids = (q: string) => modal.getSuggestions(q).map((r) => (r.kind === 'scope' ? r.id : r.kind));
+
+            // A note that lives only in the other window is found, and only that window row (and the all-windows scope).
+            expect(ids('zebra')).toContain('all');
+            expect(ids('zebra').filter((id) => id.startsWith('window:'))).toHaveLength(1);
+            expect(ids('zebra')).not.toContain('window');
+            // Count text such as "2 tabs in 1 tab group" is not searchable.
+            expect(ids('tab groups')).not.toContain('window');
+            expect(ids('tab groups').filter((id) => id.startsWith('window:'))).toHaveLength(0);
+            // here / main find the current window's row.
+            expect(ids('here')).toContain('window');
+            // Words in any order.
+            expect(ids('b note')).toContain('window');
+        });
+        it('does nothing but explain when no row is checked, even with a row highlighted', async () => {
+            const g1 = new MockWorkspaceParent(rootContainer);
+            const keep = leaf('a', 'Note-A.md', g1, rootContainer);
+            const dup = leaf('b', 'Note-A.md', g1, rootContainer);
+            const x1 = leaf('c', 'Note-X.md', g1, rootContainer);
+            const x2 = leaf('d', 'Note-X.md', new MockWorkspaceParent(rootContainer), rootContainer);
+            setup([keep, dup, x1, x2], keep);
+
+            await plugin.runDedupeTabs();
+            const modal = modals[0];
+            modal.clearSelection();
+            modal.setHighlightedIndex(0);
+            MockNotice.notices = [];
+            modal.executeCollection();
+            await new Promise((r) => setTimeout(r, 0));
+
+            expect(MockNotice.notices.map((n) => n.message)).toEqual(['Nothing checked to deduplicate.']);
+            expect([keep, dup, x1, x2].some((l) => l.detached)).toBe(false);
+        });        it('deduplicates the union of all checked scopes', async () => {
             const g1 = new MockWorkspaceParent(rootContainer);
             const g2 = new MockWorkspaceParent(rootContainer);
             const keep = leaf('a', 'Note-A.md', g1, rootContainer);

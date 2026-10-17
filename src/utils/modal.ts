@@ -56,6 +56,35 @@ export function mapFuzzyMatchesToDisplayText(
         .filter((m): m is number[] => m !== null);
 }
 
+/**
+ * Helper utility to break a string down by matching index pairs
+ * and render bolded/highlighted HTML elements natively.
+ */
+export function renderHighlightedText(parentEl: HTMLElement, text: string, matches: number[][]): void {
+    if (!matches || matches.length === 0) {
+        parentEl.setText(text);
+        return;
+    }
+
+    let lastIndex = 0;
+    for (const [start, end] of matches) {
+        // Append unmatched prefix string segment
+        if (start > lastIndex) {
+            parentEl.createSpan().setText(text.slice(lastIndex, start));
+        }
+        // Append highlighted match segment
+        const highlightSpan = parentEl.createSpan({ cls: 'suggestion-highlight' });
+        highlightSpan.setText(text.slice(start, end));
+
+        lastIndex = end;
+    }
+
+    // Append trailing leftover text segment
+    if (lastIndex < text.length) {
+        parentEl.createSpan().setText(text.slice(lastIndex));
+    }
+}
+
 export interface EmacsMotionOptions {
     /**
      * Returns the item to the left (-1) or right (+1) of the given item, or
@@ -63,6 +92,16 @@ export interface EmacsMotionOptions {
      * select that item while the search box is empty.
      */
     neighbor?: (item: unknown, direction: -1 | 1) => unknown | null;
+    /**
+     * For modals that own their cursor (AGENTS.md rule 7): read the current
+     * item and move the cursor through these instead of Obsidian's private
+     * chooser.selectedItem. Both must be given together with 
+eighbor.
+     */
+    cursor?: {
+        current: () => unknown;
+        select: (item: unknown) => void;
+    };
 }
 
 /**
@@ -74,7 +113,15 @@ function selectNeighbor(
     modal: SuggestModal<unknown>,
     neighbor: NonNullable<EmacsMotionOptions['neighbor']>,
     direction: -1 | 1,
+    cursor?: EmacsMotionOptions['cursor'],
 ): boolean {
+    if (cursor) {
+        const currentItem = cursor.current();
+        if (currentItem === undefined) return false;
+        const target = neighbor(currentItem, direction);
+        if (target !== null && target !== undefined) cursor.select(target);
+        return true;
+    }
     const chooser = getChooser(modal);
     if (!chooser || typeof chooser.setSelectedItem !== 'function' || !Array.isArray(chooser.values)) {
         return false;
@@ -116,7 +163,7 @@ export function registerEmacsMotionKeys(
             return false;
         }
         try {
-            return selectNeighbor(modal, options.neighbor, direction);
+            return selectNeighbor(modal, options.neighbor, direction, options.cursor);
         } catch {
             return false;
         }
