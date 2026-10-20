@@ -7,7 +7,7 @@ import {
     Setting,
     WorkspaceLeaf,
 } from 'obsidian';
-import type { App, WorkspaceParent } from 'obsidian';
+import type { App, SettingDefinitionItem, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
 import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, renderHighlightedText, addPickerHeader, closeOnEscapeFromOtherWindows, type PickerHeader } from './src/utils/modal';
 import type { CollectChoice } from './src/ui/collect-tabs-modal';
@@ -17,6 +17,12 @@ import { joinedSearch, renderJoinedHits, uniqueTitles, type JoinedSearch } from 
 import type { ScopeChoice } from './src/ui/collect-tabs-modal';
 import { DiagLog, FreezeWatchdog, summarizeLayout } from './src/utils/diagnostics';
 import { dirname, join } from 'path';
+import { ringOrder, windowScreenRect, cyclicNeighbor, type Rect } from 'commons/geometry';
+import * as kit from 'commons/workspace';
+import { neighborInTabStrip } from 'commons/workspace';
+
+export { ringOrder, windowScreenRect, cyclicNeighbor, neighborInTabStrip };
+export type { Rect };
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -65,127 +71,6 @@ const DEFAULT_SETTINGS: NextTabGroupSettings = {
     // is empty.
     switchLeftRightNavigation: true,
 };
-
-/**
- * Returns the item whose leaf sits immediately left (-1) or right (+1) of the
- * given item's leaf in the same tab group's tab strip, or null at an edge or
- * when the neighbor is not among the picker's items.
- */
-export function neighborInTabStrip<T>(
-    items: T[],
-    getLeaf: (item: T) => WorkspaceLeaf,
-    item: T,
-    direction: -1 | 1,
-): T | null {
-    const leaf = getLeaf(item);
-    const siblings = (leaf.parent as unknown as { children?: unknown[] } | null)?.children;
-    if (!Array.isArray(siblings)) return null;
-    const at = siblings.indexOf(leaf);
-    if (at < 0) return null;
-    // Walk the strip in the given direction, wrapping at the ends, until a
-    // sibling that is one of the picker's items turns up.
-    const n = siblings.length;
-    for (let step = 1; step < n; step++) {
-        const candidateLeaf = siblings[(at + direction * step + n * step) % n];
-        const match = items.find((candidate) => getLeaf(candidate) === candidateLeaf);
-        if (match !== undefined) return match;
-    }
-    return null;
-}
-
-export interface Rect { x: number; y: number; w: number; h: number }
-
-/**
- * The one shared ring: orders items clockwise on screen. Used by Rotate tab
- * groups' sense of direction, Next/Previous tab group, and the Left/Right keys
- * of the group and window pickers.
- *
- * - The ring's center is the center of the bounding box of all rectangles.
- * - Items touching the bounding box's edge come first, sorted by the angle of
- *   their centers around that center (screen y grows downward, so increasing
- *   atan2 is clockwise); interior items follow in the same way, so the order is
- *   a clockwise spiral.
- * - When any rectangle is unknown, or two rectangles overlap heavily (stacked
- *   windows), geometry is meaningless and `fallback` gives a stable order.
- */
-export function ringOrder<T>(
-    items: T[],
-    rect: (item: T) => Rect | null,
-    fallback: (a: T, b: T) => number,
-): T[] {
-    const stable = () => [...items].sort(fallback);
-    const entries = items.map((item) => ({ item, r: rect(item) }));
-    if (entries.some((e) => !e.r || ![e.r.x, e.r.y, e.r.w, e.r.h].every(Number.isFinite))) return stable();
-    if (entries.length < 2) return stable();
-    const rs = entries.map((e) => e.r!);
-    for (let i = 0; i < rs.length; i++) {
-        for (let j = i + 1; j < rs.length; j++) {
-            const a = rs[i];
-            const b = rs[j];
-            const ow = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-            const oh = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-            if (ow > 0 && oh > 0 && ow * oh > 0.5 * Math.min(a.w * a.h, b.w * b.h)) return stable();
-        }
-    }
-    const minX = Math.min(...rs.map((r) => r.x));
-    const minY = Math.min(...rs.map((r) => r.y));
-    const maxX = Math.max(...rs.map((r) => r.x + r.w));
-    const maxY = Math.max(...rs.map((r) => r.y + r.h));
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    const tol = Math.min(10, 0.05 * Math.min(maxX - minX, maxY - minY));
-    const keyed = entries.map((e) => {
-        const r = e.r!;
-        const px = r.x + r.w / 2;
-        const py = r.y + r.h / 2;
-        return {
-            item: e.item,
-            px,
-            py,
-            angle: Math.atan2(py - cy, px - cx),
-            edge: r.x <= minX + tol || r.y <= minY + tol || r.x + r.w >= maxX - tol || r.y + r.h >= maxY - tol,
-        };
-    });
-    keyed.sort((a, b) => {
-        if (a.edge !== b.edge) return a.edge ? -1 : 1;
-        const d = a.angle - b.angle;
-        if (Math.abs(d) > 1e-9) return d;
-        return a.px - b.px || a.py - b.py;
-    });
-    // Cyclic order is fixed by the sort; start the edge ring at its top-left
-    // item so "first" is the reading-order start.
-    const edgeCount = keyed.filter((k) => k.edge).length;
-    let start = 0;
-    let best = Infinity;
-    for (let i = 0; i < edgeCount; i++) {
-        const score = keyed[i].px - cx + (keyed[i].py - cy);
-        if (score < best - 1e-9) {
-            best = score;
-            start = i;
-        }
-    }
-    const ring = [...keyed.slice(start, edgeCount), ...keyed.slice(0, start), ...keyed.slice(edgeCount)];
-    return ring.map((k) => k.item);
-}
-
-/** Screen rectangle of a native window, or null when it is unknown. */
-export function windowScreenRect(win: Window | undefined): Rect | null {
-    if (!win) return null;
-    const w = win as unknown as { screenX?: number; screenY?: number; outerWidth?: number; outerHeight?: number };
-    if (![w.screenX, w.screenY, w.outerWidth, w.outerHeight].every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
-    return { x: w.screenX!, y: w.screenY!, w: w.outerWidth!, h: w.outerHeight! };
-}
-/**
- * Returns the item `direction` steps (-1/+1) after `item` in `ordered`,
- * wrapping at the ends (the way cycling tab groups does), or null when there
- * is nowhere else to go. Used for the spatial Left/Right keys of the group
- * and window pickers: Right is forward ("clockwise"), Left is backward.
- */
-export function cyclicNeighbor<T>(ordered: T[], item: T, direction: -1 | 1): T | null {
-    const at = ordered.indexOf(item);
-    if (at < 0 || ordered.length < 2) return null;
-    return ordered[(at + direction + ordered.length) % ordered.length];
-}
 
 // ---------------------------------------------------------------------------
 // Internal Obsidian structures not exposed in the public API
@@ -600,34 +485,11 @@ export default class NextTabGroupPlugin extends Plugin {
      * Activates a leaf and guarantees OS-level window focus.
      */
     private focusLeafAndWindow(leaf: WorkspaceLeaf): void {
-        if (!leaf || (leaf as any).detached) return;
-        const targetWin = this.getWindowForLeaf(leaf);
-        this.app.workspace.setActiveLeaf(leaf, { focus: true });
-
-        if (
-            targetWin &&
-            !targetWin.closed &&
-            typeof activeWindow !== 'undefined' &&
-            targetWin !== activeWindow &&
-            typeof targetWin.focus === 'function'
-        ) {
-            try {
-                targetWin.focus();
-            } catch {
-                // Focus failed on closed or destroyed window
-            }
-        }
+        kit.focusLeafAndWindow(this.app, leaf);
     }
 
     private isLeafAttached(leaf: WorkspaceLeaf): boolean {
-        if (!leaf || (leaf as any).detached || !leaf.parent) return false;
-        const win = this.getWindowForLeaf(leaf);
-        if (!win || win.closed) return false;
-        const children = (leaf.parent as any).children;
-        if (Array.isArray(children) && !children.includes(leaf)) {
-            return false;
-        }
-        return true;
+        return kit.isLeafAttached(leaf);
     }
 
     private pruneTabGroupActiveLeaves(): void {
@@ -672,40 +534,11 @@ export default class NextTabGroupPlugin extends Plugin {
     // ------------------------------------------------------------------------
 
     private getMainWindow(): Window {
-        try {
-            const root = (this.app.workspace as any).rootSplit;
-            if (root?.win && !root.win.closed) {
-                return root.win;
-            }
-            const doc = this.app.workspace.containerEl?.ownerDocument;
-            const win = doc?.defaultView ?? (typeof window !== 'undefined' ? window : ({} as Window));
-            if (win && !win.closed) {
-                return win;
-            }
-        } catch {
-            // fall through
-        }
-        return (typeof window !== 'undefined' ? window : ({} as Window));
+        return kit.getMainWindow(this.app) ?? (typeof window !== 'undefined' ? window : ({} as Window));
     }
 
     private isMainLeaf(leaf: WorkspaceLeaf | null): boolean {
-        if (!leaf || (leaf as any).detached) return false;
-        if (typeof leaf.getRoot === 'function') {
-            const root = leaf.getRoot();
-            if (root && root === (this.app.workspace as any).rootSplit) {
-                return true;
-            }
-        }
-        if (typeof leaf.getContainer === 'function') {
-            const container = leaf.getContainer() as any;
-            if (container && container.winType === 'root') {
-                return true;
-            }
-        }
-        const win = this.getWindowForLeaf(leaf);
-        if (!win || win.closed) return false;
-        const mainWin = this.getMainWindow();
-        return win === mainWin;
+        return kit.isMainLeaf(this.app, leaf);
     }
 
     /**
@@ -714,27 +547,7 @@ export default class NextTabGroupPlugin extends Plugin {
     private getWindowForLeaf(
         leaf: WorkspaceLeaf | null,
     ): Window | undefined {
-        if (!leaf || (leaf as any).detached) return undefined;
-        try {
-            const container = leaf.getContainer?.() as any;
-            const leafAny = leaf as any;
-            const win: Window | undefined =
-                container?.win ??
-                container?.doc?.defaultView ??
-                container?.containerEl?.win ??
-                container?.containerEl?.ownerDocument?.defaultView ??
-                leafAny.containerEl?.win ??
-                leafAny.containerEl?.ownerDocument?.defaultView ??
-                leafAny.view?.containerEl?.win ??
-                leafAny.view?.containerEl?.ownerDocument?.defaultView;
-
-            if (win && !win.closed) {
-                return win;
-            }
-        } catch {
-            // Window or container in detached/closing state
-        }
-        return undefined;
+        return kit.getWindowForLeaf(leaf);
     }
 
     /**
@@ -742,29 +555,7 @@ export default class NextTabGroupPlugin extends Plugin {
      * app.workspace.activeLeaf when the focused window cannot be determined.
      */
     private getActiveLeafInFocusedWindow(): WorkspaceLeaf | null {
-        const globalActive = this.app.workspace.activeLeaf;
-
-        if (typeof activeWindow === 'undefined' || activeWindow === undefined) {
-            return globalActive && !this.isSidebarLeaf(globalActive) && !(globalActive as any).detached ? globalActive : null;
-        }
-
-        if (
-            globalActive &&
-            !(globalActive as any).detached &&
-            this.getWindowForLeaf(globalActive) === activeWindow &&
-            !this.isSidebarLeaf(globalActive)
-        ) {
-            return globalActive;
-        }
-
-        const inFocusedWindow = this.getEditorLeafLocations().find((loc) => loc.window === activeWindow);
-        if (inFocusedWindow) return inFocusedWindow.leaf;
-
-        if (globalActive && !(globalActive as any).detached && !this.isSidebarLeaf(globalActive)) {
-            return globalActive;
-        }
-
-        return null;
+        return kit.getActiveLeafInFocusedWindow(this.app);
     }
 
 
@@ -826,12 +617,7 @@ export default class NextTabGroupPlugin extends Plugin {
      * the main `WorkspaceRoot`.
      */
     private isSidebarLeaf(leaf: WorkspaceLeaf): boolean {
-        const root = leaf.getRoot();
-        const ws = this.app.workspace as unknown as {
-            leftSplit?: unknown;
-            rightSplit?: unknown;
-        };
-        return root === ws.leftSplit || root === ws.rightSplit;
+        return kit.isSidebarLeaf(this.app, leaf);
     }
 
     /**
@@ -843,34 +629,12 @@ export default class NextTabGroupPlugin extends Plugin {
      * include pop-outs.
      */
     private getEditorLeafLocations(): LeafLocation[] {
-        const locations: LeafLocation[] = [];
-
-        this.app.workspace.iterateAllLeaves((leaf) => {
-            if (!leaf || (leaf as any).detached) return;
-            if (this.isSidebarLeaf(leaf)) return;
-
-            const win = this.getWindowForLeaf(leaf);
-            if (!win || win.closed) return;
-
-            locations.push({
-                leaf,
-                window: win,
-                group: leaf.parent ?? null,
-            });
-        });
-
-        return locations;
+        return kit.getEditorLeafLocations(this.app);
     }
 
     /** Every open native window: the main window plus each window the model sees. */
     private getOpenWindows(): Set<Window> {
-        const windows = new Set<Window>();
-        const mainWin = this.getMainWindow();
-        if (mainWin && !mainWin.closed) windows.add(mainWin);
-        for (const { window: win } of this.getEditorLeafLocations()) {
-            if (win && !win.closed) windows.add(win);
-        }
-        return windows;
+        return kit.getOpenWindows(this.app);
     }
 
     /**
@@ -1582,57 +1346,8 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     private closePopoutWindowIfEmpty(win: Window): void {
-        const mainWindow = this.getMainWindow();
-        if (!win || win === mainWindow || win === window || win.closed) {
-            return;
-        }
-
-        if (this.getEditorLeafLocations().some((loc) => loc.window === win && loc.group)) return;
-
-        // Obsidian's Modal.open() (e.g. the Settings dialog, including the
-        // Community plugins tab) attaches to whatever window was active when it
-        // was opened -- not necessarily the main window. A modal is not a
-        // WorkspaceLeaf, so the hasLeaves check above cannot see it. Closing a
-        // popout window out from under an open modal tears down that window's
-        // document mid-render, which can leave the modal's renderer hung with a
-        // blank/frozen window. Skip closing if this window still has an open
-        // modal; it will naturally become eligible again once the modal closes.
-        try {
-            if (win.document?.body?.querySelector('.modal-container')) {
-                return;
-            }
-        } catch {
-            // window/document already torn down; fall through to the close attempts below
-        }
-
-        this.diag.log('STEP', 'closing popout window');
-        try {
-            const floating = (this.app.workspace as any).floatingSplit?.children ?? [];
-            for (const child of floating) {
-                const childWin =
-                    child?.win ??
-                    child?.getContainer?.()?.win ??
-                    child?.doc?.defaultView ??
-                    child?.containerEl?.win ??
-                    child?.containerEl?.ownerDocument?.defaultView;
-
-                if (childWin === win) {
-                    if (typeof child.close === 'function') {
-                        child.close();
-                        return;
-                    }
-                }
-            }
-        } catch {
-            // private API access failed or unavailable
-        }
-
-        try {
-            if (typeof win.close === 'function') {
-                win.close();
-            }
-        } catch {
-            // ignore
+        if (kit.closePopoutWindowIfEmpty(this.app, win)) {
+            this.diag.log('STEP', 'closing popout window');
         }
     }
 
@@ -1928,23 +1643,11 @@ export default class NextTabGroupPlugin extends Plugin {
      * are never considered duplicates.
      */
     private getLeafFileKey(leaf: WorkspaceLeaf): string | null {
-        const view = leaf.view;
-        if (view && typeof (view as { file?: unknown }).file !== 'undefined') {
-            const file = (view as { file?: { path?: string } | null }).file;
-            if (file && typeof file.path === 'string') {
-                return file.path;
-            }
-        }
-        const vs = leaf.getViewState();
-        const file = (vs.state as Record<string, unknown> | undefined)?.['file'];
-        if (typeof file === 'string' && file.length > 0) {
-            return file;
-        }
-        return null;
+        return kit.getLeafFileKey(leaf);
     }
 
     private getLeafId(leaf: WorkspaceLeaf): string {
-        return (leaf as WorkspaceLeafInternal).id ?? '';
+        return kit.getLeafId(leaf);
     }
 
     private getLeafLastActive(leaf: WorkspaceLeaf): number {
@@ -2160,19 +1863,7 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     private getTabGroupRect(tabGroup: WorkspaceContainerEl | null): { x: number; y: number; w: number; h: number } | null {
-        if (!tabGroup) return null;
-        try {
-            const el = tabGroup.containerEl;
-            if (el && el.instanceOf(HTMLElement)) {
-                const rect = el.getBoundingClientRect();
-                if (rect.width > 0 && rect.height > 0) {
-                    return { x: rect.left, y: rect.top, w: rect.width, h: rect.height };
-                }
-            }
-        } catch {
-            // fall through
-        }
-        return null;
+        return kit.getGroupRect(tabGroup);
     }
 
     private relativePosition(
@@ -3239,7 +2930,18 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
         // Handled by getSettingDefinitions() in Obsidian 1.13+
     }
 
-    getSettingDefinitions() {
+    /**
+     * Obsidian 1.14 removed per-control onChange; every control change now goes
+     * through setControlValue. Re-apply the active-tab colors when one of theirs changes.
+     */
+    async setControlValue(key: string, value: unknown): Promise<void> {
+        await super.setControlValue(key, value);
+        if (key === 'colorActiveTabEnabled' || key === 'activeTabColorLight' || key === 'activeTabColorDark') {
+            this.plugin.applyActiveTabColors();
+        }
+    }
+
+    getSettingDefinitions(): SettingDefinitionItem[] {
         return [
             {
                 type: 'group',
@@ -3303,9 +3005,6 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
                         control: {
                             type: 'toggle',
                             key: 'colorActiveTabEnabled',
-                            onChange: () => {
-                                this.plugin.applyActiveTabColors();
-                            },
                         },
                     },
                     {
@@ -3314,9 +3013,6 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
                         control: {
                             type: 'color',
                             key: 'activeTabColorLight',
-                            onChange: () => {
-                                this.plugin.applyActiveTabColors();
-                            },
                         },
                     },
                     {
@@ -3325,9 +3021,6 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
                         control: {
                             type: 'color',
                             key: 'activeTabColorDark',
-                            onChange: () => {
-                                this.plugin.applyActiveTabColors();
-                            },
                         },
                     },
                     {

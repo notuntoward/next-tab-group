@@ -41,7 +41,7 @@ describe('NextTabGroupSettingTab getSettingDefinitions', () => {
         expect(switchItems[1].control.type).toBe('toggle');
     });
 
-    it('handles active tab color visibility predicate and onChange callbacks', () => {
+    it('handles active tab color visibility predicate and re-applies colors on control changes', async () => {
         const app = new MockApp();
         const plugin = new NextTabGroupPlugin(app as any, {} as any);
         const applySpy = vi.spyOn(plugin, 'applyActiveTabColors').mockImplementation(() => {});
@@ -75,14 +75,17 @@ describe('NextTabGroupSettingTab getSettingDefinitions', () => {
         expect(lightPicker.visible()).toBe(true);
         expect(darkPicker.visible()).toBe(true);
 
-        // Test onChange callbacks
-        enableToggle.control.onChange();
+        // Obsidian 1.14 has no per-control onChange: changes arrive via setControlValue.
+        await settingTab.setControlValue('colorActiveTabEnabled', true);
         expect(applySpy).toHaveBeenCalledTimes(1);
 
-        lightPicker.control.onChange();
+        await settingTab.setControlValue('activeTabColorLight', '#ffffff');
         expect(applySpy).toHaveBeenCalledTimes(2);
 
-        darkPicker.control.onChange();
+        await settingTab.setControlValue('activeTabColorDark', '#000000');
+        expect(applySpy).toHaveBeenCalledTimes(3);
+
+        await settingTab.setControlValue('confirmDedupeGroup', true);
         expect(applySpy).toHaveBeenCalledTimes(3);
     });
 });

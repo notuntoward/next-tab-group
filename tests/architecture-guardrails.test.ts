@@ -62,31 +62,21 @@ describe('Architecture guardrails: workspace/leaf lifecycle safety', () => {
         }
     });
 
-    it('closePopoutWindowIfEmpty checks for an open modal before closing a window', () => {
-        // History: a popout window can have no WorkspaceLeaf left in it while
-        // still hosting an open Obsidian Modal (e.g. Settings / Community
-        // plugins), because Modal.open() attaches to whichever window was
-        // active when it was opened, not necessarily the main window. Closing
-        // the window out from under that modal tears down its document
-        // mid-render and leaves a blank, unresponsive window behind. See the
-        // commit that introduced this check for the concrete repro.
+    it('closePopoutWindowIfEmpty delegates to commons, which owns the modal-container and win.closed guards', () => {
+        // History: (1) a popout with no leaf left can still host an open Modal
+        // (Settings / Community plugins) because Modal.open() attaches to the
+        // window that was active, so closing it tears the document down
+        // mid-render. (2) a "double-closing race condition" (commit 97bfc70)
+        // force-closed a window a second time. Both guards now live in
+        // commons/workspace closePopoutWindowIfEmpty and are tested in the
+        // commons repo (tests/workspace.test.ts). This plugin must not grow its
+        // own close logic again.
         const fnMatch = mainTsSource.match(
             /private closePopoutWindowIfEmpty\(win: Window\): void \{[\s\S]*?\n    \}/
         );
         expect(fnMatch).not.toBeNull();
-        expect(fnMatch![0]).toContain('modal-container');
-    });
-
-    it('closePopoutWindowIfEmpty never force-closes a window without a prior win.closed guard', () => {
-        // History: a "double-closing race condition" in this function (fixed in
-        // commit 97bfc70) force-closed a window a second time after it had
-        // already been closed via WorkspaceWindow.close(). The function must
-        // bail out immediately if the window is already closed.
-        const fnMatch = mainTsSource.match(
-            /private closePopoutWindowIfEmpty\(win: Window\): void \{[\s\S]*?\n    \}/
-        );
-        expect(fnMatch).not.toBeNull();
-        expect(fnMatch![0]).toMatch(/win\.closed/);
+        expect(fnMatch![0]).toContain('kit.closePopoutWindowIfEmpty');
+        expect(fnMatch![0]).not.toMatch(/\.close\(\)/);
     });
 });
 
@@ -277,8 +267,9 @@ describe('Architecture guardrails: one navigation model', () => {
         // tabs from buildNavigationModel / getEditorLeafLocations instead.
         const code = mainTsSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
         const scans = [...code.matchAll(/iterateAllLeaves\(/g)].length;
-        // getEditorLeafLocations + pruneLeafLastActive (which also needs sidebar ids)
-        expect(scans).toBe(2);
+        // getEditorLeafLocations now lives in commons (internals/model). Only
+        // pruneLeafLastActive still scans here; it moves to commons LeafRecency.prune.
+        expect(scans).toBe(1);
     });
 });
 

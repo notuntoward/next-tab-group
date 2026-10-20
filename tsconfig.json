@@ -11,7 +11,8 @@
     "importHelpers": true,
     "isolatedModules": true,
     "strict": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": { "obsidian": ["./node_modules/obsidian"] }
   },
   "include": ["**/*.ts"],
   "exclude": ["tests/**", "vitest.config.ts", "**/*.test.ts"]

@@ -17,6 +17,19 @@ keyboard handling, read this file, then read
 invariants below as automated checks with the historical incident each one
 prevents.
 
+## Shared library: commons
+
+This plugin uses `commons` (repo `obsidian-commons`, normally `C:\Users\scott\repos\obsidian-commons`).
+Window, tab group, tab, pop-out, window-focus and modal-chooser logic (and later color
+logic) comes from `commons/*`. Never reimplement it here and never read Obsidian's
+undocumented fields (`leaf.detached`, `container.win`, `rootSplit`, `tabHeaderEl`,
+`chooser.setSelectedItem`, ...) in this plugin. If commons lacks something or is wrong,
+change commons and tell the user: see the global rule "Obsidian shared library" and
+`obsidian-commons/AGENTS.md`. Rules that moved to commons are enforced by its guardrail
+tests; the rules below are the plugin-specific ones that remain.
+
+The model, window-resolution, popout-closing and chooser-safety rules below that say "derive from the canonical model" / "never call .detach() on a container" / "before closing a window" are now implemented and tested in commons (its 	ests/guardrails.test.ts and 	ests/workspace.test.ts); this repo's 	ests/architecture-guardrails.test.ts only proves that main.ts delegates. Migration status: obsidian-commons/docs/CHECKLIST.md Phase 1.
+
 ## Hazard zones
 
 - `main.ts`: `collectTabs`, `closePopoutWindowIfEmpty`, `rotateTabGroups`,
