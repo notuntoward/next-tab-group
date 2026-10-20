@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import ts from 'typescript';
+import { ESLint } from 'eslint';
 
 /**
  * This file locks in structural invariants that this repo's history shows are
@@ -257,22 +259,163 @@ describe('Architecture guardrails: active-tab color scoping', () => {
         });
     }
 });
+function stripComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+function balancedBlockAfter(source: string, anchor: RegExp): string | null {
+    const match = anchor.exec(source);
+    if (!match) return null;
+    const open = source.indexOf('{', match.index + match[0].length - 1);
+    if (open === -1) return null;
+    let depth = 0;
+    for (let i = open; i < source.length; i++) {
+        if (source[i] === '{') depth++;
+        else if (source[i] === '}' && --depth === 0) return source.slice(open, i + 1);
+    }
+    return null;
+}
+
+function bareGlobals(source: string): string[] {
+    const file = ts.createSourceFile('runtime.ts', stripComments(source), ts.ScriptTarget.Latest, true);
+    const hits: string[] = [];
+    const visit = (node: ts.Node): void => {
+        if (ts.isIdentifier(node) && ['document', 'window', 'navigator', 'localStorage'].includes(node.text)) {
+            const parent = node.parent;
+            const property = (ts.isPropertyAccessExpression(parent) && parent.name === node)
+                || ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent)) && parent.name === node);
+            if (!property) hits.push(node.text);
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(file);
+    return hits;
+}
+
+describe('Phase 1b bare-global guardrails', () => {
+    const files = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = path.join(dir, entry.name);
+        return entry.isDirectory() ? files(full) : full.endsWith('.ts') ? [full] : [];
+    });
+
+    it('rejects bare globals in all runtime sources without exceptions', () => {
+        const violations = [mainTsPath, ...files(path.resolve(__dirname, '../src'))].flatMap((file) =>
+            bareGlobals(fs.readFileSync(file, 'utf8')).map((name) => `${path.relative(path.dirname(mainTsPath), file)}: ${name}`));
+        expect(violations).toEqual([]);
+    });
+
+    it('detects mutants, strips comments, and ignores property names and string literals', () => {
+        expect(bareGlobals('window.setTimeout(() => document.body.focus(), 0); navigator.clipboard; localStorage.clear();'))
+            .toEqual(['window', 'document', 'navigator', 'localStorage']);
+        expect(bareGlobals('/* window */ const x = win.document; // document\nconst row = { window: win, label: "window" };')).toEqual([]);
+    });
+
+    it('eslint rejects all bare-global and timer mutants in runtime sources', async () => {
+        const eslint = new ESLint({ cwd: path.dirname(mainTsPath) });
+        for (const filePath of ['main.ts', 'src/ui/collect-tabs-modal.ts', 'src/utils/diagnostics.ts']) {
+            const config = await eslint.calculateConfigForFile(filePath);
+            const checker = new ESLint({ overrideConfigFile: true, overrideConfig: { rules: {
+                'no-restricted-globals': config.rules['no-restricted-globals'],
+                'no-restricted-properties': config.rules['no-restricted-properties'],
+            } } });
+            const [result] = await checker.lintText('document.body; window.setTimeout(() => {}, 0); window.requestAnimationFrame(() => {}); navigator.clipboard; localStorage.clear();');
+            expect(result.messages.filter((m) => m.ruleId === 'no-restricted-globals')).toHaveLength(5);
+            expect(result.messages.filter((m) => m.ruleId === 'no-restricted-properties')).toHaveLength(2);
+        }
+    });
+
+    it('does not claim OS-level focus before commons/os exists', () => {
+        expect(mainTsSource).not.toContain('guarantees OS-level window focus');
+    });
+});
+
+const BARE_MAIN_WINDOW_GLOBAL = /(?<![\w.$])(document|window|navigator|localStorage)\b(?!\s*[:?]|\s*=>)/;
+
 describe('Architecture guardrails: one navigation model', () => {
-    it('only the canonical leaf discovery (and the recency-map pruner) scans workspace leaves', () => {
+    const code = stripComments(mainTsSource);
+
+    it('main.ts scans no workspace leaves; commons owns every scan', () => {
         // History: dedupeEmptied, closePopoutWindowIfEmpty, the active-tab-colour
         // window loops and getActiveLeafInFocusedWindow each ran their own
         // iterateAllLeaves scan with its own window/group/main-window rules, so
         // they drifted from the model the pickers use (the Deduplicate footer
         // miscounted emptied groups and windows). Derive windows, groups and
         // tabs from buildNavigationModel / getEditorLeafLocations instead.
-        const code = mainTsSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-        const scans = [...code.matchAll(/iterateAllLeaves\(/g)].length;
-        // getEditorLeafLocations now lives in commons (internals/model). Only
-        // pruneLeafLastActive still scans here; it moves to commons LeafRecency.prune.
-        expect(scans).toBe(1);
+        expect([...code.matchAll(/iterateAllLeaves\(/g)]).toHaveLength(0);
+        expect([...code.matchAll(/iterateRootLeaves\(/g)]).toHaveLength(0);
+    });
+
+    it('builds groups, tabs and windows with the commons builders and keeps no model of its own', () => {
+        expect(code).toMatch(/kit\s*\.getEditorLeafLocations\(/);
+        expect(code).toMatch(/kit\s*\.buildTabGroups\(/);
+        expect(code).toMatch(/kit\s*\.buildTabEntries\(/);
+        expect(code).toMatch(/kit\s*\.buildWindowEntries\(/);
+        expect(code).toMatch(/kit\s*\.getGroupsInWindow\(/);
+        expect(code).toMatch(/kit\s*\.getTabsInWindow\(/);
+        expect(code).toMatch(/kit\s*\.getGroupForLeaf\(/);
+        expect(code).not.toMatch(/new Map<\s*Window\b[^>]*,\s*(Map<|TabGroupInfo|WorkspaceLeaf)/);
+        expect(code).not.toMatch(/\bbyWindow\b/);
+    });
+
+    it('takes direction from TabGroup.direction, not from rectangles computed in the plugin', () => {
+        expect(code).not.toMatch(/\brelativePosition\b/);
+        expect(code).not.toMatch(/\bgetTabGroupRect\b/);
+        expect(code).toMatch(/\.direction\b/);
+    });
+
+    it('keeps recency in commons LeafRecency instead of a private map', () => {
+        expect(code).toMatch(/new LeafRecency\(\)/);
+        expect(code).not.toMatch(/\bleafLastActive\b/);
+        expect(code).not.toMatch(/\bpruneLeafLastActive\b/);
+        expect(code).not.toMatch(/\bcompareRecency\b/);
+    });
+
+    it('reads no undocumented Obsidian leaf or container fields in main.ts or the collect modal', () => {
+        const modalCode = stripComments(
+            fs.readFileSync(path.resolve(__dirname, '../src/ui/collect-tabs-modal.ts'), 'utf-8'),
+        );
+        const diagnosticsCode = stripComments(
+            fs.readFileSync(path.resolve(__dirname, '../src/utils/diagnostics.ts'), 'utf-8'),
+        );
+        expect(diagnosticsCode).not.toMatch(/\.detached\b/);
+        for (const source of [code, modalCode]) {
+            expect(source).not.toMatch(/\.getContainer\b/);
+            expect(source).not.toMatch(/\.detached\b/);
+            expect(source).not.toMatch(/\btabHeaderEl\b/);
+            expect(source).not.toMatch(/\bas any\)\??\.id\b/);
+            expect(source).not.toMatch(/WorkspaceLeafInternal/);
+        }
     });
 });
 
+describe('Architecture guardrails: per-window setup goes through forEachWindow', () => {
+    const code = stripComments(mainTsSource);
+    const lifecycle: Array<[string, RegExp]> = [
+        ['applyActiveTabColors', /\n    applyActiveTabColors\(\)[^{]*\{/],
+        ['applyActiveTabColorsToWindow', /\n    private applyActiveTabColorsToWindow\(/],
+        ['clearActiveTabColorsFromWindow', /\n    private clearActiveTabColorsFromWindow\(/],
+        ['the forEachWindow setup', /forEachWindow\(this, \(win\) => \{/],
+    ];
+
+    it('colors every window, including pop-outs opened later, from a single forEachWindow registration', () => {
+        expect([...code.matchAll(/forEachWindow\(this,/g)]).toHaveLength(1);
+        expect(code).toMatch(/import \{[^}]*\bforEachWindow\b[^}]*\} from 'commons\/windows'/);
+    });
+
+    it.each(lifecycle)('%s never touches the main window document by a bare global', (_name, anchor) => {
+        const body = balancedBlockAfter(code, anchor);
+        expect(body).not.toBeNull();
+        expect(body!.length).toBeGreaterThan(20);
+        expect(body).not.toMatch(BARE_MAIN_WINDOW_GLOBAL);
+    });
+
+    it('the bare-global pattern flags main-window globals and ignores per-window access', () => {
+        expect(BARE_MAIN_WINDOW_GLOBAL.test('document.body.classList.add(x)')).toBe(true);
+        expect(BARE_MAIN_WINDOW_GLOBAL.test('window.setTimeout(f, 1)')).toBe(true);
+        expect(BARE_MAIN_WINDOW_GLOBAL.test('const body = win.document?.body')).toBe(false);
+        expect(BARE_MAIN_WINDOW_GLOBAL.test('doc.body.style.setProperty(a, b)')).toBe(false);
+    });
+});
 describe('Architecture guardrails: checkbox picker state', () => {
     const modalSource = fs.readFileSync(path.resolve(__dirname, '../src/ui/collect-tabs-modal.ts'), 'utf-8');
 

@@ -21,7 +21,6 @@ type TestPlugin = NextTabGroupPlugin & {
     isSidebarLeaf: (leaf: WorkspaceLeaf) => boolean;
     buildNavigationModel: (activeLeaf: WorkspaceLeaf | null) => any;
     askConfirmation: (title: string, body: HTMLElement) => Promise<boolean>;
-    leafLastActive: Map<string, number>;
 };
 
 function createPlugin(app: MockApp): TestPlugin {

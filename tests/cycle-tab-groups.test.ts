@@ -8,6 +8,7 @@ import {
     MockWorkspaceParent,
     MockContainerEl,
 } from './mocks/obsidian';
+import { setLastActive } from './helpers/recency';
 
 type TestPlugin = NextTabGroupPlugin & {
     cycleTabGroups: (direction?: -1 | 1) => void;
@@ -149,10 +150,10 @@ describe('cycleTabGroups', () => {
         app.workspace.rootLeaves = app.workspace.allLeaves;
         app.workspace.setActiveLeaf(a1);
 
-        plugin.leafLastActive.set('a1', 100);
-        plugin.leafLastActive.set('a2', 200);
-        plugin.leafLastActive.set('b1', 300);
-        plugin.leafLastActive.set('b2', 400);
+        setLastActive(plugin, 'a1', 100);
+        setLastActive(plugin, 'a2', 200);
+        setLastActive(plugin, 'b1', 300);
+        setLastActive(plugin, 'b2', 400);
 
         await plugin.cycleTabGroups();
         expect(app.workspace.activeLeaf).toBe(b2);

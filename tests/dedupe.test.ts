@@ -27,7 +27,6 @@ type TestPlugin = NextTabGroupPlugin & {
     planDedupe: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => { toRemove: WorkspaceLeaf[]; notesAffected: number } | null;
     getLeafFileKey: (leaf: WorkspaceLeaf) => string | null;
     pickSurvivor: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => WorkspaceLeaf;
-    relativePosition: (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) => string;
 };
 
 function createPlugin(app: MockApp): TestPlugin {
@@ -167,9 +166,10 @@ describe('deduplication commands', () => {
 
             app.workspace.rootLeaves = [mainKeep, mainDup];
             app.workspace.allLeaves = [mainKeep, mainDup, popoutKeep, popoutDup];
+            (app.workspace as unknown as { rootSplit: unknown }).rootSplit = rootContainer;
             // No active leaf AND no leaf in the focused jsdom window, so
             // getActiveLeafInFocusedWindow falls back to activeLeaf === null
-            // and dedupeInAllGroups uses the iterateRootLeaves fallback.
+            // and dedupeInAllGroups falls back to the main window's tabs.
             app.workspace.activeLeaf = null;
             plugin.settings.confirmDedupeAllGroups = false;
 
@@ -639,22 +639,6 @@ describe('pickSurvivor', () => {
         const dup = new MockWorkspaceLeaf('Note-A.md').setId('b').setParent(group).setContainer(container);
 
         expect(plugin.pickSurvivor([asLeaf(active), asLeaf(dup)], asLeaf(active))).toBe(asLeaf(active));
-    });
-});
-
-describe('relativePosition', () => {
-    it('reports vertical relationships before horizontal ones', () => {
-        const plugin = createPlugin(new MockApp());
-        const ref = { x: 0, y: 0, w: 100, h: 100 };
-        const above = { x: 0, y: -200, w: 100, h: 100 };
-        const below = { x: 0, y: 200, w: 100, h: 100 };
-        const left = { x: -200, y: 0, w: 100, h: 100 };
-        const right = { x: 200, y: 0, w: 100, h: 100 };
-
-        expect(plugin.relativePosition(above, ref)).toBe('group above');
-        expect(plugin.relativePosition(below, ref)).toBe('group below');
-        expect(plugin.relativePosition(left, ref)).toBe('left group');
-        expect(plugin.relativePosition(right, ref)).toBe('right group');
     });
 });
 

@@ -8,6 +8,7 @@ import {
     MockWorkspaceParent,
     MockFuzzySuggestModal,
 } from './mocks/obsidian';
+import { setLastActive } from './helpers/recency';
 
 type TestPlugin = NextTabGroupPlugin & {
     switchToAnyTab: () => void;
@@ -142,8 +143,8 @@ describe('switchToAnyTab', () => {
         const older = leaf('older', 'Old.md', group, rootContainer);
         const newer = leaf('newer', 'New.md', group, rootContainer);
         const third = leaf('third', 'Third.md', group, rootContainer);
-        plugin.leafLastActive.set('older', 100);
-        plugin.leafLastActive.set('newer', 200);
+        setLastActive(plugin, 'older', 100);
+        setLastActive(plugin, 'newer', 200);
 
         app.workspace.rootLeaves = [older, newer, third];
         app.workspace.allLeaves = [older, newer, third];
@@ -171,9 +172,9 @@ describe('switchToAnyTab', () => {
         const older = leaf('older', 'Old.md', group, rootContainer);
         const middle = leaf('middle', 'Mid.md', group, rootContainer);
         const active = leaf('active', 'Active.md', group, rootContainer);
-        plugin.leafLastActive.set('older', 100);
-        plugin.leafLastActive.set('middle', 200);
-        plugin.leafLastActive.set('active', 300);
+        setLastActive(plugin, 'older', 100);
+        setLastActive(plugin, 'middle', 200);
+        setLastActive(plugin, 'active', 300);
 
         app.workspace.rootLeaves = [older, middle, active];
         app.workspace.allLeaves = [older, middle, active];
@@ -233,8 +234,8 @@ describe('switchToAnyTab', () => {
         const group2 = new MockWorkspaceParent(rootContainer);
         const a = leaf('a', 'A.md', group1, rootContainer);
         const b = leaf('b', 'B.md', group2, rootContainer);
-        plugin.leafLastActive.set('a', 100);
-        plugin.leafLastActive.set('b', 200);
+        setLastActive(plugin, 'a', 100);
+        setLastActive(plugin, 'b', 200);
 
         app.workspace.rootLeaves = [a, b];
         app.workspace.allLeaves = [a, b];
@@ -334,9 +335,9 @@ describe('switchToAnyTab', () => {
         // The pop-out tab is the most recently visited overall, but the user is
         // in the main window (active tab mainA), so the top item must be the
         // most recent main-window tab (mainB).
-        plugin.leafLastActive.set('mainA', 100);
-        plugin.leafLastActive.set('mainB', 300);
-        plugin.leafLastActive.set('winA', 400);
+        setLastActive(plugin, 'mainA', 100);
+        setLastActive(plugin, 'mainB', 300);
+        setLastActive(plugin, 'winA', 400);
 
         app.workspace.rootLeaves = [mainA, mainB];
         app.workspace.allLeaves = [mainA, mainB, winA];

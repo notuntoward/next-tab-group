@@ -8,6 +8,7 @@ import {
     MockWorkspaceParent,
     MockFuzzySuggestModal,
 } from './mocks/obsidian';
+import { setLastActive } from './helpers/recency';
 
 type TestPlugin = NextTabGroupPlugin & {
     buildNavigationModel: (activeLeaf: WorkspaceLeaf | null) => WorkspaceNavigationModel;
@@ -23,7 +24,6 @@ type TestPlugin = NextTabGroupPlugin & {
     dedupeInGroup: () => Promise<void>;
     dedupeInAllGroups: () => Promise<void>;
     dedupeInAllWindows: () => Promise<void>;
-    leafLastActive: Map<string, number>;
 };
 
 interface LeafLocation {
@@ -176,118 +176,7 @@ describe('canonical model', () => {
         await plugin.onload();
     });
 
-    describe('model construction', () => {
-        it('includes exactly five editor leaves (sidebar excluded)', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            expect(model.locations).toHaveLength(5);
-            expect(model.tabs).toHaveLength(5);
-        });
-
-        it('creates exactly three groups', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            expect(model.groups).toHaveLength(3);
-        });
-
-        it('each group contains only leaves from one window', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            for (const group of model.groups) {
-                const wins = new Set(group.leaves.map((l) => l.getContainer()?.win));
-                expect(wins.size).toBe(1);
-            }
-        });
-
-        it('main groups contain only main-* leaves', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            const groupA = model.groups.find((g) => g.group === ar.groupA)!;
-            const groupB = model.groups.find((g) => g.group === ar.groupB)!;
-            expect(groupA.leaves.map(idOf).sort()).toEqual(['main-a1', 'main-a2']);
-            expect(groupB.leaves.map(idOf)).toEqual(['main-b1']);
-        });
-
-        it('pop-out group contains only popup-* leaves', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            const groupC = model.groups.find((g) => g.group === ar.groupC)!;
-            expect(groupC.leaves.map(idOf).sort()).toEqual(['popup-c1', 'popup-c2']);
-        });
-
-        it('every editor leaf appears in exactly one TabGroupInfo', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            const counts = new Map<string, number>();
-            for (const group of model.groups) {
-                for (const l of group.leaves) {
-                    const id = idOf(l);
-                    counts.set(id, (counts.get(id) ?? 0) + 1);
-                }
-            }
-            expect([...counts.values()].every((c) => c === 1)).toBe(true);
-        });
-
-        it('every TabInfo.group.window matches the leaf container window', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            for (const tab of model.tabs) {
-                expect(tab.group.window).toBe(tab.leaf.getContainer()?.win);
-            }
-        });
-
-        it('main and pop-out each yield one WindowInfo', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            expect(model.windows).toHaveLength(2);
-            const mainWin = model.windows.find((w) => w.window === ar.mainWin)!;
-            const popupWin = model.windows.find((w) => w.window === ar.popupWin)!;
-            expect(mainWin.groups).toHaveLength(2);
-            expect(popupWin.groups).toHaveLength(1);
-        });
-
-        it('a sidebar leaf is absent from locations, groups, tabs, and windows', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            const inLocations = model.locations.some((l) => idOf(l.leaf) === 'sidebar');
-            const inTabs = model.tabs.some((t) => idOf(t.leaf) === 'sidebar');
-            expect(inLocations).toBe(false);
-            expect(inTabs).toBe(false);
-            for (const group of model.groups) {
-                expect(group.leaves.map(idOf)).not.toContain('sidebar');
-            }
-        });
-    });
-
     describe('scope helpers', () => {
-        it('getTabsInWindow(main) contains all main tabs and zero pop-out tabs', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            const tabs = plugin.getTabsInWindow(model, ar.mainWin);
-            expect(tabs.map((t) => idOf(t.leaf)).sort()).toEqual(['main-a1', 'main-a2', 'main-b1']);
-        });
-
-        it('getTabsInWindow(popup) contains all pop-out tabs and zero main tabs', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            const tabs = plugin.getTabsInWindow(model, ar.popupWin);
-            expect(tabs.map((t) => idOf(t.leaf)).sort()).toEqual(['popup-c1', 'popup-c2']);
-        });
-
-        it('getGroupsInWindow returns the corresponding group counts', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            expect(plugin.getGroupsInWindow(model, ar.mainWin)).toHaveLength(2);
-            expect(plugin.getGroupsInWindow(model, ar.popupWin)).toHaveLength(1);
-        });
-
-        it('getGroupForLeaf(mainA1) returns Group A, not a group in the pop-out', () => {
-            const ar = arrange(app);
-            const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            const group = plugin.getGroupForLeaf(model, asLeaf(ar.mainA1));
-            expect(group?.group).toBe(ar.groupA);
-        });
-
         it('current-group determination requires both matching parent and window', () => {
             const ar = arrange(app);
             const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
@@ -342,11 +231,11 @@ describe('canonical model', () => {
             const ar = arrange(app);
             // Recencies chosen so Group A (main-a2) is fresher than Group B
             // (main-b1), and the pop-out group (popup-c2) is freshest overall.
-            plugin.leafLastActive.set('main-a1', 100);
-            plugin.leafLastActive.set('main-a2', 300);
-            plugin.leafLastActive.set('main-b1', 200);
-            plugin.leafLastActive.set('popup-c1', 400);
-            plugin.leafLastActive.set('popup-c2', 500);
+            setLastActive(plugin, 'main-a1', 100);
+            setLastActive(plugin, 'main-a2', 300);
+            setLastActive(plugin, 'main-b1', 200);
+            setLastActive(plugin, 'popup-c1', 400);
+            setLastActive(plugin, 'popup-c2', 500);
             app.workspace.setActiveLeaf(ar.mainA1);
 
             const cap = captureItems<TabInfo>(MockFuzzySuggestModal);
@@ -393,11 +282,11 @@ describe('canonical model', () => {
         it('switch to tab group orders each window groups by recency of most recent tab', () => {
             const ar = arrange(app);
             // main-a2 is the most recent main tab; popup-c2 the most recent pop-out tab.
-            plugin.leafLastActive.set('main-a1', 100);
-            plugin.leafLastActive.set('main-a2', 300);
-            plugin.leafLastActive.set('main-b1', 200);
-            plugin.leafLastActive.set('popup-c1', 400);
-            plugin.leafLastActive.set('popup-c2', 500);
+            setLastActive(plugin, 'main-a1', 100);
+            setLastActive(plugin, 'main-a2', 300);
+            setLastActive(plugin, 'main-b1', 200);
+            setLastActive(plugin, 'popup-c1', 400);
+            setLastActive(plugin, 'popup-c2', 500);
             app.workspace.setActiveLeaf(ar.mainA1);
 
             const cap = captureItems<TabGroupInfo>(MockFuzzySuggestModal);
@@ -691,11 +580,11 @@ describe('canonical model', () => {
             const ar = arrange(app);
             // Give the active tab and its siblings distinct recencies so the
             // ordering is deterministic: main-a2 is the most recent non-active.
-            plugin.leafLastActive.set('main-a1', 100);
-            plugin.leafLastActive.set('main-a2', 300);
-            plugin.leafLastActive.set('main-b1', 200);
-            plugin.leafLastActive.set('popup-c1', 400);
-            plugin.leafLastActive.set('popup-c2', 500);
+            setLastActive(plugin, 'main-a1', 100);
+            setLastActive(plugin, 'main-a2', 300);
+            setLastActive(plugin, 'main-b1', 200);
+            setLastActive(plugin, 'popup-c1', 400);
+            setLastActive(plugin, 'popup-c2', 500);
             app.workspace.setActiveLeaf(ar.mainA1);
 
             const cap = captureItems<TabInfo>(MockFuzzySuggestModal);
@@ -722,11 +611,11 @@ describe('canonical model', () => {
             // a same-group tab (main-a2, recency 300) first, so a naive "first
             // non-active row" selection would wrongly pick main-a2. We assert
             // the selection targets popup-c2 instead.
-            plugin.leafLastActive.set('main-a1', 100);
-            plugin.leafLastActive.set('main-a2', 300);
-            plugin.leafLastActive.set('main-b1', 200);
-            plugin.leafLastActive.set('popup-c1', 400);
-            plugin.leafLastActive.set('popup-c2', 500);
+            setLastActive(plugin, 'main-a1', 100);
+            setLastActive(plugin, 'main-a2', 300);
+            setLastActive(plugin, 'main-b1', 200);
+            setLastActive(plugin, 'popup-c1', 400);
+            setLastActive(plugin, 'popup-c2', 500);
             app.workspace.setActiveLeaf(ar.mainA1);
 
             const cap = captureItems<TabInfo>(MockFuzzySuggestModal);
@@ -747,11 +636,11 @@ describe('canonical model', () => {
             // overall is the pop-out Group C (representative popup-c2, recency
             // 500), even though an active-window group (Group B, recency 200)
             // appears earlier in the grouped display order.
-            plugin.leafLastActive.set('main-a1', 100);
-            plugin.leafLastActive.set('main-a2', 300);
-            plugin.leafLastActive.set('main-b1', 200);
-            plugin.leafLastActive.set('popup-c1', 400);
-            plugin.leafLastActive.set('popup-c2', 500);
+            setLastActive(plugin, 'main-a1', 100);
+            setLastActive(plugin, 'main-a2', 300);
+            setLastActive(plugin, 'main-b1', 200);
+            setLastActive(plugin, 'popup-c1', 400);
+            setLastActive(plugin, 'popup-c2', 500);
             app.workspace.setActiveLeaf(ar.mainA1);
 
             const cap = captureItems<TabGroupInfo>(MockFuzzySuggestModal);
@@ -770,11 +659,11 @@ describe('canonical model', () => {
 
         it('switch to any tab lists tabs in pure recency order when grouping is off', () => {
             const ar = arrange(app);
-            plugin.leafLastActive.set('main-a1', 100);
-            plugin.leafLastActive.set('main-a2', 300);
-            plugin.leafLastActive.set('main-b1', 200);
-            plugin.leafLastActive.set('popup-c1', 400);
-            plugin.leafLastActive.set('popup-c2', 500);
+            setLastActive(plugin, 'main-a1', 100);
+            setLastActive(plugin, 'main-a2', 300);
+            setLastActive(plugin, 'main-b1', 200);
+            setLastActive(plugin, 'popup-c1', 400);
+            setLastActive(plugin, 'popup-c2', 500);
             app.workspace.setActiveLeaf(ar.mainA1);
 
             // Disable grouping: the result is a single recency-ordered list
@@ -790,11 +679,11 @@ describe('canonical model', () => {
 
         it('switch to tab group lists groups in pure recency order when grouping is off', () => {
             const ar = arrange(app);
-            plugin.leafLastActive.set('main-a1', 100);
-            plugin.leafLastActive.set('main-a2', 300);
-            plugin.leafLastActive.set('main-b1', 200);
-            plugin.leafLastActive.set('popup-c1', 400);
-            plugin.leafLastActive.set('popup-c2', 500);
+            setLastActive(plugin, 'main-a1', 100);
+            setLastActive(plugin, 'main-a2', 300);
+            setLastActive(plugin, 'main-b1', 200);
+            setLastActive(plugin, 'popup-c1', 400);
+            setLastActive(plugin, 'popup-c2', 500);
             app.workspace.setActiveLeaf(ar.mainA1);
 
             plugin.settings.groupSwitchByContext = false;

@@ -7,6 +7,7 @@ import {
     MockWorkspaceLeaf,
     MockWorkspaceParent,
 } from './mocks/obsidian';
+import { setLastActive } from './helpers/recency';
 
 type TestPlugin = NextTabGroupPlugin & {
     getTabSearchText: (tab: TabInfo) => string;
@@ -138,8 +139,8 @@ describe('getTabSearchText still includes the group label', () => {
     beforeEach(() => {
         app = new MockApp();
         plugin = createPlugin(app);
-        plugin.leafLastActive.set('a', 100);
-        plugin.leafLastActive.set('b', 200);
+        setLastActive(plugin, 'a', 100);
+        setLastActive(plugin, 'b', 200);
     });
 
     it('contains both the tab title and the full group label', () => {

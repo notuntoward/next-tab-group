@@ -28,7 +28,7 @@ change commons and tell the user: see the global rule "Obsidian shared library" 
 `obsidian-commons/AGENTS.md`. Rules that moved to commons are enforced by its guardrail
 tests; the rules below are the plugin-specific ones that remain.
 
-The model, window-resolution, popout-closing and chooser-safety rules below that say "derive from the canonical model" / "never call .detach() on a container" / "before closing a window" are now implemented and tested in commons (its 	ests/guardrails.test.ts and 	ests/workspace.test.ts); this repo's 	ests/architecture-guardrails.test.ts only proves that main.ts delegates. Migration status: obsidian-commons/docs/CHECKLIST.md Phase 1.
+The model, window-resolution, popout-closing and chooser-safety rules below that say "derive from the canonical model" / "never call .detach() on a container" / "before closing a window" are now implemented and tested in commons (its `tests/guardrails.test.ts` and `tests/workspace.test.ts`); this repo's `tests/architecture-guardrails.test.ts` only proves that main.ts delegates. The model builders (`buildTabGroups`, `buildTabEntries`, `buildWindowEntries`), recency (`LeafRecency`), group direction (`TabGroup.direction`) and per-window setup (`forEachWindow`) are commons; `main.ts` only adds labels, ordering and commands on top. Migration status: obsidian-commons/docs/CHECKLIST.md Phase 1.
 
 ## Hazard zones
 
@@ -112,23 +112,29 @@ lesson from scratch.
 ## One navigation model
 
 12. **Derive every window/tab-group/tab fact from the canonical navigation
-    model.** `buildNavigationModel(activeLeaf)` (built on
-    `getEditorLeafLocations()`) is the single description of the arrangement:
-    `model.windows` -> `model.groups` (identity is `(window, parent)`, never
-    parent alone) -> `model.tabs`, with sidebar and detached leaves already
-    excluded and `isMainWindow` decided once. Do not write a new
-    `iterateAllLeaves` / `iterateRootLeaves` scan, a private `Map` keyed on
-    `leaf.parent`, or your own main-window test (`=== window`) for such
-    questions. Use the model and its helpers (`getGroupsInWindow`,
-    `getTabsInWindow`, `getGroupForLeaf`, `getOpenWindows`). If the model
-    lacks something you need, extend the model (and `canonical-model.test.ts`)
-    rather than computing it locally. When touching code that has its own
-    scan, refactor it onto the model if that is simpler; parallel
-    re-derivations drift (the Deduplicate footer's emptied group/window
-    counts did). `tests/architecture-guardrails.test.ts` caps the number of
-    `iterateAllLeaves` scans in `main.ts`; raise it only for a reviewed
-    reason.
-
+    model.** `buildNavigationModel(activeLeaf)` is the single description of
+    the arrangement: `model.windows` -> `model.groups` (identity is
+    `(window, parent)`, never parent alone) -> `model.tabs`, with sidebar and
+    detached leaves already excluded, `isMainWindow` decided once and each
+    group's `direction` (left/right/above/below the current group, same window
+    only) computed once. It is built from commons `getEditorLeafLocations`,
+    `buildTabGroups`, `buildTabEntries` and `buildWindowEntries`; the plugin
+    only decorates the result with display labels and orders by recency, then
+    label. Recency lives in commons `LeafRecency` (`this.recency`, touched from
+    `active-leaf-change`); do not add another map of when leaves were active.
+    Do not write a new `iterateAllLeaves` / `iterateRootLeaves` scan, a private
+    `Map` keyed on `leaf.parent` or window, your own rectangle or direction
+    arithmetic, or your own main-window test (`=== window`) for such questions.
+    Use the model and its helpers (`getGroupsInWindow`, `getTabsInWindow`,
+    `getGroupForLeaf`, `getOpenWindows`). If the model lacks something you
+    need, extend commons (with its test) rather than computing it locally.
+    Per-window setup and teardown (the active-tab colours) goes through
+    `forEachWindow`, which covers the main window, pop-outs that exist at load,
+    pop-outs opened later and cleanup on close and unload; never touch `document`
+    or `window` there, use the window you are given.
+    `tests/architecture-guardrails.test.ts` fails if `main.ts` calls
+    `iterateAllLeaves`, `iterateRootLeaves`, `getContainer`, reads `.detached`,
+    `tabHeaderEl` or `(leaf as any).id`, or keeps a private recency map.
 ## Hard rules for modal keyboard/focus handling
 
 6. **Exactly one registration path per keyboard shortcut.** Either

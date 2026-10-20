@@ -15,5 +15,5 @@
     "paths": { "obsidian": ["./node_modules/obsidian"] }
   },
   "include": ["**/*.ts"],
-  "exclude": ["tests/**", "vitest.config.ts", "**/*.test.ts"]
+  "exclude": ["tests/**", "vitest.config.mts", "**/*.test.ts"]
 }

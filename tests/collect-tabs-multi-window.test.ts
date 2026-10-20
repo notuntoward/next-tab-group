@@ -9,6 +9,7 @@ import {
     MockWorkspaceWindow,
     MockNotice,
 } from './mocks/obsidian';
+import { setLastActive } from './helpers/recency';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CollectTabsModal, CollectChoice, resetSessionWindowIndices } from '../src/ui/collect-tabs-modal';
@@ -541,9 +542,9 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
 
             app.workspace.allLeaves = [p1, p2, p3];
             app.workspace.setActiveLeaf(p1);
-            plugin['leafLastActive'].set('p1', 300);
-            plugin['leafLastActive'].set('p2', 200);
-            plugin['leafLastActive'].set('p3', 100);
+            setLastActive(plugin, 'p1', 300);
+            setLastActive(plugin, 'p2', 200);
+            setLastActive(plugin, 'p3', 100);
 
             const desc = plugin.describeWindow(win1Obj);
             expect(desc).toBe('Project Notes.md, Daily Log.md, +1');

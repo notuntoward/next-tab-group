@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, renameSync, statSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import { spawn } from 'child_process';
+import { isLeafDetached } from 'commons/workspace';
 
 /**
  * Flight recorder for diagnosing Obsidian freezes.
@@ -135,7 +136,7 @@ export function summarizeLayout(workspace: any): { text: string; anomalies: stri
             } catch {
                 // view mid-teardown
             }
-            return `L(${vt}${node.detached ? ',detached' : ''})`;
+            return `L(${vt}${isLeafDetached(node) ? ',detached' : ''})`;
         }
         const dir = typeof node.direction === 'string' ? node.direction[0] : '';
         if (children.length === 0) anomalies.push(`empty-${node.type}@${depth}`);
@@ -286,9 +287,9 @@ while ($true) {
 
 export class FreezeWatchdog {
     private child: any = null;
-    private timer: number | null = null;
+    private cancelHeartbeat: (() => void) | null = null;
 
-    start(logPath: string, heartbeatPath: string, getContext: () => string, onProblem: (m: string) => void): void {
+    start(logPath: string, heartbeatPath: string, getContext: () => string, onProblem: (m: string) => void, win: Window): void {
         if (process.platform !== 'win32') return;
         const script = WATCHDOG_PS.replace('__HB__', heartbeatPath.replace(/'/g, "''"))
             .replace('__LOG__', logPath.replace(/'/g, "''"))
@@ -305,19 +306,20 @@ export class FreezeWatchdog {
             try {
                 writeFileSync(
                     heartbeatPath,
-                    `${Date.now()}|${document.visibilityState}|${getContext().replace(/\|/g, '/')}`,
+                    `${Date.now()}|${win.document.visibilityState}|${getContext().replace(/\|/g, '/')}`,
                 );
             } catch {
                 // ignore
             }
         };
         beat();
-        this.timer = window.setInterval(beat, 1000);
+        const timer = win.setInterval(beat, 1000);
+        this.cancelHeartbeat = () => win.clearInterval(timer);
     }
 
     stop(): void {
-        if (this.timer !== null) window.clearInterval(this.timer);
-        this.timer = null;
+        this.cancelHeartbeat?.();
+        this.cancelHeartbeat = null;
         try {
             this.child?.kill();
         } catch {

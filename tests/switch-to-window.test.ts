@@ -8,6 +8,7 @@ import {
     MockWorkspaceParent,
     MockFuzzySuggestModal,
 } from './mocks/obsidian';
+import { setLastActive } from './helpers/recency';
 
 type TestPlugin = NextTabGroupPlugin & {
     switchToWindow: () => void;
@@ -133,9 +134,9 @@ describe('switchToWindow', () => {
         const mainB = leaf('mainB', 'Main-B.md', groupMain2, rootContainer);
         const winA = leaf('winA', 'Win-A.md', groupWin, windowContainer);
 
-        plugin.leafLastActive.set('mainA', 100);
-        plugin.leafLastActive.set('mainB', 300);
-        plugin.leafLastActive.set('winA', 200);
+        setLastActive(plugin, 'mainA', 100);
+        setLastActive(plugin, 'mainB', 300);
+        setLastActive(plugin, 'winA', 200);
 
         app.workspace.rootLeaves = [mainA, mainB];
         app.workspace.allLeaves = [mainA, mainB, winA];

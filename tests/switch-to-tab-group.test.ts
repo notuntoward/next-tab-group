@@ -8,6 +8,7 @@ import {
     MockWorkspaceParent,
     MockFuzzySuggestModal,
 } from './mocks/obsidian';
+import { setLastActive } from './helpers/recency';
 
 type TestPlugin = NextTabGroupPlugin & {
     switchToTabGroup: () => void;
@@ -109,10 +110,10 @@ describe('switchToTabGroup', () => {
         const b1 = leaf('b1', 'B.md', group2, container);
         const c1 = leaf('c1', 'C.md', group3, container);
         const b2 = leaf('b2', 'B2.md', group2, container);
-        plugin.leafLastActive.set('a1', 100);
-        plugin.leafLastActive.set('a2', 200);
-        plugin.leafLastActive.set('b1', 300);
-        plugin.leafLastActive.set('b2', 400);
+        setLastActive(plugin, 'a1', 100);
+        setLastActive(plugin, 'a2', 200);
+        setLastActive(plugin, 'b1', 300);
+        setLastActive(plugin, 'b2', 400);
 
         app.workspace.rootLeaves = [a1, a2, b1, b2, c1];
         app.workspace.allLeaves = [a1, a2, b1, b2, c1];

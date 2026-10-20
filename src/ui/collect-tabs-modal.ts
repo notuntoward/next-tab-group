@@ -1,4 +1,6 @@
 import { App, Notice, SuggestModal, WorkspaceLeaf } from 'obsidian';
+import { isLeafDetached } from 'commons/workspace';
+import { ownerWindow, setTimeoutIn } from 'commons/windows';
 import { addPickerHeader, registerEmacsMotionKeys, closeOnEscapeFromOtherWindows, type PickerHeader } from '../utils/modal';
 import type { WindowInfo } from '../../main';
 import { TargetHighlighter, type HighlightTarget } from '../utils/target-highlight';
@@ -62,7 +64,7 @@ export function resetSessionWindowIndices(): void {
 }
 
 export function getSessionWindowIndex(winInfo: WindowInfo): number {
-    const isMain = winInfo.isMainWindow || (typeof window !== 'undefined' && winInfo.window === window);
+    const isMain = winInfo.isMainWindow;
     if (isMain) {
         if (winInfo.window) {
             sessionWindowIndices.set(winInfo.window, 1);
@@ -103,7 +105,7 @@ export function getWindowTabDetails(winInfo: WindowInfo): WindowTabDetails {
         for (const g of winInfo.groups) {
             if (g?.leaves) {
                 for (const l of g.leaves) {
-                    if (l && !(l as any).detached) {
+                    if (l && !isLeafDetached(l)) {
                         allLeaves.push(l);
                     }
                 }
@@ -166,6 +168,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     private hovered: CollectChoice | null = null;
     private stopWindowHover?: () => void;
     private stopEscape?: () => void;
+    private cancelTimers: Array<() => void> = [];
     private readonly highlighter = new TargetHighlighter();
     private onPick: (choice: CollectChoice | CollectChoice[]) => void;
 
@@ -289,7 +292,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         const controls = this.getFocusableControls();
         if (controls.length === 0) return false;
 
-        const active = (this.modalEl?.ownerDocument || document).activeElement as HTMLElement | null;
+        const active = this.containerEl.ownerDocument.activeElement as HTMLElement | null;
         const currentIndex = active ? controls.indexOf(active) : -1;
 
         evt.preventDefault();
@@ -511,6 +514,8 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
 
     onOpen(): void {
         super.onOpen();
+        const win = ownerWindow(this.containerEl);
+        const doc = this.containerEl.ownerDocument;
         this.stopEscape = closeOnEscapeFromOtherWindows(this);
         if (this.containerEl) {
             this.containerEl.addClass('ntg-collect-modal-container');
@@ -552,9 +557,9 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             };
 
             removeRedundantX();
-            if (typeof window !== 'undefined') {
-                window.setTimeout(removeRedundantX, 0);
-                window.setTimeout(removeRedundantX, 50);
+            if (win) {
+                this.cancelTimers.push(setTimeoutIn(win, removeRedundantX, 0));
+                this.cancelTimers.push(setTimeoutIn(win, removeRedundantX, 50));
             }
 
             // Find prompt or modal container to place persistent action toolbar above keyboard hints
@@ -562,7 +567,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             const instructionsEl = promptEl.querySelector('.prompt-instructions');
 
             // Build persistent footer toolbar with stable opposite groups
-            this.toolbarEl = document.createElement('div');
+            this.toolbarEl = doc.createElement('div');
             this.toolbarEl.className = 'collect-tabs-action-toolbar ntg-action-toolbar';
 
             // Left subgroup: [Select all] [Clear selection]
@@ -622,7 +627,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             }
 
             if (this.getSummary && this.toolbarEl.parentElement) {
-                this.summaryEl = document.createElement('div');
+                this.summaryEl = doc.createElement('div');
                 this.summaryEl.className = 'ntg-picker-summary';
                 this.toolbarEl.parentElement.insertBefore(this.summaryEl, this.toolbarEl);
                 this.syncTargetHighlight();
@@ -636,7 +641,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
                 }
 
                 if (evt.key === ' ' || evt.code === 'Space') {
-                    const active = (this.modalEl?.ownerDocument || document).activeElement as HTMLElement | null;
+                    const active = this.containerEl.ownerDocument.activeElement as HTMLElement | null;
                     if (active && active.tagName === 'BUTTON') {
                         evt.preventDefault();
                         evt.stopPropagation();
@@ -690,11 +695,11 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         // the HERE-row highlight once more on the next tick so it wins over any
         // such later reset. This mirrors the established pattern already used by
         // NavigationSuggestModal in main.ts for the same class of problem.
-        if (typeof window !== 'undefined') {
-            window.setTimeout(() => {
+        if (win) {
+            this.cancelTimers.push(setTimeoutIn(win, () => {
                 if (!this.isOpen) return;
                 this.setHighlightedIndex(0);
-            }, 0);
+            }, 0));
         }
 
         // Left/Right and Ctrl+B/F move through windows in space (clockwise ring),
@@ -737,6 +742,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     onClose(): void {
+        this.cancelTimers.splice(0).forEach((cancel) => cancel());
         this.stopEscape?.();
         this.stopEscape = undefined;
         this.stopWindowHover?.();
@@ -912,7 +918,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
                 ? statusWords(row.status)
                 : [
                     ...(row.kind === 'current' ? ['here'] : []),
-                    ...(winInfo.isMainWindow || (typeof window !== 'undefined' && winInfo.window === window) ? ['main'] : []),
+                    ...(winInfo.isMainWindow ? ['main'] : []),
                 ];
             for (const word of status) parts.push({ text: word });
         } else {
@@ -921,7 +927,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         const titles = row.kind === 'scope' && row.searchTitles
             ? row.searchTitles
             : winInfo
-                ? (winInfo.groups ?? []).flatMap((g) => (g.leaves ?? []).filter((l) => !(l as any).detached).map((l) => l.getDisplayText()))
+                ? (winInfo.groups ?? []).flatMap((g) => (g.leaves ?? []).filter((l) => !isLeafDetached(l)).map((l) => l.getDisplayText()))
                 : [];
         for (const title of uniqueTitles(titles)) parts.push({ text: title, show: true });
         return parts;
@@ -1072,8 +1078,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             }
         } else if (choice.kind !== 'all') {
             const isMainWin = Boolean(
-                choice.winInfo.isMainWindow ||
-                (typeof window !== 'undefined' && choice.winInfo.window === window)
+                choice.winInfo.isMainWindow
             );
             if (choice.kind === 'current') {
                 if (isMainWin) {

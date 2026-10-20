@@ -2,6 +2,11 @@ import globals from 'globals';
 import obsidianmd from 'eslint-plugin-obsidianmd';
 import tseslint from 'typescript-eslint';
 
+const BARE_WINDOW_GLOBALS = ['document', 'window', 'navigator', 'localStorage'].map((name) => ({
+  name,
+  message: 'Bare main-window global. Use activeWindow/activeDocument, el.ownerDocument, evt.view, or a passed-in Window.',
+}));
+
 export default [
   {
     ignores: [
@@ -28,6 +33,12 @@ export default [
       obsidianmd
     },
     rules: {
+      'no-restricted-globals': ['error', ...BARE_WINDOW_GLOBALS],
+      'no-restricted-properties': [
+        'error',
+        { object: 'window', property: 'setTimeout', message: 'Use win.setTimeout on the owning window.' },
+        { object: 'window', property: 'requestAnimationFrame', message: 'Use win.requestAnimationFrame on the owning window.' },
+      ],
       'obsidianmd/commands/no-command-in-command-id': 'error',
       'obsidianmd/commands/no-command-in-command-name': 'error',
       'obsidianmd/commands/no-default-hotkeys': 'error',

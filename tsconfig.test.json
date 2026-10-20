@@ -6,5 +6,5 @@
     "esModuleInterop": true,
     "types": ["vitest/globals", "jsdom"]
   },
-  "include": ["tests/**/*.ts", "vitest.config.ts", "main.ts"]
+  "include": ["tests/**/*.ts", "vitest.config.mts", "main.ts"]
 }
