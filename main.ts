@@ -22,6 +22,7 @@ import * as kit from 'commons/workspace';
 import { neighborInTabStrip, LeafRecency } from 'commons/workspace';
 import type { LeafLocation, TabEntry, TabGroup } from 'commons/workspace';
 import { forEachWindow, ownerWindow, setTimeoutIn } from 'commons/windows';
+import { raiseWindow } from 'commons/os';
 
 export { ringOrder, windowScreenRect, cyclicNeighbor, neighborInTabStrip };
 export type { Rect };
@@ -466,10 +467,12 @@ export default class NextTabGroupPlugin extends Plugin {
     }
 
     /**
-     * Activates a leaf and requests focus for its owning window.
+     * Activates a leaf and requests focus for its owning window, raising it to
+     * the foreground via the OS-level `raiseWindow` from `commons/os` so that
+     * the Windows foreground lock does not silently ignore the focus request.
      */
     private focusLeafAndWindow(leaf: WorkspaceLeaf): void {
-        kit.focusLeafAndWindow(this.app, leaf);
+        kit.focusLeafAndWindow(this.app, leaf, { raiseWindow });
     }
 
     private isLeafAttached(leaf: WorkspaceLeaf): boolean {

@@ -10,7 +10,7 @@ export default defineConfig({
     },
     resolve: {
         alias: {
-            obsidian: path.resolve(__dirname, 'tests/mocks/obsidian.ts'),
+            obsidian: path.resolve(import.meta.dirname, 'tests/mocks/obsidian.ts'),
         },
     },
 });
