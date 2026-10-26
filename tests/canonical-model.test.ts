@@ -391,15 +391,14 @@ describe('canonical model', () => {
             const ar = arrange(app);
             app.workspace.setActiveLeaf(ar.mainA1);
             const model = plugin.buildNavigationModel(asLeaf(ar.mainA1));
-            const labels = plugin.buildWindowLabels(model);
 
             const mainGroup = model.groups.find((g) => g.group === ar.groupA)!;
             const popupGroup = model.groups.find((g) => g.group === ar.groupC)!;
 
             const mainRow = rowEl();
-            plugin.renderTabGroupSuggestion(mainGroup, mainRow, labels, true, true);
+            plugin.renderTabGroupSuggestion(mainGroup, mainRow, true, true);
             const popupRow = rowEl();
-            plugin.renderTabGroupSuggestion(popupGroup, popupRow, labels, true, true);
+            plugin.renderTabGroupSuggestion(popupGroup, popupRow, true, true);
 
             // The number badge and HERE/MAIN pill identify the window.
             expect(mainRow.querySelector('.ntg-nav-secondary')!.textContent!).not.toContain('Main window');
@@ -419,11 +418,10 @@ describe('canonical model', () => {
             app.workspace.allLeaves = [a, b];
             app.workspace.setActiveLeaf(a);
             const model = plugin.buildNavigationModel(asLeaf(a));
-            const labels = plugin.buildWindowLabels(model);
             const group = model.groups[0];
 
             const row = rowEl();
-            plugin.renderTabGroupSuggestion(group, row, labels, true, false);
+            plugin.renderTabGroupSuggestion(group, row, true, false);
             const secondary = row.querySelector('.ntg-nav-secondary')!.textContent!;
             expect(secondary).not.toContain('Main window');
             expect(secondary).not.toContain('Pop-out');
@@ -439,12 +437,11 @@ describe('canonical model', () => {
             app.workspace.allLeaves = [a, b];
             app.workspace.setActiveLeaf(a);
             const model = plugin.buildNavigationModel(asLeaf(a));
-            const labels = plugin.buildWindowLabels(model);
             const group = model.groups[0];
 
             const row = rowEl();
             // Single window and single group: neither label is needed.
-            plugin.renderTabGroupSuggestion(group, row, labels, false, false);
+            plugin.renderTabGroupSuggestion(group, row, false, false);
             const secondary = row.querySelector('.ntg-nav-secondary')!.textContent!;
             expect(secondary).toBe('');
         });

@@ -11,7 +11,7 @@ import {
 type TestPlugin = NextTabGroupPlugin & {
     getTabGroupMeta: (tab: TabInfo) => string;
     getTabSearchText: (tab: TabInfo) => string;
-    renderTabGroupSuggestion: (group: TabGroupInfo, el: HTMLElement, labels: Map<Window | undefined, string>, showGroup: boolean, showWindow: boolean) => void;
+    renderTabGroupSuggestion: (group: TabGroupInfo, el: HTMLElement, showGroup: boolean, showWindow: boolean) => void;
     groupSearch: (group: TabGroupInfo) => { text: string };
     renderWindowSuggestion: (item: WindowInfo, el: HTMLElement) => void;
 };
@@ -135,7 +135,7 @@ describe('tab group row metadata', () => {
         const group = makeGroup(container, { leaves, isCurrentGroup: true, relativeLabel: null });
 
         const el = rowEl();
-        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false);
+        plugin.renderTabGroupSuggestion(group, el, true, false);
 
         const primary = el.querySelector('.ntg-nav-primary')!.textContent;
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
@@ -148,7 +148,7 @@ describe('tab group row metadata', () => {
         const group = makeGroup(container, { leaves, isCurrentGroup: false, relativeLabel: 'Right group' });
 
         const el = rowEl();
-        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false);
+        plugin.renderTabGroupSuggestion(group, el, true, false);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent;
         expect(secondary).toBe('Right · 1 tab');
@@ -173,7 +173,7 @@ describe('tab group row metadata', () => {
             },
         };
 
-        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false, match);
+        plugin.renderTabGroupSuggestion(group, el, true, false, match);
 
         const highlight = el.querySelector('.ntg-nav-primary .suggestion-highlight');
         expect(highlight).not.toBeNull();
@@ -197,7 +197,7 @@ describe('tab group row metadata', () => {
             match: { score: 1, matches: [[start, start + 5]] },
         };
         const el = rowEl();
-        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false, match);
+        plugin.renderTabGroupSuggestion(group, el, true, false, match);
 
         expect(el.querySelector('.ntg-nav-primary .suggestion-highlight')).toBeNull();
         const listed = el.querySelector('.ntg-scope-item-match');
@@ -222,7 +222,7 @@ describe('tab group row metadata', () => {
             },
         };
 
-        plugin.renderTabGroupSuggestion(group, el, new Map(), true, false, match);
+        plugin.renderTabGroupSuggestion(group, el, true, false, match);
 
         const highlight = el.querySelector('.ntg-nav-primary .suggestion-highlight');
         expect(highlight).toBeNull();

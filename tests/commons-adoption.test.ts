@@ -17,7 +17,7 @@ describe('Phase 1b owner-window cleanup', () => {
         expect(() => plugin.startDiagnostics()).not.toThrow();
     });
 
-    it('uses model identity for numbering, labels, MAIN marks and search even when it differs from the global window', () => {
+    it('uses model identity for numbering, MAIN marks and search even when it differs from the global window', () => {
         resetSessionWindowIndices();
         const doc = document.implementation.createHTMLDocument('popout');
         const win = { document: doc } as Window;
@@ -31,9 +31,14 @@ describe('Phase 1b owner-window cleanup', () => {
         expect(getSessionWindowIndex(pop)).toBe(2);
         expect(getSessionWindowIndex(main)).toBe(1);
         const plugin = createPlugin(new MockApp()) as any;
-        const labels = plugin.buildWindowLabels({ windows: [main, pop] });
-        expect(labels.get(win)).toBe('Main window');
-        expect(labels.get(window)).toBe('Pop-out 1');
+        const mainRow = doc.createElement('div');
+        plugin.renderWindowSuggestion(main, mainRow);
+        expect(mainRow.querySelector('.ntg-window-badge')?.textContent).toBe('1');
+        expect(mainRow.querySelector('.ntg-status-pill')?.textContent).toBe('HERE · MAIN');
+        const popRow = doc.createElement('div');
+        plugin.renderWindowSuggestion(pop, popRow);
+        expect(popRow.querySelector('.ntg-window-badge')?.textContent).toBe('2');
+        expect(popRow.querySelector('.ntg-status-pill')).toBeNull();
         const modal = new CollectTabsModal(new MockApp() as unknown as App, main, [pop], () => {});
         expect(modal.getSuggestions('main').map((r) => r.kind)).toEqual(['current']);
         const row = doc.createElement('div');

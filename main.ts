@@ -12,7 +12,7 @@ import { updateElementPathDatasets } from './src/utils/dom';
 import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, renderHighlightedText, addPickerHeader, closeOnEscapeFromOtherWindows, type PickerHeader } from './src/utils/modal';
 import type { CollectChoice } from './src/ui/collect-tabs-modal';
 import { CollectTabsModal, describeWindow as formatWindowDescription, getSessionWindowIndex } from './src/ui/collect-tabs-modal';
-import { TargetHighlighter, type HighlightTarget } from './src/utils/target-highlight';
+import { TargetHighlighter, type HighlightTarget } from 'commons/workspace';
 import { joinedSearch, renderJoinedHits, uniqueTitles, type JoinedSearch } from './src/utils/search';
 import type { ScopeChoice } from './src/ui/collect-tabs-modal';
 import { DiagLog, FreezeWatchdog, summarizeLayout } from './src/utils/diagnostics';
@@ -926,7 +926,6 @@ export default class NextTabGroupPlugin extends Plugin {
     private renderTabSuggestion(
         tab: TabInfo,
         el: HTMLElement,
-        labels: Map<Window | undefined, string>,
         showGroup: boolean,
         showWindow: boolean,
         match?: FuzzyMatch<TabInfo>,
@@ -1002,17 +1001,9 @@ export default class NextTabGroupPlugin extends Plugin {
         }
     }
 
-    private getWindowLabel(
-        win: Window | undefined,
-        labels: Map<Window | undefined, string>,
-    ): string {
-        return labels.get(win) ?? (win && win === this.getMainWindow() ? "Main window" : "Pop-out");
-    }
-
     private renderTabGroupSuggestion(
         group: TabGroupInfo,
         el: HTMLElement,
-        labels: Map<Window | undefined, string>,
         showGroup: boolean,
         showWindow: boolean,
         match?: FuzzyMatch<TabGroupInfo>,
@@ -2269,7 +2260,6 @@ export default class NextTabGroupPlugin extends Plugin {
         const multipleWindows =
             model.windows.length > 1;
         const showGroup = model.groups.length > 1;
-        const windowLabels = this.buildWindowLabels(model);
 
         new NavigationSuggestModal(
             this.app,
@@ -2277,7 +2267,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Select a tab",
             (tab) => this.getTabSearchText(tab),
             (tab) => this.focusLeafAndWindow(tab.leaf),
-            (tab, el, match) => this.renderTabSuggestion(tab, el, windowLabels, showGroup, multipleWindows, match),
+            (tab, el, match) => this.renderTabSuggestion(tab, el, showGroup, multipleWindows, match),
             this.firstNonActiveIndex(
                 tabs,
                 (tab) => tab.leaf === activeLeaf,
@@ -2337,7 +2327,6 @@ export default class NextTabGroupPlugin extends Plugin {
         const multipleWindows =
             model.windows.length > 1;
         const showGroup = model.groups.length > 1;
-        const windowLabels = this.buildWindowLabels(model);
 
         new NavigationSuggestModal(
             this.app,
@@ -2345,7 +2334,7 @@ export default class NextTabGroupPlugin extends Plugin {
             "Select a tab group",
             (group) => this.groupSearch(group).text,
             (group) => this.activateTabGroup(group.group, group.representative),
-            (group, el, match) => this.renderTabGroupSuggestion(group, el, windowLabels, showGroup, multipleWindows, match),
+            (group, el, match) => this.renderTabGroupSuggestion(group, el, showGroup, multipleWindows, match),
             this.firstNonActiveIndex(
                 orderedGroups,
                 (group) =>
@@ -2385,30 +2374,6 @@ export default class NextTabGroupPlugin extends Plugin {
 
         const count = `${groups.length} group${groups.length === 1 ? "" : "s"}`;
         return `${role} — ${title} · ${count}`;
-    }
-
-    /**
-      * Map each window to a stable display label. The model's main window
-      * is "Main window"; every pop-out is numbered by its position in
-     * the recency-ordered window list ("Pop-out 1", "Pop-out 2", …) so distinct
-     * pop-outs are distinguishable from one another.
-     */
-    private buildWindowLabels(
-        model: WorkspaceNavigationModel,
-    ): Map<Window | undefined, string> {
-        const labels = new Map<Window | undefined, string>();
-        let popoutOrdinal = 0;
-
-        for (const win of model.windows) {
-            if (win.isMainWindow) {
-                labels.set(win.window, "Main window");
-            } else {
-                popoutOrdinal += 1;
-                labels.set(win.window, `Pop-out ${popoutOrdinal}`);
-            }
-        }
-
-        return labels;
     }
 
     private switchToWindow(): void {
@@ -2898,4 +2863,3 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
         ];
     }
 }
-

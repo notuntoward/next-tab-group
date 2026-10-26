@@ -83,6 +83,13 @@ describe('Architecture guardrails: workspace/leaf lifecycle safety', () => {
 });
 
 describe('Architecture guardrails: private Obsidian API calls', () => {
+    it('uses the shared target highlighter instead of retaining a private copy', () => {
+        expect(mainTsSource).toMatch(/import \{[^}]*TargetHighlighter[^}]*\} from 'commons\/workspace'/);
+        const modalSource = fs.readFileSync(path.resolve(__dirname, '../src/ui/collect-tabs-modal.ts'), 'utf-8');
+        expect(modalSource).toMatch(/import \{[^}]*TargetHighlighter[^}]*\} from 'commons\/workspace'/);
+        expect(fs.existsSync(path.resolve(__dirname, '../src/utils/target-highlight.ts'))).toBe(false);
+    });
+
     it('never calls chooser.setSelectedItem with a boolean second argument, anywhere in the plugin', () => {
         // History: chooser.setSelectedItem(index, true) crashed real Obsidian
         // 1.13.7's internal forceSetSelectedItem with "t.instanceOf is not a

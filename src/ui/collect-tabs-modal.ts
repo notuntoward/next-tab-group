@@ -3,7 +3,7 @@ import { isLeafDetached } from 'commons/workspace';
 import { ownerWindow, setTimeoutIn } from 'commons/windows';
 import { addPickerHeader, registerEmacsMotionKeys, closeOnEscapeFromOtherWindows, type PickerHeader } from '../utils/modal';
 import type { WindowInfo } from '../../main';
-import { TargetHighlighter, type HighlightTarget } from '../utils/target-highlight';
+import { TargetHighlighter, type HighlightTarget } from 'commons/workspace';
 import { matchParts, renderMatchingTitles, statusWords, uniqueTitles, type SearchPart } from '../utils/search';
 
 export type CollectChoice =
@@ -1106,4 +1106,3 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         this.executeCollection();
     }
 }
-

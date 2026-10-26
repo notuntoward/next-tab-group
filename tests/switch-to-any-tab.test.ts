@@ -16,8 +16,7 @@ type TestPlugin = NextTabGroupPlugin & {
     buildTabGroupInfos: (leaves: WorkspaceLeaf[], activeLeaf: WorkspaceLeaf | null) => TabGroupInfo[];
     buildTabInfos: (groups: TabGroupInfo[]) => TabInfo[];
     getTabSearchText: (tab: TabInfo) => string;
-    renderTabSuggestion: (tab: TabInfo, el: HTMLElement, labels: Map<Window | undefined, string>, showGroup: boolean, showWindow: boolean) => void;
-    buildWindowLabels: (model: WorkspaceNavigationModel) => Map<Window | undefined, string>;
+    renderTabSuggestion: (tab: TabInfo, el: HTMLElement, showGroup: boolean, showWindow: boolean) => void;
 };
 
 interface WorkspaceNavigationModel {
@@ -372,11 +371,10 @@ describe('switchToAnyTab', () => {
         app.workspace.allLeaves = [mainA, winA];
         app.workspace.setActiveLeaf(mainA);
         const model = plugin.buildNavigationModel(asLeaf(mainA));
-        const labels = plugin.buildWindowLabels(model);
         const tabInWin = model.tabs.find((t) => (t.leaf as unknown as MockWorkspaceLeaf).id === 'winA')!;
 
         const el = rowEl();
-        plugin.renderTabSuggestion(tabInWin, el, labels, true, true);
+        plugin.renderTabSuggestion(tabInWin, el, true, true);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
         expect(secondary).not.toContain('Pop-out');
@@ -391,11 +389,10 @@ describe('switchToAnyTab', () => {
         app.workspace.allLeaves = [a];
         app.workspace.setActiveLeaf(a);
         const model = plugin.buildNavigationModel(asLeaf(a));
-        const labels = plugin.buildWindowLabels(model);
         const tab = model.tabs[0];
 
         const el = rowEl();
-        plugin.renderTabSuggestion(tab, el, labels, false, false);
+        plugin.renderTabSuggestion(tab, el, false, false);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
         expect(secondary).toBe('');
@@ -414,12 +411,11 @@ describe('switchToAnyTab', () => {
         app.workspace.allLeaves = [a, b];
         app.workspace.setActiveLeaf(a);
         const model = plugin.buildNavigationModel(asLeaf(a));
-        const labels = plugin.buildWindowLabels(model);
         const tab = model.tabs[0];
 
         const el = rowEl();
         // Single window: showWindow false. Multiple groups: showGroup true.
-        plugin.renderTabSuggestion(tab, el, labels, true, false);
+        plugin.renderTabSuggestion(tab, el, true, false);
 
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
         expect(secondary).toContain('tab');
@@ -441,15 +437,9 @@ describe('switchToAnyTab', () => {
         app.workspace.allLeaves = [mainA, winA, winB];
         app.workspace.setActiveLeaf(mainA);
         const model = plugin.buildNavigationModel(asLeaf(mainA));
-        const labels = plugin.buildWindowLabels(model);
-
-        expect(labels.get(rootContainer.win)).toBe('Main window');
-        expect(labels.get(windowContainer.win)).toBe('Pop-out 1');
-        expect(labels.get(popout2.win)).toBe('Pop-out 2');
-
         const tabInWin2 = model.tabs.find((t) => (t.leaf as unknown as MockWorkspaceLeaf).id === 'winB')!;
         const el = rowEl();
-        plugin.renderTabSuggestion(tabInWin2, el, labels, true, true);
+        plugin.renderTabSuggestion(tabInWin2, el, true, true);
         const secondary = el.querySelector('.ntg-nav-secondary')!.textContent!;
         expect(secondary).not.toContain('Pop-out');
         expect(el.querySelector('.ntg-window-badge')!.textContent).toBe('3');
