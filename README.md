@@ -273,3 +273,5 @@ npm run test:typecheck
 ```
 
 Tests live in `tests/` and use Vitest with jsdom. They cover single-group, multi-group, and multi-window deduplication scenarios, survivor selection, confirmation modal behavior, and non-file tab handling.
+
+The shared test setup spies on `window.focus()` because jsdom cannot foreground native windows. Calls remain assertable, DOM element focus is unchanged, and other jsdom errors are not suppressed. Native window activation still requires a manual Obsidian smoke test.
