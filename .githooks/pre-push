@@ -8,6 +8,8 @@
 
 set -e
 
+sh "${XDG_CONFIG_HOME:-$HOME/.config}/kilo/hooks/pre-push" "$@"
+
 if [ ! -f package.json ]; then
   exit 0
 fi

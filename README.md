@@ -267,6 +267,11 @@ The color is applied as a CSS custom property on every open window's `<body>`, s
 
 # Running Tests
 
+The repository hooks delegate attribution checks to the chezmoi-managed hooks
+under `~/.config/kilo/hooks`, then retain the existing pre-push test check.
+Install the shared hooks from [kilo-dotfiles](https://github.com/notuntoward/kilo-dotfiles)
+before committing or pushing; missing policy files fail closed.
+
 ```bash
 npm test
 npm run test:typecheck
