@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec bash "${XDG_CONFIG_HOME:-$HOME/.config}/kilo/hooks/commit-msg" "$@"
