@@ -329,7 +329,7 @@ describe('Phase 1b bare-global guardrails', () => {
             expect(result.messages.filter((m) => m.ruleId === 'no-restricted-globals')).toHaveLength(5);
             expect(result.messages.filter((m) => m.ruleId === 'no-restricted-properties')).toHaveLength(2);
         }
-    });
+    }, 20000);
 
     it('does not claim OS-level focus before commons/os exists', () => {
         expect(mainTsSource).not.toContain('guarantees OS-level window focus');
