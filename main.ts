@@ -2697,10 +2697,6 @@ export class NextTabGroupSettingTab extends PluginSettingTab {
         this.plugin = plugin;
     }
 
-    display(): void {
-        // Handled by getSettingDefinitions() in Obsidian 1.13+
-    }
-
     /**
      * Obsidian 1.14 removed per-control onChange; every control change now goes
      * through setControlValue. Re-apply the active-tab colors when one of theirs changes.

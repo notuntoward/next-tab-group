@@ -31,7 +31,7 @@
     "commons": "file:../obsidian-commons",
     "esbuild": "^0.28.1",
     "eslint": "^9.39.4",
-    "eslint-plugin-obsidianmd": "^0.3.0",
+    "eslint-plugin-obsidianmd": "^0.4.2",
     "globals": "^17.6.0",
     "jsdom": "^29.1.1",
     "obsidian": "~1.14.4",
