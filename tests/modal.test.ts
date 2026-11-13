@@ -44,15 +44,14 @@ describe('registerEmacsMotionKeys', () => {
         document.body.innerHTML = '';
     });
 
-    it('registers Ctrl+F, Ctrl+B, Ctrl+N, and Ctrl+P', () => {
+    it('registers text motion aliases without overriding native Ctrl+N/P', () => {
         const { modal, scope } = createMockModal();
         registerEmacsMotionKeys(modal);
 
         const keys = scope.registrations.map((r) => r.key);
-        expect(keys).toContain('F');
-        expect(keys).toContain('B');
-        expect(keys).toContain('N');
-        expect(keys).toContain('P');
+        expect(keys).toEqual(expect.arrayContaining(['A', 'E', 'F', 'B']));
+        expect(keys).not.toContain('N');
+        expect(keys).not.toContain('P');
     });
 
     it('moves the cursor right with Ctrl+F', () => {
@@ -123,46 +122,6 @@ describe('registerEmacsMotionKeys', () => {
 
         expect(inputEl.selectionStart).toBe(1);
         expect(inputEl.selectionEnd).toBe(1);
-    });
-
-    it('moves the selection down with Ctrl+N', () => {
-        const { modal, chooser } = createMockModal();
-        chooser.selectedItem = 0;
-        registerEmacsMotionKeys(modal);
-
-        triggerKey(modal.scope as unknown as MockScope, 'N');
-
-        expect(chooser.selectedItem).toBe(1);
-    });
-
-    it('moves the selection up with Ctrl+P', () => {
-        const { modal, chooser } = createMockModal();
-        chooser.selectedItem = 2;
-        registerEmacsMotionKeys(modal);
-
-        triggerKey(modal.scope as unknown as MockScope, 'P');
-
-        expect(chooser.selectedItem).toBe(1);
-    });
-
-    it('does not move the selection past the last suggestion', () => {
-        const { modal, chooser } = createMockModal();
-        chooser.selectedItem = 2;
-        registerEmacsMotionKeys(modal);
-
-        triggerKey(modal.scope as unknown as MockScope, 'N');
-
-        expect(chooser.selectedItem).toBe(2);
-    });
-
-    it('does not move the selection before the first suggestion', () => {
-        const { modal, chooser } = createMockModal();
-        chooser.selectedItem = 0;
-        registerEmacsMotionKeys(modal);
-
-        triggerKey(modal.scope as unknown as MockScope, 'P');
-
-        expect(chooser.selectedItem).toBe(0);
     });
 
     describe('left/right neighbor navigation', () => {
@@ -236,8 +195,8 @@ describe('registerEmacsMotionKeys', () => {
         inputEl.setSelectionRange(0, 0);
         registerEmacsMotionKeys(modal);
 
-        expect(() => triggerKey(modal.scope as unknown as MockScope, 'N')).not.toThrow();
-        expect(() => triggerKey(modal.scope as unknown as MockScope, 'P')).not.toThrow();
+        expect(() => triggerKey(modal.scope as unknown as MockScope, 'F')).not.toThrow();
+        expect(() => triggerKey(modal.scope as unknown as MockScope, 'B')).not.toThrow();
         expect(inputEl.selectionStart).toBe(0);
     });
 });

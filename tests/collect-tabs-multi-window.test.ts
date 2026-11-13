@@ -156,6 +156,17 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             modal.close();
         });
 
+        it('leaves Ctrl+N/P to the native chooser without duplicating other keys', () => {
+            const { modal } = setup();
+            const registrations = (modal as any).scope.registrations as Array<{ modifiers: string[] | null; key: string }>;
+            const keys = registrations.map((r) => `${r.modifiers?.join('+')}|${r.key}`);
+            expect(keys).not.toContain('Ctrl|N');
+            expect(keys).not.toContain('Ctrl|P');
+            expect(new Set(keys).size).toBe(keys.length);
+            expect(keys).toEqual(expect.arrayContaining(['Ctrl|B', 'Ctrl|F', '|ArrowLeft', '|ArrowRight']));
+            modal.close();
+        });
+
         it('Left/Right are only registered when a window ring is supplied', () => {
             const { modal } = setup(false);
             const keys = (modal as any).scope.registrations.map((r: any) => r.key);
