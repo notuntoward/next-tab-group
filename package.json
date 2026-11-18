@@ -6,10 +6,13 @@
   "scripts": {
     "lint": "eslint . --max-warnings=0",
     "dev": "node esbuild.config.mjs",
-    "build": "npm run lint && npm test && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "build": "npm run check && npm test && npm run bundle",
     "test": "vitest run",
     "test:ui": "vitest --ui",
-    "test:typecheck": "tsc -noEmit -p tsconfig.test.json"
+    "test:typecheck": "tsc -noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit -skipLibCheck",
+    "check": "npm run lint && npm run typecheck",
+    "bundle": "node esbuild.config.mjs production"
   },
   "keywords": [
     "obsidian",
