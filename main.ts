@@ -1191,12 +1191,11 @@ export default class NextTabGroupPlugin extends Plugin {
                     } else if (result.kind === 'all') {
                         void this.collectTabs('all');
                     } else if (result.kind === 'window') {
-                        // Collecting between the initiating window and exactly one
-                        // other window is just a 2-element case of 'multi': share
-                        // that single destination/merge algorithm rather than a
-                        // separate implementation, using the same currentWinInfo
-                        // snapshot captured when the modal opened.
-                        void this.collectTabs('multi', [currentWinInfo, result.winInfo]);
+                        // A single checked popout has no HERE/main window in its
+                        // selection. Collect it as a one-window snapshot so an
+                        // unchecked Main Window cannot accidentally become the
+                        // destination merely because it was the initiating window.
+                        void this.collectTabs('multi', [result.winInfo]);
                     }
                 }
             },

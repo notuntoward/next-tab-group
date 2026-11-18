@@ -649,6 +649,51 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             }
         });
 
+        it('checking only one popout with Main unchecked keeps Main untouched', async () => {
+            const mainGroup = new MockWorkspaceParent(rootContainer);
+            const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
+
+            const popGroup1 = new MockWorkspaceParent(popoutContainer1);
+            const p1 = leaf('p1', 'Pop1.md', popGroup1, popoutContainer1);
+
+            const popGroup2 = new MockWorkspaceParent(popoutContainer2);
+            const p2 = leaf('p2', 'Pop2.md', popGroup2, popoutContainer2);
+
+            app.workspace.allLeaves = [m1, p1, p2];
+            app.workspace.rootLeaves = [m1];
+            app.workspace.setActiveLeaf(m1);
+            (globalThis as any).activeWindow = globalThis.window;
+
+            let capturedModal: any = null;
+            const originalOpen = CollectTabsModal.prototype.open;
+            CollectTabsModal.prototype.open = function (this: any) {
+                capturedModal = this;
+            };
+
+            try {
+                await plugin.runCollectTabs();
+                expect(capturedModal).not.toBeNull();
+
+                const suggestions = capturedModal.getSuggestions('');
+                capturedModal.clearSelection();
+                const popoutRow = suggestions.find((s: any) => s.winInfo?.window === win1Obj);
+                expect(popoutRow).toBeTruthy();
+                capturedModal.toggleRow(popoutRow);
+                capturedModal.executeCollection();
+                await new Promise((resolve) => setTimeout(resolve, 0));
+
+                expect(p1.detached).toBe(false);
+                expect(p2.detached).toBe(false);
+                expect(m1.detached).toBe(false);
+                expect(mainGroup.children).toEqual([m1]);
+                expect(popoutWin1.closed).toBe(false);
+                expect(popoutWin2.closed).toBe(false);
+            } finally {
+                CollectTabsModal.prototype.open = originalOpen;
+                (globalThis as any).activeWindow = undefined;
+            }
+        });
+
         it('with 4 total windows (Main, HERE, 2 other popouts), checking HERE + one popout leaves Main AND the other popout completely untouched', async () => {
             // Precise reproduction of a real user report: Main, HERE (popout A),
             // popout B, and popout C all open. HERE is checked by default; the

@@ -173,6 +173,16 @@ describe('Architecture guardrails: multi-window collection destination selection
         expect(callbackRegion).toContain("collectTabs('multi', [currentWinInfo])");
         expect(callbackRegion).not.toMatch(/collectTabs\('current'\)/);
     });
+
+    it('a single checked popout does not include the initiating Main Window in its snapshot', () => {
+        const modalCall = mainTsSource.match(/new CollectTabsModal\([\s\S]*?\.open\(\);/);
+        expect(modalCall).not.toBeNull();
+        const callbackRegion = modalCall![0];
+        const windowBranch = callbackRegion.match(/} else if \(result\.kind === 'window'\) \{[\s\S]*?\n {20}\}/);
+        expect(windowBranch).not.toBeNull();
+        expect(windowBranch![0]).toContain("collectTabs('multi', [result.winInfo])");
+        expect(windowBranch![0]).not.toContain('[currentWinInfo, result.winInfo]');
+    });
 });
 
 describe('Architecture guardrails: modal open() contract', () => {
