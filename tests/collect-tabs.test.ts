@@ -9,7 +9,7 @@ import {
 } from './mocks/obsidian';
 
 type TestPlugin = NextTabGroupPlugin & {
-    collectTabs: () => Promise<void>;
+    collectTabsToWindow: () => Promise<void>;
     getActiveLeafInFocusedWindow: () => WorkspaceLeaf | null;
     buildNavigationModel: (activeLeaf: WorkspaceLeaf | null) => {
         tabs: Array<{ leaf: WorkspaceLeaf; group: { window: unknown } }>;
@@ -33,7 +33,7 @@ function leaf(
     return l;
 }
 
-describe('collectTabs', () => {
+describe('collectTabsToWindow', () => {
     let app: MockApp;
     let plugin: TestPlugin;
     let rootContainer: MockWorkspaceContainer;
@@ -70,7 +70,7 @@ describe('collectTabs', () => {
             return created;
         };
 
-        await plugin.collectTabs();
+        await plugin.collectTabsToWindow();
 
         // Sibling tab in the SAME group must NEVER be detached!
         expect(sibling.detached, 'sibling in active group must not be detached').toBe(false);
@@ -106,7 +106,7 @@ describe('collectTabs', () => {
             return new MockWorkspaceLeaf(null).setId(`leaf_${app.workspace.allLeaves.length}`).setParent(parent);
         };
 
-        await plugin.collectTabs();
+        await plugin.collectTabsToWindow();
 
         // No new leaves created and no existing leaves detached
         expect(calls).toHaveLength(0);
@@ -130,7 +130,7 @@ describe('collectTabs', () => {
         app.workspace.rootLeaves = [active, mainForeign, popout1, popout2];
         app.workspace.setActiveLeaf(active);
 
-        await plugin.collectTabs();
+        await plugin.collectTabsToWindow();
 
         // Main foreign tab is migrated
         expect(mainForeign.detached).toBe(true);
@@ -165,7 +165,7 @@ describe('collectTabs', () => {
             return createdLeaf;
         };
 
-        await plugin.collectTabs();
+        await plugin.collectTabsToWindow();
 
         expect(createdLeaf).not.toBeNull();
         // Ephemeral state must be preserved
@@ -197,7 +197,7 @@ describe('collectTabs', () => {
             return new MockWorkspaceLeaf(null);
         };
 
-        await plugin.collectTabs();
+        await plugin.collectTabsToWindow();
 
         expect(calls).toHaveLength(0);
         expect(tab1.detached).toBe(false);

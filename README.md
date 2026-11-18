@@ -42,9 +42,9 @@ Order: Top L -> Top R -> Bot L -> Bot R -> Top L -> ...
 
 The command remembers which tab was active in each group, so switching between groups restores your previous position. Use this when you have a split workspace and want to quickly move focus between panes without reaching for the mouse.
 
-## Collect Tabs
+## Collect Tabs to Window
 
-**Command ID:** `collect-tabs`
+**Command ID:** `collect-tabs-to-window`
 
 Gathers tabs into a single tab group. Behavior depends on how many windows are open.
 
@@ -256,7 +256,7 @@ The color is applied as a CSS custom property on every open window's `<body>`, s
 1. Go to **Settings -> Hotkeys** in Obsidian.
 2. Search for:
    - `Next tab group`
-   - `Collect tabs`
+   - `Collect tabs to window`
    - `Rotate tab groups`
    - `Deduplicate tabs`
    - `Switch to tab in group`

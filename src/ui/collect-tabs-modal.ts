@@ -193,10 +193,10 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         this.onPick = onPick;
         this.actionLabel = options.actionLabel ?? 'Collect';
         this.nothingCheckedNotice = options.nothingCheckedNotice ?? 'Nothing checked.';
-        this.commandName = options.commandName ?? 'collect-tabs';
+        this.commandName = options.commandName ?? 'collect-tabs-to-window';
         this.header = options.header ?? {
             kind: 'collect',
-            title: 'Collect tabs',
+            title: 'Collect tabs to window',
             hint: 'Check the windows whose tabs should be gathered into one tab group.',
             icon: 'combine',
         };

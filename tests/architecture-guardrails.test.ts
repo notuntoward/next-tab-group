@@ -25,8 +25,8 @@ describe('Architecture guardrails: workspace/leaf lifecycle safety', () => {
     it('never manually detaches a split/tab-group container (WorkspaceParent), only individual leaves', () => {
         // History: commit 0fff05f added `parent.detach()` calls on now-empty
         // split/tab-group containers after evacuating their leaves during
-        // collectTabs(). Commit 97bfc70 (~2 hours later) reverted this with the
-        // message "Remove manual parent.detach() from collectTabs to prevent
+        // collectTabsToWindow(). Commit 97bfc70 (~2 hours later) reverted this with the
+        // message "Remove manual parent.detach() from collectTabsToWindow to prevent
         // Obsidian split tree corruption" -- manually detaching a container
         // Obsidian itself manages corrupts its internal split tree, which then
         // gets serialized into workspace.json on save and can prevent window /
@@ -133,10 +133,10 @@ describe('Architecture guardrails: private Obsidian API calls', () => {
 });
 
 describe('Architecture guardrails: multi-window collection destination selection', () => {
-    it('collectTabs("multi", ...) picks the destination from the checked-windows snapshot, never from a freshly re-queried active leaf/window', () => {
+    it('collectTabsToWindow("multi", ...) picks the destination from the checked-windows snapshot, never from a freshly re-queried active leaf/window', () => {
         // History: the destination for a multi-popout collection was picked by
         // re-querying "the active window" (via a fresh activeLeaf/currentWinInfo
-        // computed at the moment collectTabs() runs) rather than using the
+        // computed at the moment collectTabsToWindow() runs) rather than using the
         // isCurrentWindow flag already captured in the checked-windows snapshot
         // when the modal opened. If live focus moved between modal-open and
         // modal-close (e.g. because closing the modal returned focus to the Main
@@ -156,22 +156,22 @@ describe('Architecture guardrails: multi-window collection destination selection
         expect(multiBranch).not.toMatch(/destWinInfo\.isCurrentWindow\s*\?\s*activeLeaf/);
     });
 
-    it('the modal\'s single-window choice uses the captured snapshot, never collectTabs("current") which re-queries the active window', () => {
+    it('the modal\'s single-window choice uses the captured snapshot, never collectTabsToWindow("current") which re-queries the active window', () => {
         // History: the CollectTabsModal's single-result onPick branch called
-        // collectTabs('current'), which re-derives the active leaf/window via
+        // collectTabsToWindow('current'), which re-derives the active leaf/window via
         // getActiveLeafInFocusedWindow() at the moment the callback runs. If live
         // focus moved while the modal was up (e.g. the user clicked another
         // window, or closing the modal restored focus elsewhere), the collection
         // targeted the wrong window, so the intended window's tab groups were
         // left untouched -- appearing to the user as "collect tabs did nothing".
         // The single-window choice must instead reuse the currentWinInfo snapshot
-        // captured when the modal opened, i.e. collectTabs('multi', [currentWinInfo]).
+        // captured when the modal opened, i.e. collectTabsToWindow('multi', [currentWinInfo]).
         const modalCall = mainTsSource.match(/new CollectTabsModal\([\s\S]*?\.open\(\);/);
         expect(modalCall).not.toBeNull();
         const callbackRegion = modalCall![0];
 
-        expect(callbackRegion).toContain("collectTabs('multi', [currentWinInfo])");
-        expect(callbackRegion).not.toMatch(/collectTabs\('current'\)/);
+        expect(callbackRegion).toContain("collectTabsToWindow('multi', [currentWinInfo])");
+        expect(callbackRegion).not.toMatch(/collectTabsToWindow\('current'\)/);
     });
 
     it('a single checked popout does not include the initiating Main Window in its snapshot', () => {
@@ -180,7 +180,7 @@ describe('Architecture guardrails: multi-window collection destination selection
         const callbackRegion = modalCall![0];
         const windowBranch = callbackRegion.match(/} else if \(result\.kind === 'window'\) \{[\s\S]*?\n {20}\}/);
         expect(windowBranch).not.toBeNull();
-        expect(windowBranch![0]).toContain("collectTabs('multi', [result.winInfo])");
+        expect(windowBranch![0]).toContain("collectTabsToWindow('multi', [result.winInfo])");
         expect(windowBranch![0]).not.toContain('[currentWinInfo, result.winInfo]');
     });
 });

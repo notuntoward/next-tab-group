@@ -16,8 +16,8 @@ import { CollectTabsModal, CollectChoice, resetSessionWindowIndices } from '../s
 import type { WindowInfo } from '../main';
 
 type TestPlugin = NextTabGroupPlugin & {
-    runCollectTabs: () => void;
-    collectTabs: (scope?: 'current' | 'all' | 'multi', source?: WindowInfo[]) => Promise<void>;
+    runCollectTabsToWindow: () => void;
+    collectTabsToWindow: (scope?: 'current' | 'all' | 'multi', source?: WindowInfo[]) => Promise<void>;
     describeWindow: (winOrInfo: WindowInfo | Window) => string;
     getActiveLeafInFocusedWindow: () => WorkspaceLeaf | null;
     buildNavigationModel: (activeLeaf: WorkspaceLeaf | null) => any;
@@ -188,7 +188,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.setActiveLeaf(a);
             MockNotice.notices = [];
 
-            await plugin.collectTabs('current');
+            await plugin.collectTabsToWindow('current');
 
             expect(noticeText()).toEqual(['No tabs to collect.']);
         });
@@ -206,7 +206,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             const mainInfo = model.windows.find((w: WindowInfo) => w.isMainWindow);
             MockNotice.notices = [];
 
-            await plugin.collectTabs('multi', [mainInfo]);
+            await plugin.collectTabsToWindow('multi', [mainInfo]);
 
             const [msg] = noticeText();
             expect(msg).toMatch(/^No tabs to collect in window \d+\.$/);
@@ -215,7 +215,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
         });
     });
 
-    describe('Single-window collectTabs window isolation', () => {
+    describe('Single-window collectTabsToWindow window isolation', () => {
         it('consolidates splits within a popout window and leaves main window untouched', async () => {
             // Main window has 2 leaves
             const mainGroup = new MockWorkspaceParent(rootContainer);
@@ -235,7 +235,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.setActiveLeaf(pop1);
             (globalThis as any).activeWindow = win1Obj;
 
-            await plugin.collectTabs('current');
+            await plugin.collectTabsToWindow('current');
 
             // pop3 migrated into popGroup1
             expect(pop3.detached).toBe(true);
@@ -277,7 +277,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.setActiveLeaf(p1_1);
             (globalThis as any).activeWindow = win1Obj;
 
-            await plugin.collectTabs('current');
+            await plugin.collectTabsToWindow('current');
 
             // In Popout 1: p1_2 is collected into p1G1
             expect(p1_2.detached).toBe(true);
@@ -326,7 +326,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.setActiveLeaf(m1);
             (globalThis as any).activeWindow = globalThis.window;
 
-            await plugin.collectTabs('current');
+            await plugin.collectTabsToWindow('current');
 
             // In Main Window: m2 is collected into mainG1
             expect(m2.detached).toBe(true);
@@ -351,14 +351,14 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
     });
 
     describe('Option 2 Command Registration & Dispatch', () => {
-        it('registers exactly one command: collect-tabs (no separate all-windows or selected-windows commands)', () => {
+        it('registers exactly one command: collect-tabs-to-window (no separate all-windows or selected-windows commands)', () => {
             const commands = (plugin as any).commands ?? [];
-            const collectCmd = commands.find((c: any) => c.id === 'collect-tabs');
+            const collectCmd = commands.find((c: any) => c.id === 'collect-tabs-to-window');
             const allCmd = commands.find((c: any) => c.id === 'collect-tabs-all-windows');
             const selCmd = commands.find((c: any) => c.id === 'collect-tabs-selected-windows');
 
             expect(collectCmd).toBeDefined();
-            expect(collectCmd.name).toBe('Collect tabs');
+            expect(collectCmd.name).toBe('Collect tabs to window');
             expect(collectCmd.callback).toBeDefined();
             // In Option 2, checkCallback is NOT used
             expect(collectCmd.checkCallback).toBeUndefined();
@@ -368,7 +368,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             expect(selCmd).toBeUndefined();
         });
 
-        it('when only 1 window is open, runCollectTabs() immediately executes in-window consolidation without opening modal', async () => {
+        it('when only 1 window is open, runCollectTabsToWindow() immediately executes in-window consolidation without opening modal', async () => {
             app.workspace.floatingSplit.children = [];
 
             const g1 = new MockWorkspaceParent(rootContainer);
@@ -387,7 +387,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 }
             }
 
-            await plugin.runCollectTabs();
+            await plugin.runCollectTabsToWindow();
 
             expect(modalOpened).toBe(false);
             // m2 should be consolidated into g1
@@ -416,7 +416,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             try {
-                await plugin.runCollectTabs();
+                await plugin.runCollectTabsToWindow();
 
                 expect(capturedModal).not.toBeNull();
                 const suggestions = capturedModal.getSuggestions('');
@@ -472,7 +472,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             try {
-                await plugin.runCollectTabs();
+                await plugin.runCollectTabsToWindow();
 
                 // Modal should be open and active
                 expect(CollectTabsModal.activeModal).not.toBeNull();
@@ -567,11 +567,11 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
         });
     });
 
-    describe('End-to-end: runCollectTabs() modal interaction -> collectTabs("multi")', () => {
+    describe('End-to-end: runCollectTabsToWindow() modal interaction -> collectTabsToWindow("multi")', () => {
         // These tests drive the REAL modal (check/highlight rows, then trigger the
-        // real onPick callback wired by runCollectTabs()) rather than calling
-        // collectTabs('multi', ...) directly with hand-built arrays. This exercises
-        // the actual checkedWins construction logic in runCollectTabs()'s onPick,
+        // real onPick callback wired by runCollectTabsToWindow()) rather than calling
+        // collectTabsToWindow('multi', ...) directly with hand-built arrays. This exercises
+        // the actual checkedWins construction logic in runCollectTabsToWindow()'s onPick,
         // which the direct-call tests below bypass entirely.
         it('checking HERE + Main (with a 3rd, unchecked popout present) leaves the unchecked popout completely untouched', async () => {
             const mainGroup = new MockWorkspaceParent(rootContainer);
@@ -602,7 +602,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             try {
-                await plugin.runCollectTabs();
+                await plugin.runCollectTabsToWindow();
                 expect(capturedModal).not.toBeNull();
 
                 const suggestions = capturedModal.getSuggestions('');
@@ -623,9 +623,9 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 expect(suggestions[3].checked).toBe(false);
 
                 capturedModal.executeCollection();
-                // executeCollection()'s onPick callback fires collectTabs() via a
-                // fire-and-forget `void` call (runCollectTabs() cannot await it
-                // synchronously from inside the modal's onPick), and collectTabs()
+                // executeCollection()'s onPick callback fires collectTabsToWindow() via a
+                // fire-and-forget `void` call (runCollectTabsToWindow() cannot await it
+                // synchronously from inside the modal's onPick), and collectTabsToWindow()
                 // itself awaits leaf.setViewState() per migrated leaf. Flush
                 // pending microtasks/macrotasks before asserting on its effects.
                 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -671,7 +671,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             try {
-                await plugin.runCollectTabs();
+                await plugin.runCollectTabsToWindow();
                 expect(capturedModal).not.toBeNull();
 
                 const suggestions = capturedModal.getSuggestions('');
@@ -740,7 +740,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             try {
-                await plugin.runCollectTabs();
+                await plugin.runCollectTabsToWindow();
                 expect(capturedModal).not.toBeNull();
 
                 const suggestions = capturedModal.getSuggestions('');
@@ -1842,7 +1842,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
         });
     });
 
-    describe('collectTabs("all")', () => {
+    describe('collectTabsToWindow("all")', () => {
         it('gathers all tabs from all popouts into main window active group and closes popouts', async () => {
             const mainGroup1 = new MockWorkspaceParent(rootContainer);
             const mainGroup2 = new MockWorkspaceParent(rootContainer);
@@ -1870,7 +1870,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 return created;
             };
 
-            await plugin.collectTabs('all');
+            await plugin.collectTabsToWindow('all');
 
             // m1 and m2 in mainGroup1 stay attached
             expect(m1.detached).toBe(false);
@@ -1904,7 +1904,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             app.workspace.setActiveLeaf(p1);
             (globalThis as any).activeWindow = win1Obj;
 
-            await plugin.collectTabs('all');
+            await plugin.collectTabsToWindow('all');
 
             // Popout leaf migrated to mainGroup
             expect(p1.detached).toBe(true);
@@ -1917,7 +1917,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
         });
     });
 
-    describe('2-window collect (delegates to collectTabs("multi", [current, target]))', () => {
+    describe('2-window collect (delegates to collectTabsToWindow("multi", [current, target]))', () => {
         // The single-choice "collect this window + one other window" case (what a
         // 2-total-window setup typically produces) is not a separate code path: it
         // is exactly a 2-element instance of the same 'multi' destination/merge
@@ -1957,7 +1957,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             // Gather only from Popout 1 (invoked from Main Window)
-            await plugin.collectTabs('multi', [mainWinInfo, pop1Info]);
+            await plugin.collectTabsToWindow('multi', [mainWinInfo, pop1Info]);
 
             // Popout 1 tab migrated and Popout 1 window closed
             expect(p1.detached).toBe(true);
@@ -2005,7 +2005,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             // Collect Popout 2 into Popout 1 (invoked from Popout 1)
-            await plugin.collectTabs('multi', [pop1Info, pop2Info]);
+            await plugin.collectTabsToWindow('multi', [pop1Info, pop2Info]);
 
             // Popout 2 tab migrated, Popout 2 closed
             expect(p2.detached).toBe(true);
@@ -2058,7 +2058,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             // Collect Main Window (invoked from Popout 1; includes Main Window)
-            await plugin.collectTabs('multi', [pop1Info, mainWinInfo]);
+            await plugin.collectTabsToWindow('multi', [pop1Info, mainWinInfo]);
 
             // Popout 1 tab migrated to Main Window, Popout 1 closed
             expect(p1.detached).toBe(true);
@@ -2075,7 +2075,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
         });
     });
 
-    describe('collectTabs("multi", checkedWindows)', () => {
+    describe('collectTabsToWindow("multi", checkedWindows)', () => {
         it('when all windows are checked, collects all popouts into main window and closes all popouts', async () => {
             const mainGroup = new MockWorkspaceParent(rootContainer);
             const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
@@ -2118,7 +2118,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 isMainWindow: false,
             };
 
-            await plugin.collectTabs('multi', [mainWinInfo, pop1Info, pop2Info]);
+            await plugin.collectTabsToWindow('multi', [mainWinInfo, pop1Info, pop2Info]);
 
             expect(p1.detached).toBe(true);
             expect(p2.detached).toBe(true);
@@ -2161,7 +2161,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             // Check only Main window + Popout 1 (Popout 2 is unchecked)
-            await plugin.collectTabs('multi', [mainWinInfo, pop1Info]);
+            await plugin.collectTabsToWindow('multi', [mainWinInfo, pop1Info]);
 
             // Popout 1 tab migrated to Main Window, Popout 1 closed
             expect(p1.detached).toBe(true);
@@ -2212,7 +2212,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             // Check Popout 1 + Popout 2 (Main window is not checked)
-            await plugin.collectTabs('multi', [pop1Info, pop2Info]);
+            await plugin.collectTabsToWindow('multi', [pop1Info, pop2Info]);
 
             // Popout 2 migrated into Popout 1 and closed
             expect(p2.detached).toBe(true);
@@ -2278,7 +2278,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 isMainWindow: false,
             };
 
-            await plugin.collectTabs('multi', [mainWinInfo, pop2Info]);
+            await plugin.collectTabsToWindow('multi', [mainWinInfo, pop2Info]);
 
             // Popout 2's tab is still migrated out (it becomes leaf-empty)...
             expect(p2.detached).toBe(true);
@@ -2320,7 +2320,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             // Only Popout 1 is checked
-            await plugin.collectTabs('multi', [pop1Info]);
+            await plugin.collectTabsToWindow('multi', [pop1Info]);
 
             // p1b split leaf migrated into p1's group
             expect(p1b.detached).toBe(true);
@@ -2380,7 +2380,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
             };
 
             // Collect Popout 1 (destination, initiated from here) + Popout 2.
-            await plugin.collectTabs('multi', [pop1Info, pop2Info]);
+            await plugin.collectTabsToWindow('multi', [pop1Info, pop2Info]);
 
             // Popout 2's tab migrated in, and Popout 1's OWN second group (p1b)
             // must also be merged into the same destination group as p1a.
@@ -2395,7 +2395,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
 
         it('collects into the window the command was invoked from, even if live focus has since moved elsewhere (e.g. because the modal closed)', async () => {
             // Bug: the destination for a multi-popout collection was picked using
-            // a freshly re-queried "active window" at the moment collectTabs()
+            // a freshly re-queried "active window" at the moment collectTabsToWindow()
             // actually runs, rather than the window the collect-tabs command was
             // originally invoked from (captured when the modal opened). If focus
             // has moved elsewhere in the interim -- e.g. because closing the
@@ -2435,13 +2435,13 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 isMainWindow: false,
             };
 
-            // ...but by the time collectTabs() actually executes (e.g. right as
+            // ...but by the time collectTabsToWindow() actually executes (e.g. right as
             // the modal closes), live focus has moved to the Main Window, which
             // was never checked at all.
             app.workspace.setActiveLeaf(m1);
             (globalThis as any).activeWindow = globalThis.window;
 
-            await plugin.collectTabs('multi', [pop1Info, pop2Info]);
+            await plugin.collectTabsToWindow('multi', [pop1Info, pop2Info]);
 
             // Popout 2 merges into Popout 1 (the window the command was actually
             // invoked from), NOT into the Main Window. Migration creates a NEW

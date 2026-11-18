@@ -323,10 +323,10 @@ export default class NextTabGroupPlugin extends Plugin {
         });
 
         this.addCommand({
-            id: 'collect-tabs',
-            name: 'Collect tabs',
+            id: 'collect-tabs-to-window',
+            name: 'Collect tabs to window',
             callback: () => {
-                this.runCollectTabs();
+                this.runCollectTabsToWindow();
             }
         });
 
@@ -1143,12 +1143,12 @@ export default class NextTabGroupPlugin extends Plugin {
      * - If 2+ windows are open, displays a single-select modal offering "This window",
      *   "All windows", or a specific other window.
      */
-    private async runCollectTabs(): Promise<void> {
+    private async runCollectTabsToWindow(): Promise<void> {
         const activeLeaf = this.getActiveLeafInFocusedWindow();
         const model = this.buildNavigationModel(activeLeaf);
 
         if (model.windows.length <= 1) {
-            await this.collectTabs('current');
+            await this.collectTabsToWindow('current');
             return;
         }
 
@@ -1162,7 +1162,7 @@ export default class NextTabGroupPlugin extends Plugin {
             (result) => {
                 if (Array.isArray(result)) {
                     if (result.some((c) => c.kind === 'all')) {
-                        void this.collectTabs('all');
+                        void this.collectTabsToWindow('all');
                         return;
                     }
                     const checkedWins: WindowInfo[] = [];
@@ -1174,7 +1174,7 @@ export default class NextTabGroupPlugin extends Plugin {
                         }
                     }
                     if (checkedWins.length > 0) {
-                        void this.collectTabs('multi', checkedWins);
+                        void this.collectTabsToWindow('multi', checkedWins);
                     }
                 } else {
                     if (result.kind === 'current') {
@@ -1187,15 +1187,15 @@ export default class NextTabGroupPlugin extends Plugin {
                         // the exact hazard AGENTS.md hard rule 5 warns about. A
                         // single checked/HERE window is a one-element instance of
                         // the same 'multi' algorithm the other branches use.
-                        void this.collectTabs('multi', [currentWinInfo]);
+                        void this.collectTabsToWindow('multi', [currentWinInfo]);
                     } else if (result.kind === 'all') {
-                        void this.collectTabs('all');
+                        void this.collectTabsToWindow('all');
                     } else if (result.kind === 'window') {
                         // A single checked popout has no HERE/main window in its
                         // selection. Collect it as a one-window snapshot so an
                         // unchecked Main Window cannot accidentally become the
                         // destination merely because it was the initiating window.
-                        void this.collectTabs('multi', [result.winInfo]);
+                        void this.collectTabsToWindow('multi', [result.winInfo]);
                     }
                 }
             },
@@ -1258,7 +1258,7 @@ export default class NextTabGroupPlugin extends Plugin {
      *            2-window "collect this window and one other" case, which is just a
      *            2-element instance of the same destination/merge algorithm).
      */
-    private async collectTabs(
+    private async collectTabsToWindow(
         scope: 'current' | 'all' | 'multi' = 'current',
         source?: WindowInfo[],
     ) {
@@ -1360,10 +1360,10 @@ export default class NextTabGroupPlugin extends Plugin {
         const targetParent = destLeaf.parent as any;
         if (!targetParent) return;
 
-        if (this.collectInFlight > 0) this.diag.log('WARN', 'collectTabs re-entered while another is in flight', { inFlight: this.collectInFlight });
+        if (this.collectInFlight > 0) this.diag.log('WARN', 'collectTabsToWindow re-entered while another is in flight', { inFlight: this.collectInFlight });
         this.collectInFlight++;
-        const endCollect = this.diag.begin('collectTabs', { scope, tabs: tabsToMigrate.length, popouts: evacuatedPopouts.size });
-        this.logLayout('collectTabs before');
+        const endCollect = this.diag.begin('collectTabsToWindow', { scope, tabs: tabsToMigrate.length, popouts: evacuatedPopouts.size });
+        this.logLayout('collectTabsToWindow before');
         try {
             for (const leaf of tabsToMigrate) {
                 this.diag.log('STEP', 'collect migrate leaf', { id: this.getLeafId(leaf) });
@@ -1387,15 +1387,15 @@ export default class NextTabGroupPlugin extends Plugin {
                 this.closePopoutWindowIfEmpty(win);
             }
         } catch (err) {
-            console.error('Failed to collect tabs:', err);
-            this.diag.log('ERROR', 'collectTabs failed', { err: String(err), stack: (err as Error)?.stack });
+            console.error('Failed to collect tabs to window:', err);
+            this.diag.log('ERROR', 'collectTabsToWindow failed', { err: String(err), stack: (err as Error)?.stack });
         } finally {
             this.collectInFlight--;
             if (destLeaf.parent && this.isLeafAttached(destLeaf)) {
                 this.tabGroupActiveLeaves.set(destLeaf.parent, destLeaf);
             }
             this.focusLeafAndWindow(destLeaf);
-            this.logLayout('collectTabs after');
+            this.logLayout('collectTabsToWindow after');
             endCollect();
         }
     }
