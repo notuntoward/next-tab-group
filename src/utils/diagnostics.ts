@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, renameSync, statSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
+import type { Workspace, WorkspaceLeaf } from 'obsidian';
 import { isLeafDetached } from 'commons/workspace';
 
 /**
@@ -110,13 +111,24 @@ export class DiagLog {
 }
 
 
+interface LayoutNode {
+    parent?: LayoutNode | null;
+    children?: LayoutNode[];
+    direction?: string;
+    type?: string;
+    view?: { getViewType?: () => unknown };
+}
+
+type LayoutWorkspace = Partial<Record<'rootSplit' | 'leftSplit' | 'rightSplit' | 'floatingSplit', unknown>>;
+
 /** Structural summary of the live layout tree plus any suspicious shapes. */
-export function summarizeLayout(workspace: any): { text: string; anomalies: string[] } {
+export function summarizeLayout(workspace: Workspace): { text: string; anomalies: string[] } {
     const anomalies: string[] = [];
     const seen = new Set<unknown>();
 
-    const walk = (node: any, parent: any, depth: number): string => {
-        if (!node) return 'null';
+    const walk = (value: unknown, parent: LayoutNode | null, depth: number): string => {
+        if (!value) return 'null';
+        const node = value as LayoutNode;
         if (depth > 40) {
             anomalies.push('depth>40');
             return '...';
@@ -132,24 +144,26 @@ export function summarizeLayout(workspace: any): { text: string; anomalies: stri
         if (!children) {
             let vt = '?';
             try {
-                vt = node.view?.getViewType?.() ?? '?';
+                const viewType = node.view?.getViewType?.();
+                vt = typeof viewType === 'string' ? viewType : '?';
             } catch {
                 // view mid-teardown
             }
-            return `L(${vt}${isLeafDetached(node) ? ',detached' : ''})`;
+            return `L(${vt}${isLeafDetached(node as unknown as WorkspaceLeaf) ? ',detached' : ''})`;
         }
         const dir = typeof node.direction === 'string' ? node.direction[0] : '';
         if (children.length === 0) anomalies.push(`empty-${node.type}@${depth}`);
         if (dir && typeof parent?.direction === 'string' && parent.direction === node.direction) {
             anomalies.push(`same-direction-nesting@${depth}`);
         }
-        return `${node.type}${dir ? ':' + dir : ''}[${children.map((c: any) => walk(c, node, depth + 1)).join(',')}]`;
+        return `${node.type}${dir ? ':' + dir : ''}[${children.map((c) => walk(c, node, depth + 1)).join(',')}]`;
     };
 
     const parts: string[] = [];
     try {
-        for (const key of ['rootSplit', 'leftSplit', 'rightSplit', 'floatingSplit']) {
-            parts.push(`${key}=${walk(workspace?.[key], null, 0)}`);
+        const layout = workspace as unknown as LayoutWorkspace;
+        for (const key of ['rootSplit', 'leftSplit', 'rightSplit', 'floatingSplit'] as const) {
+            parts.push(`${key}=${walk(layout[key], null, 0)}`);
         }
     } catch (e) {
         anomalies.push(`summarize-threw:${String(e)}`);
@@ -286,7 +300,7 @@ while ($true) {
 `;
 
 export class FreezeWatchdog {
-    private child: any = null;
+    private child: ChildProcess | null = null;
     private cancelHeartbeat: (() => void) | null = null;
 
     start(logPath: string, heartbeatPath: string, getContext: () => string, onProblem: (m: string) => void, win: Window): void {

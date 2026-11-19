@@ -11,8 +11,9 @@
     "test:ui": "vitest --ui",
     "test:typecheck": "tsc -noEmit -p tsconfig.test.json",
     "typecheck": "tsc --noEmit -skipLibCheck",
-    "check": "npm run lint && npm run typecheck",
-    "bundle": "node esbuild.config.mjs production"
+    "check": "npm run lint && npm run lint:community-review && npm run typecheck",
+    "bundle": "node esbuild.config.mjs production",
+    "lint:community-review": "eslint . --config eslint.community-review.config.mjs --max-warnings=0"
   },
   "keywords": [
     "obsidian",
@@ -30,7 +31,7 @@
     "@typescript-eslint/eslint-plugin": "^8.73.0",
     "@typescript-eslint/parser": "^8.73.0",
     "@vitest/ui": "^5.0.5",
-    "builtin-modules": "5.4.0",
+    "commons": "file:../obsidian-commons",
     "esbuild": "^0.28.1",
     "eslint": "^9.39.4",
     "eslint-plugin-obsidianmd": "^0.6.0",
@@ -40,8 +41,7 @@
     "tslib": "2.4.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.73.0",
-    "vitest": "^5.0.5",
-    "commons": "file:../obsidian-commons"
+    "vitest": "^5.0.5"
   },
   "overrides": {
     "moment": "^2.31.0",

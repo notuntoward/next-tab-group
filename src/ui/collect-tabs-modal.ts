@@ -1,7 +1,7 @@
 import { App, Notice, SuggestModal, WorkspaceLeaf } from 'obsidian';
 import { isLeafDetached } from 'commons/workspace';
 import { ownerWindow, setTimeoutIn } from 'commons/windows';
-import { addPickerHeader, registerEmacsMotionKeys, closeOnEscapeFromOtherWindows, type PickerHeader } from '../utils/modal';
+import { addPickerHeader, registerEmacsMotionKeys, closeOnEscapeFromOtherWindows, getChooser, setSelectedItemSafely, type PickerHeader } from '../utils/modal';
 import type { WindowInfo } from '../../main';
 import { TargetHighlighter, type HighlightTarget } from 'commons/workspace';
 import { matchParts, renderMatchingTitles, statusWords, uniqueTitles, type SearchPart } from '../utils/search';
@@ -313,7 +313,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         const target = Math.max(0, Math.min(index, Math.max(0, currentSuggestions.length - 1)));
         this.highlightedIndex = target;
 
-        const chooser = (this as any).chooser;
+        const chooser = getChooser(this);
         if (chooser) {
             chooser.selectedItem = target;
             // Obsidian's real chooser.setSelectedItem(index, event?) expects an
@@ -332,13 +332,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             // updateHighlightVisuals(), so this call is a best-effort nicety
             // (Obsidian's own scroll-into-view) that must never be allowed to
             // break the rest of modal setup if it fails.
-            if (typeof chooser.setSelectedItem === 'function') {
-                try {
-                    chooser.setSelectedItem(target);
-                } catch {
-                    // ignore: see comment above
-                }
-            }
+            setSelectedItemSafely(chooser, target);
         }
 
         this.updateHighlightVisuals();
@@ -513,7 +507,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     onOpen(): void {
-        super.onOpen();
+        void super.onOpen();
         const win = ownerWindow(this.containerEl);
         const doc = this.containerEl.ownerDocument;
         this.stopEscape = closeOnEscapeFromOtherWindows(this);
@@ -549,7 +543,6 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
                         const found = root.querySelectorAll<HTMLElement>(sel);
                         found.forEach((el) => {
                             if (el.closest('.collect-tabs-action-toolbar')) return;
-                            el.style.setProperty('display', 'none', 'important');
                             el.remove();
                         });
                     }
@@ -658,7 +651,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         }
 
         // Hook chooser.setSelectedItem if present
-        const chooser = (this as any).chooser;
+        const chooser = getChooser(this);
         if (chooser) {
             const orig = chooser.setSelectedItem?.bind(chooser);
             chooser.setSelectedItem = (index: number, scroll?: unknown) => {
@@ -676,7 +669,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
                 // typically pass it. Never let that break our own bookkeeping
                 // below or whatever caller (ours or Obsidian's own) invoked this.
                 try {
-                    if (orig) orig(index, scroll as never);
+                    if (orig) orig(index, scroll);
                     else chooser.selectedItem = index;
                 } catch {
                     chooser.selectedItem = index;
@@ -998,7 +991,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
         const checkbox = colCheckbox.createEl('input', {
             type: 'checkbox',
             cls: 'ntg-checkbox collect-tabs-row-checkbox',
-        }) as HTMLInputElement;
+        });
         checkbox.checked = choice.checked;
         checkbox.disabled = true;
 
@@ -1093,7 +1086,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
     }
 
     selectSuggestion(value: CollectChoice, evt: MouseEvent | KeyboardEvent): void {
-        if (evt instanceof MouseEvent || (evt as any)?.type === 'click') {
+        if (evt.type === 'click') {
             this.toggleRow(value);
             return;
         }

@@ -110,13 +110,13 @@ describe('Architecture guardrails: private Obsidian API calls', () => {
         }
     });
 
-    it('collect-tabs-modal.ts wraps its chooser.setSelectedItem calls in try/catch', () => {
+    it('collect-tabs-modal.ts routes chooser selection through the safe commons helper', () => {
         // The uncaught throw happened inside onOpen(), synchronously and early,
         // skipping the ArrowUp/ArrowDown scope registrations set up afterward.
-        // Both call sites (the direct call in setHighlightedIndex, and the
-        // hooked wrapper's call to the original method) must be wrapped in
-        // try/catch, since this is an undocumented internal API that can change
-        // or fail in ways obsidian.d.ts cannot warn about.
+        // The direct call and the hooked original-method wrapper must both
+        // remain defensive because this is an undocumented internal API. The
+        // direct call delegates to commons, which owns the try/catch; the hook
+        // still guards its captured method locally.
         const modalTsPath = path.resolve(__dirname, '../src/ui/collect-tabs-modal.ts');
         const modalSource = fs.readFileSync(modalTsPath, 'utf-8');
 
@@ -128,7 +128,7 @@ describe('Architecture guardrails: private Obsidian API calls', () => {
             /public setHighlightedIndex\(index: number\): void \{[\s\S]*?\n {4}\}/
         );
         expect(setHighlightedIndexMatch).not.toBeNull();
-        expect(setHighlightedIndexMatch![0]).toMatch(/try\s*\{[\s\S]*?chooser\.setSelectedItem\([\s\S]*?\}\s*catch/);
+        expect(setHighlightedIndexMatch![0]).toMatch(/setSelectedItemSafely\(chooser, target\)/);
     });
 });
 

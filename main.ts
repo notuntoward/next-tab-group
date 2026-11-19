@@ -1,5 +1,6 @@
 import {
     FuzzySuggestModal,
+    FileSystemAdapter,
     Modal,
     Notice,
     Plugin,
@@ -9,7 +10,7 @@ import {
 } from 'obsidian';
 import type { App, SettingDefinitionItem, WorkspaceParent } from 'obsidian';
 import { updateElementPathDatasets } from './src/utils/dom';
-import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, renderHighlightedText, addPickerHeader, closeOnEscapeFromOtherWindows, type PickerHeader } from './src/utils/modal';
+import { registerEmacsMotionKeys, mapFuzzyMatchesToDisplayText, renderHighlightedText, addPickerHeader, closeOnEscapeFromOtherWindows, getChooser, setSelectedItemSafely, type PickerHeader } from './src/utils/modal';
 import type { CollectChoice } from './src/ui/collect-tabs-modal';
 import { CollectTabsModal, describeWindow as formatWindowDescription, getSessionWindowIndex } from './src/ui/collect-tabs-modal';
 import { TargetHighlighter, type HighlightTarget } from 'commons/workspace';
@@ -79,10 +80,16 @@ const DEFAULT_SETTINGS: NextTabGroupSettings = {
 // Internal Obsidian structures not exposed in the public API
 // ---------------------------------------------------------------------------
 
-interface WorkspaceContainerEl extends WorkspaceParent {
-    containerEl: HTMLElement;
+interface WorkspaceContainerEl {
+    containerEl?: HTMLElement;
+    parent?: WorkspaceContainerEl | null;
+    type?: string;
     direction?: string;
     children?: WorkspaceContainerEl[];
+}
+
+interface CommandManager {
+    executeCommandById: (id: string, ...rest: unknown[]) => unknown;
 }
 
 const DIRECTION_PHRASES: Record<Direction, string> = {
@@ -185,7 +192,9 @@ export default class NextTabGroupPlugin extends Plugin {
     private startDiagnostics(): void {
         let path: string | null = null;
         try {
-            const base = (this.app.vault.adapter as any).getBasePath?.();
+            const base = this.app.vault.adapter instanceof FileSystemAdapter
+                ? this.app.vault.adapter.getBasePath()
+                : null;
             const dir = this.manifest.dir;
             if (base && dir) path = join(base, dir, 'diagnostics.log');
         } catch {
@@ -230,9 +239,9 @@ export default class NextTabGroupPlugin extends Plugin {
 
         // Log EVERY Obsidian command (including built-in tab commands).
         try {
-            const cmds = (this.app as any).commands;
+            const cmds = (this.app as App & { commands?: CommandManager }).commands;
             const orig = cmds?.executeCommandById;
-            if (typeof orig === 'function') {
+            if (cmds && typeof orig === 'function') {
                 const wrapped = (id: string, ...rest: unknown[]) => {
                     const end = this.diag.begin(`obsidian-cmd ${id}`);
                     try {
@@ -299,7 +308,10 @@ export default class NextTabGroupPlugin extends Plugin {
             // Diagnostics must never prevent the plugin from loading.
             console.error('next-tab-group: diagnostics failed to start', e);
         }
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        const storedSettings = await this.loadData() as unknown;
+        this.settings = storedSettings && typeof storedSettings === 'object'
+            ? Object.assign({}, DEFAULT_SETTINGS, storedSettings)
+            : { ...DEFAULT_SETTINGS };
         forEachWindow(this, (win) => {
             this.applyActiveTabColorsToWindow(win);
             return () => this.clearActiveTabColorsFromWindow(win);
@@ -307,8 +319,7 @@ export default class NextTabGroupPlugin extends Plugin {
 
         this.addCommand({
             id: 'next',
-            // eslint-disable-next-line obsidianmd/commands/no-plugin-name-in-command-name
-            name: 'Next tab group',
+            name: 'Next group',
             callback: () => {
                 this.cycleTabGroups();
             }
@@ -326,7 +337,7 @@ export default class NextTabGroupPlugin extends Plugin {
             id: 'collect-tabs-to-window',
             name: 'Collect tabs to window',
             callback: () => {
-                this.runCollectTabsToWindow();
+                void this.runCollectTabsToWindow();
             }
         });
 
@@ -334,7 +345,7 @@ export default class NextTabGroupPlugin extends Plugin {
             id: 'rotate-tab-groups',
             name: 'Rotate tab groups',
             callback: () => {
-                this.rotateTabGroups(1);
+                void this.rotateTabGroups(1);
             }
         });
 
@@ -342,7 +353,7 @@ export default class NextTabGroupPlugin extends Plugin {
             id: 'rotate-tab-groups-counterclockwise',
             name: 'Rotate tab groups counterclockwise',
             callback: () => {
-                this.rotateTabGroups(-1);
+                void this.rotateTabGroups(-1);
             }
         });
 
@@ -1274,7 +1285,7 @@ export default class NextTabGroupPlugin extends Plugin {
         const evacuatedPopouts = new Set<Window>();
 
         if (scope === 'current') {
-            const targetParent = activeLeaf.parent as any;
+            const targetParent = activeLeaf.parent;
             if (!targetParent) return;
 
             tabsToMigrate = this.getTabsInWindow(model, currentWinInfo.window)
@@ -1284,7 +1295,7 @@ export default class NextTabGroupPlugin extends Plugin {
             // Rule 1: When windows to be collected include the main window, collected tabs
             // must go to the main window, and all collected popup windows must be deleted.
             destLeaf = mainWinInfo.representative;
-            const targetParent = destLeaf.parent as any;
+            const targetParent = destLeaf.parent;
             if (!targetParent) return;
 
             for (const winInfo of model.windows) {
@@ -1297,7 +1308,7 @@ export default class NextTabGroupPlugin extends Plugin {
                 .map((t) => t.leaf)
                 .filter((leaf) => leaf.parent !== targetParent && !this.isSidebarLeaf(leaf) && !kit.isLeafDetached(leaf));
         } else if (scope === 'multi' && Array.isArray(source)) {
-            const checkedWindows = source as WindowInfo[];
+            const checkedWindows = source;
             if (checkedWindows.length === 0) return;
 
             const includesMain = checkedWindows.some(
@@ -1327,7 +1338,7 @@ export default class NextTabGroupPlugin extends Plugin {
                     : (checkedWindows.find((w) => w.isCurrentWindow) ?? checkedWindows[0]));
 
             destLeaf = destWinInfo.representative;
-            const targetParent = destLeaf.parent as any;
+            const targetParent = destLeaf.parent;
             if (!targetParent) return;
 
             // Merge every tab group from every checked window -- including the
@@ -1357,7 +1368,7 @@ export default class NextTabGroupPlugin extends Plugin {
             return;
         }
 
-        const targetParent = destLeaf.parent as any;
+        const targetParent = destLeaf.parent;
         if (!targetParent) return;
 
         if (this.collectInFlight > 0) this.diag.log('WARN', 'collectTabsToWindow re-entered while another is in flight', { inFlight: this.collectInFlight });
@@ -1368,9 +1379,7 @@ export default class NextTabGroupPlugin extends Plugin {
             for (const leaf of tabsToMigrate) {
                 this.diag.log('STEP', 'collect migrate leaf', { id: this.getLeafId(leaf) });
                 const state = leaf.getViewState();
-                const ephemeralState = typeof (leaf as any).getEphemeralState === 'function'
-                    ? (leaf as any).getEphemeralState()
-                    : undefined;
+                const ephemeralState: unknown = leaf.getEphemeralState();
 
                 const newLeaf = this.app.workspace.createLeafInParent(targetParent, -1);
                 const cleanState = {
@@ -1440,14 +1449,14 @@ export default class NextTabGroupPlugin extends Plugin {
         const activeWin = this.getWindowForLeaf(activeLeaf);
 
         // Walk up from the active leaf to find the root split in the active window
-        let rootSplit: any = activeLeaf.parent;
-        let highestSplit: any = null;
+        let rootSplit = activeLeaf.parent as unknown as WorkspaceContainerEl | null;
+        let highestSplit: WorkspaceContainerEl | null = null;
 
         while (rootSplit) {
             if (rootSplit.type === 'split') {
                 highestSplit = rootSplit;
             }
-            rootSplit = rootSplit.parent;
+            rootSplit = rootSplit.parent ?? null;
         }
 
         // If there are no split containers (e.g., in a single-group popup window), inform the user
@@ -1462,10 +1471,13 @@ export default class NextTabGroupPlugin extends Plugin {
         this.logLayout('rotate after');
 
         // Notify Obsidian to re-render layout bounds and tab header containers
-        if (typeof (this.app.workspace as any).trigger === 'function') {
-            (this.app.workspace as any).trigger('layout-change');
-        } else if (typeof (this.app.workspace as any).onLayoutChange === 'function') {
-            (this.app.workspace as any).onLayoutChange();
+        const workspaceInternal = this.app.workspace as typeof this.app.workspace & {
+            onLayoutChange?: () => void;
+        };
+        if (typeof this.app.workspace.trigger === 'function') {
+            this.app.workspace.trigger('layout-change');
+        } else if (typeof workspaceInternal.onLayoutChange === 'function') {
+            workspaceInternal.onLayoutChange();
         }
     }
 
@@ -1477,7 +1489,7 @@ export default class NextTabGroupPlugin extends Plugin {
      * 2. Reverses child order array on one transition (see below)
      * 3. Re-orders containerEl child DOM nodes to match
      */
-    public rotateSplit(node: any, activeWin?: Window, spin: 1 | -1 = 1): void {
+    public rotateSplit(node: WorkspaceContainerEl | null, activeWin?: Window, spin: 1 | -1 = 1): void {
         if (!node) return;
 
         // Verify that the target node belongs to the currently active window context
@@ -1648,7 +1660,7 @@ export default class NextTabGroupPlugin extends Plugin {
         model: WorkspaceNavigationModel,
     ): HTMLElement {
         // Multi-window context safety: createElement using activeDocument
-        const doc = activeDocument as unknown as Document;
+        const doc = activeDocument;
         const root = doc.createElement('div');
         root.classList.add('ntg-dedupe-confirm');
 
@@ -2474,12 +2486,11 @@ class DedupeConfirmModal extends Modal {
                 btn.setButtonText('Cancel')
                    .onClick(() => finish(false))
             )
-            .addButton((btn) =>
-                btn.setButtonText('Close tabs')
-                   .setWarning()
-                   .setCta()
-                   .onClick(() => finish(true))
-            );
+            .addButton((btn) => {
+                const closeButton = btn.setButtonText('Close tabs');
+                if ('setDestructive' in closeButton) closeButton.setDestructive();
+                return closeButton.setCta().onClick(() => finish(true));
+            });
 
         // Bind core accessibility commands
         this.scope.register([], 'Escape', () => { finish(false); return false; });
@@ -2596,7 +2607,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
     }
 
     onOpen() {
-        super.onOpen();
+        void super.onOpen();
         this.stopEscape = closeOnEscapeFromOtherWindows(this);
 
         this.renderKeyHints();
@@ -2632,9 +2643,8 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
         if (win && this.initialIndex > 0 && this.initialIndex < this.items.length) {
             // Defer execution until after the modal renders its initial suggestions
             this.cancelInitialSelection = setTimeoutIn(win, () => {
-                // Access Obsidian's internal chooser object
-                const chooser = (this as any).chooser;
-                if (chooser && typeof chooser.setSelectedItem === 'function') {
+                const chooser = getChooser(this);
+                if (chooser) {
                     // Real Obsidian's setSelectedItem(index, event?) expects an
                     // Event (or undefined) as its second argument, not a boolean
                     // "scroll into view" flag. Passing a boolean (confirmed on
@@ -2642,11 +2652,7 @@ class NavigationSuggestModal<T> extends FuzzySuggestModal<T> {
                     // function") -- this is an undocumented private API, so call
                     // it with no second argument and never let a failure here
                     // propagate uncaught out of this deferred timer callback.
-                    try {
-                        chooser.setSelectedItem(this.initialIndex);
-                    } catch {
-                        chooser.selectedItem = this.initialIndex;
-                    }
+                    setSelectedItemSafely(chooser, this.initialIndex);
                 }
             }, 0);
         }
