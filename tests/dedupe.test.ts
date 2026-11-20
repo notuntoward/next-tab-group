@@ -618,6 +618,7 @@ describe('deduplication commands', () => {
 
             const promise = plugin.dedupeInAllGroups();
             await new Promise((r) => setTimeout(r, 0));
+            expect(captured?.modalEl.classList.contains('commons-modal-compact')).toBe(true);
             captured?.cancel();
             await promise;
 

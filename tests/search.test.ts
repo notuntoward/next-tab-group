@@ -70,7 +70,7 @@ describe('Collect tabs filter searches what the user can see or remember', () =>
         return new CollectTabsModal(app as unknown as App, here, [there], () => undefined);
     }
 
-    it('finds a window by a tab that is not one of the two titles its row shows', () => {
+    it('finds a window by a tab other than the representative title', () => {
         const modal = modalWith(['First.md', 'Second.md', 'Zebra third.md']);
         const found = modal.getSuggestions('zebra');
         expect(found).toHaveLength(1);
@@ -88,11 +88,17 @@ describe('Collect tabs filter searches what the user can see or remember', () =>
 
     it('lists the matching tab under the row when it is not already shown', () => {
         const modal = modalWith(['First.md', 'Second.md', 'Zebra third.md']);
-        modal.inputEl.value = 'zebra';
-        const row = modal.getSuggestions('zebra')[0];
+        modal.inputEl.value = 'second';
+        const row = modal.getSuggestions('second')[0];
         const el = document.createElement('div');
         modal.renderSuggestion(row, el);
         const hits = [...el.querySelectorAll('.ntg-scope-item-match')].map((n) => n.textContent);
-        expect(hits).toEqual(['Zebra third.md']);
+        expect(hits).toEqual(['Second.md']);
+        expect(el.querySelector('.ntg-scope-item-match .suggestion-highlight')?.textContent).toBe('Second');
+
+        modal.inputEl.value = 'first';
+        const representativeRow = document.createElement('div');
+        modal.renderSuggestion(modal.getSuggestions('first')[0], representativeRow);
+        expect(representativeRow.querySelector('.ntg-scope-item-match')).toBeNull();
     });
 });

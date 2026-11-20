@@ -24,6 +24,7 @@ import { neighborInTabStrip, LeafRecency } from 'commons/workspace';
 import type { LeafLocation, TabEntry, TabGroup } from 'commons/workspace';
 import { forEachWindow, ownerWindow, setTimeoutIn } from 'commons/windows';
 import { raiseWindow } from 'commons/os';
+import { applyModalAppearance } from 'commons/modal';
 
 export { ringOrder, windowScreenRect, cyclicNeighbor, neighborInTabStrip };
 export type { Rect };
@@ -2469,9 +2470,9 @@ class DedupeConfirmModal extends Modal {
         // copy that stays, exactly as the Deduplicate picker does.
         this.highlighter.set(this.targets);
         this.titleEl.setText(this.title);
+        applyModalAppearance(this, { size: 'compact' });
         this.contentEl.empty();
         this.contentEl.classList.add('ntg-dedupe-modal');
-        this.modalEl.classList.add('ntg-compact-dialog');
         this.contentEl.appendChild(this.body);
 
         const finish = (ok: boolean) => {

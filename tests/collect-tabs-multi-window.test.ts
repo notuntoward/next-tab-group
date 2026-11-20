@@ -2606,7 +2606,7 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 expect(elMainCurrent.querySelector('.ntg-pill-here-main')).not.toBeNull();
             });
 
-            it('Section 5: renders structured description typography', () => {
+            it('shows only the representative tab and counts on a window row', () => {
                 const g = new MockWorkspaceParent(popoutContainer1);
                 const t1 = leaf('t1', 'First Note.md', g, popoutContainer1);
                 const t2 = leaf('t2', 'Second Note.md', g, popoutContainer1);
@@ -2628,14 +2628,53 @@ describe('Multi-Window Collect Tabs (Option 2)', () => {
                 modal.renderSuggestion({ kind: 'window', winInfo: winMulti, label: 'First Note.md, Second Note.md, +2', checked: false, windowIndex: 2 }, el);
 
                 const primary = el.querySelector('.ntg-desc-primary');
-                const separator = el.querySelector('.ntg-desc-separator');
-                const secondary = el.querySelector('.ntg-desc-secondary');
-                const count = el.querySelector('.ntg-desc-count');
-
                 expect(primary?.textContent).toBe('First Note.md');
-                expect(separator?.textContent).toBe('·');
-                expect(secondary?.textContent).toBe('Second Note.md');
-                expect(count?.textContent).toBe('+2');
+                expect(el.querySelector('.ntg-desc-secondary')).toBeNull();
+                expect(el.querySelector('.ntg-desc-count')).toBeNull();
+                expect(el.querySelector('.ntg-window-count')?.textContent).toBe('4 tabs · 1 group');
+                expect(el.querySelector('.ntg-col-content')?.getAttribute('title')).toBe('First Note.md — 4 tabs · 1 group');
+            });
+
+            it('shows live tab and group counts for each window without changing other rows or search', () => {
+                const mainGroup = new MockWorkspaceParent(rootContainer);
+                const popGroup = new MockWorkspaceParent(popoutContainer1);
+                const popGroup2 = new MockWorkspaceParent(popoutContainer1);
+                const m1 = leaf('m1', 'Main.md', mainGroup, rootContainer);
+                const p1 = leaf('p1', 'First.md', popGroup, popoutContainer1);
+                const p2 = leaf('p2', 'Second.md', popGroup2, popoutContainer1);
+                const detached = leaf('p3', 'Detached.md', popGroup2, popoutContainer1);
+                detached.detached = true;
+                const mainWin: WindowInfo = {
+                    window: globalThis.window, representative: m1,
+                    groups: [{ leaves: [m1] } as any],
+                    lastActive: 200, label: 'Main window', isCurrentWindow: true, isMainWindow: true,
+                };
+                const popWin: WindowInfo = {
+                    window: win1Obj, representative: p1,
+                    groups: [{ leaves: [p1] } as any, { leaves: [p2, detached] } as any],
+                    lastActive: 100, label: 'Pop-out 1', isCurrentWindow: false, isMainWindow: false,
+                };
+                const modal = new CollectTabsModal(app as unknown as App, mainWin, [popWin], () => {});
+                const rows = modal.getSuggestions('');
+                const rendered = rows.map((row) => {
+                    const el = document.createElement('div');
+                    modal.renderSuggestion(row, el);
+                    return el;
+                });
+
+                expect(rendered[0].querySelector('.ntg-window-count')?.textContent).toBe('1 tab · 1 group');
+                expect(rendered[1].querySelector('.ntg-window-count')).toBeNull();
+                expect(rendered[2].querySelector('.ntg-window-count')?.textContent).toBe('2 tabs · 2 groups');
+                expect(rendered[2].querySelector('.ntg-desc-primary')?.textContent).toBe('First.md');
+                expect(rendered[2].querySelector('.ntg-desc-count')).toBeNull();
+                expect(modal.getSuggestions('2 groups')).toHaveLength(0);
+                expect(modal.getSuggestions('Second.md')).toContain(rows[2]);
+
+                const scope = { kind: 'scope' as const, id: 'group', label: 'This group', checked: false, badge: '1' };
+                const scopeModal = new CollectTabsModal(app as unknown as App, null, [], () => {}, { scopeRows: [scope] });
+                const scopeEl = document.createElement('div');
+                scopeModal.renderSuggestion(scope, scopeEl);
+                expect(scopeEl.querySelector('.ntg-window-count')).toBeNull();
             });
         });
 

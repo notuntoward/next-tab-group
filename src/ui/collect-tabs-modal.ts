@@ -113,10 +113,7 @@ export function getWindowTabDetails(winInfo: WindowInfo): WindowTabDetails {
         }
     }
 
-    const totalTabs = Math.max(
-        allLeaves.length,
-        winInfo.groups?.reduce((acc, g) => acc + (g?.leaves?.length || 0), 0) || 1,
-    );
+    const totalTabs = allLeaves.length;
 
     if (totalTabs <= 1) {
         return { primaryTitle: repTitle };
@@ -1008,7 +1005,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             badge.setText(String(choice.windowIndex));
         }
 
-        // Column 3 - Description column (structured tab titles or "All windows")
+        // Column 3 - Description column
         const colContent = el.createSpan({ cls: 'ntg-col-content' });
         colContent.title = choice.label;
         if (choice.kind === 'scope' && choice.items?.length) colContent.addClass('ntg-col-content-multiline');
@@ -1032,16 +1029,16 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             }
         } else {
             const details = getWindowTabDetails(choice.winInfo);
+            const groupSizes = choice.winInfo.groups.map((group) =>
+                group.leaves.filter((leaf) => !isLeafDetached(leaf)).length,
+            ).filter((size) => size > 0);
+            const tabs = groupSizes.reduce((sum, size) => sum + size, 0);
+            const groups = groupSizes.length;
+            const counts = `${tabs} tab${tabs === 1 ? '' : 's'} · ${groups} group${groups === 1 ? '' : 's'}`;
+            colContent.addClass('ntg-col-content-multiline');
+            colContent.title = `${choice.winInfo.representative.getDisplayText() || 'Untitled'} — ${counts}`;
             colContent.createSpan({ cls: 'ntg-desc-primary', text: details.primaryTitle });
-
-            if (details.secondaryTitle) {
-                colContent.createSpan({ cls: 'ntg-desc-separator', text: '·' });
-                colContent.createSpan({ cls: 'ntg-desc-secondary', text: details.secondaryTitle });
-            }
-
-            if (details.remainingCount !== undefined && details.remainingCount > 0) {
-                colContent.createSpan({ cls: 'ntg-desc-count', text: `+${details.remainingCount}` });
-            }
+            colContent.createSpan({ cls: 'ntg-window-count', text: counts });
         }
 
         // While filtering, list the matching tab titles this row does not already
@@ -1052,8 +1049,7 @@ export class CollectTabsModal extends SuggestModal<CollectChoice> {
             if (choice.kind === 'scope') {
                 shownTitles.push(...(choice.items ?? []).map((i) => i.text));
             } else if (choice.kind !== 'all') {
-                const d = getWindowTabDetails(choice.winInfo);
-                shownTitles.push(d.primaryTitle, ...(d.secondaryTitle ? [d.secondaryTitle] : []));
+                shownTitles.push(getWindowTabDetails(choice.winInfo).primaryTitle);
             }
             renderMatchingTitles(
                 el,

@@ -27,8 +27,11 @@
     color: var(--text-muted);
 }
 
-/* The confirmation buttons are rendered by Obsidian's Setting abstraction,
- * which owns its own layout and spacing. No manual button-row styling needed. */
+.ntg-dedupe-modal > .setting-item:last-child {
+    border-top: 0;
+    margin-top: var(--size-4-4);
+    padding-block: 0;
+}
 
 /* Shared two-column layout for navigation completion rows. */
 .suggestion-item .ntg-nav-row {
@@ -329,12 +332,11 @@ body.theme-dark {
 }
 
 .ntg-desc-count {
-    color: var(--text-faint, var(--text-muted));
-    font-size: var(--font-ui-smaller, 11px);
+    color: var(--text-muted);
+    font-size: var(--font-ui-small, 13px);
     margin-left: 6px;
     flex-shrink: 0;
     user-select: none;
-    opacity: 0.8;
 }
 
 /* Column 4: Status Column (fixed width 84px, right-aligned) */
@@ -380,12 +382,6 @@ body.theme-dark {
 /* Modal styling and quiet search input */
 .ntg-collect-modal {
     position: relative;
-}
-
-.ntg-collect-modal input.prompt-input {
-    height: 30px;
-    padding: 4px 10px;
-    font-size: var(--font-ui-smaller, 12px);
 }
 
 /* Section 3 & 5: Persistent bottom action toolbar */
@@ -470,7 +466,8 @@ body.theme-dark {
     --prompt-top: 60px;
 }
 
-.ntg-compact-prompt .prompt-input {
+.ntg-compact-prompt .prompt-input,
+.ntg-collect-modal input.prompt-input {
     height: 32px;
     font-size: var(--font-ui-small);
 }
@@ -481,21 +478,21 @@ body.theme-dark {
     font-size: var(--font-ui-small);
 }
 
-/* Confirmation dialog: size to its content instead of the 540px default. */
-.ntg-compact-dialog {
-    width: auto;
-    min-width: 0;
-    max-width: min(440px, 90vw);
-}
 /* Dedupe picker: tabs that will be closed, listed under their row. */
 .ntg-col-content.ntg-col-content-multiline {
     flex-wrap: wrap;
     white-space: normal;
 }
 
+.ntg-window-count {
+    flex: 0 0 100%;
+    color: var(--text-muted);
+    font-size: var(--font-ui-small, 13px);
+}
+
 .ntg-scope-items {
     flex: 0 0 100%;
-    margin: 2px 0 2px 14px;
+    margin: 2px 0;
     color: var(--text-muted);
     font-size: var(--font-ui-smaller, 11px);
 }
@@ -748,6 +745,6 @@ body.theme-dark {
 
 /* Tab titles listed under a row because they matched the filter. */
 .ntg-scope-item-match::before {
-    content: "? ";
-    color: var(--text-faint, var(--text-muted));
+    content: "Match: ";
+    color: var(--text-muted);
 }
